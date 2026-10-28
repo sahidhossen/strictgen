@@ -30,7 +30,7 @@ sed -i.bak '/^[[:space:]]*$/d' "$denylist" && rm -f "$denylist.bak"
 files="$(git ls-files --cached --exclude-standard | while read -r f; do [[ -e "$f" ]] && echo "$f"; done)"
 
 # 1. Internal files that must never be tracked.
-internal='^(CLAUDE\.md|CLAUDE\.local\.md|\.claude/|strictgen-spec\.md|\.hygiene-denylist)|\.local\.md$'
+internal='^(CLAUDE\.md|CLAUDE\.local\.md|\.claude/|\.local/|strictgen-spec\.md|\.hygiene-denylist)|\.local\.md$'
 if hits="$(grep -E "$internal" <<<"$files")"; then
   report "internal files are tracked:"$'\n'"$hits"
 fi
