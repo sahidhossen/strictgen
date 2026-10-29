@@ -97,9 +97,10 @@ const point = {
 describe("main", () => {
   it("writes every target's files, each starting with the generated header", () => {
     const root = repo({ point });
-    expect(run(root)).toEqual({ code: 0, lines: ["Generated 10 files for typescript, rust, go."] });
+    expect(run(root)).toEqual({ code: 0, lines: ["Generated 11 files for typescript, rust, go."] });
     for (const path of [
       "ts/generated/point.ts",
+      "ts/generated/helpers.ts",
       "ts/generated/index.ts",
       "rust/src/generated/mod.rs",
       "rust/src/generated/helpers.rs",
@@ -202,6 +203,7 @@ describe("generate", () => {
     const ts = TARGETS.filter((t) => t.name === "typescript");
     expect(generate(schemas, ts).map((f) => f.path)).toEqual([
       "ts/generated/point.ts",
+      "ts/generated/helpers.ts",
       "ts/generated/index.ts",
     ]);
   });

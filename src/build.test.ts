@@ -833,14 +833,16 @@ describe("ids", () => {
     }),
   });
 
-  it("are newtypes in Rust and strings in TypeScript", () => {
+  it("are newtypes in Rust and branded strings in TypeScript", () => {
     expect(find(model, "OrderId")).toMatchObject({ kind: "id" });
     expect(find(model, "Label")).toMatchObject({ kind: "alias" });
     expect(rustOf(model)).toContain("#[serde(transparent)]\npub struct OrderId(pub String);");
     expect(rustOf(model)).toContain(
       "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]\n#[serde(transparent)]",
     );
-    expect(tsOf(model)).toContain("export type OrderId = string;");
+    expect(tsOf(model)).toContain(
+      'export type OrderId = string & { readonly __brand: "OrderId" };',
+    );
   });
 
   it("must be strings", () => {
@@ -1019,14 +1021,29 @@ describe("one file per schema", () => {
   });
 
   it("writes a TypeScript file per schema with type imports and an index", () => {
-    const out = emitTypeScript(model);
+    const out = emitTypeScript(model, { decoders: false });
     expect(out.map((f) => f.name)).toEqual(["common.ts", "item-list.ts", "index.ts"]);
     expect(out[1]?.contents).toContain(
       '/** Types for `item-list.json`. */\n\nimport type { AnyValue, OrderId } from "./common.js";\n\n',
     );
     expect(out[0]?.contents).not.toContain("import");
     expect(out[2]?.contents).toBe(
-      `${HEADER}\n\nexport type * from "./common.js";\nexport type * from "./item-list.js";\n`,
+      `${HEADER}\n\nexport * from "./common.js";\nexport * from "./item-list.js";\n`,
+    );
+  });
+
+  it("imports the decoders it calls from other files, and writes helpers.ts", () => {
+    const out = emitTypeScript(model);
+    expect(out.map((f) => f.name)).toEqual(["common.ts", "item-list.ts", "helpers.ts", "index.ts"]);
+    expect(out[1]?.contents).toContain(
+      '/** Types and decoders for `item-list.json`. */\n\nimport * as h from "./helpers.js";\n' +
+        "import {\n  decodeAnyValue,\n  decodeOrderId,\n  encodeAnyValue,\n  encodeOrderId,\n" +
+        '  type AnyValue,\n  type OrderId,\n} from "./common.js";\n\n',
+    );
+    expect(out[0]?.contents).toContain('import * as h from "./helpers.js";\n\n');
+    expect(out[3]?.contents).toBe(
+      `${HEADER}\n\nexport * from "./common.js";\nexport * from "./item-list.js";\n` +
+        'export { DecodeError, EncodeError, type DecodeResult } from "./helpers.js";\n',
     );
   });
 
@@ -1050,9 +1067,16 @@ describe("one file per schema", () => {
     expect(emitRust(rest).find((f) => f.name === "pricing.rs")?.contents).toContain(
       "use super::common::CurrencyCode;\n",
     );
-    expect(emitTypeScript(rest).find((f) => f.name === "pricing.ts")?.contents).not.toContain(
-      "import",
+    const types = emitTypeScript(rest, { decoders: false });
+    expect(types.find((f) => f.name === "pricing.ts")?.contents).not.toContain("import");
+    expect(emitTypeScript(rest).find((f) => f.name === "pricing.ts")?.contents).toContain(
+      'import * as h from "./helpers.js";\nimport { decodeCurrencyCode } from "./common.js";\n',
     );
+  });
+
+  it("refuses a schema named helpers in TypeScript", () => {
+    const bad = build({ helpers: schema("helpers", { $defs: { x: { type: "string" } } }) });
+    expect(() => emitTypeScript(bad)).toThrow("a schema named helpers clashes with helpers.ts");
   });
 
   it("refuses a schema named index in TypeScript", () => {

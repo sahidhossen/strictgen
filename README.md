@@ -22,7 +22,7 @@ A `strictgen.json` at the project root drives everything. Paths are relative to 
 }
 ```
 
-Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`. [`strictgen.schema.json`](strictgen.schema.json) documents every option and its default. [`examples/basic`](examples/basic) has a full example.
+Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`. TypeScript gets strict decoders next to the types, `decodeX`, `tryDecodeX` and `encodeX`, unless `"decoders": false`; [`docs/typescript.md`](docs/typescript.md) explains them and their number limits. [`strictgen.schema.json`](strictgen.schema.json) documents every option and its default. [`examples/basic`](examples/basic) has a full example.
 
 ## Command line
 
@@ -76,7 +76,7 @@ When the type can't be generated, `explain` prints the rule it breaks, the reaso
 
 ### Reserved names
 
-A field named like a keyword is escaped where the language allows it: `r#type` and `r#match` in Rust (`self_` and `crate_` for the keywords that can't be raw), the exported field name in Go (`Type`, `Func`, `Default`), and the key as it is in TypeScript, which allows keywords as property names. A type named like a keyword, or like a name the generated code uses itself (`Self`, `Option` or `Deserialize` in Rust, `DecodeError` in Go, `Record` or `Partial` in TypeScript), fails with `reserved-name` and a hint to rename it. Only the configured targets' names apply, so a type named `Record` is fine when TypeScript isn't a target.
+A field named like a keyword is escaped where the language allows it: `r#type` and `r#match` in Rust (`self_` and `crate_` for the keywords that can't be raw), the exported field name in Go (`Type`, `Func`, `Default`), and the key as it is in TypeScript, which allows keywords as property names. A type named like a keyword, or like a name the generated code uses itself (`Self`, `Option` or `Deserialize` in Rust, `DecodeError` in Go, `Record`, `Partial` or `DecodeError` in TypeScript), fails with `reserved-name` and a hint to rename it. Only the configured targets' names apply, so a type named `Record` is fine when TypeScript isn't a target.
 
 ## License
 

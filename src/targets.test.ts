@@ -85,7 +85,11 @@ describe("config targets", () => {
   it("writes folders relative to the config file", () => {
     const config = project({ targets: { typescript: { out: "./web/../src/types" } } });
     expect(targetDirs(configTargets(config))).toEqual(["src/types"]);
-    expect(files(config).map((f) => f.path)).toEqual(["src/types/order.ts", "src/types/index.ts"]);
+    expect(files(config).map((f) => f.path)).toEqual([
+      "src/types/order.ts",
+      "src/types/helpers.ts",
+      "src/types/index.ts",
+    ]);
   });
 
   it("passes idBase and ids to the generator", () => {
@@ -120,7 +124,7 @@ describe("config header", () => {
       targets: { rust: { ...rust, embedSchemas: true, fixtures: { out: "rust/tests/generated", crate: "orders" } }, go: { ...go, fixtures: true }, typescript },
     });
     const all = files(config);
-    expect(all).toHaveLength(11);
+    expect(all).toHaveLength(12);
     for (const file of all) {
       const comment = file.path.endsWith(".gitattributes") ? "#" : "//";
       expect(file.contents.startsWith(`${comment} Generated from schemas/, do not edit.\n`), file.path).toBe(
@@ -331,8 +335,8 @@ describe("config TypeScript target", () => {
 describe("reserved names per configured target", () => {
   const self = { ...order, $id: `${BASE}self.json`, title: "Self" };
   const record = { ...order, $id: `${BASE}record.json`, title: "Record" };
-  const decodeError = {
-    "decode-error": { ...order, $id: `${BASE}decode-error.json`, title: "DecodeError" },
+  const codeTooDeep = {
+    "code-too-deep": { ...order, $id: `${BASE}code-too-deep.json`, title: "CodeTooDeep" },
   };
 
   it("apply only the lists of the targets the config lists", () => {
@@ -342,7 +346,7 @@ describe("reserved names per configured target", () => {
     expect(() => files(project({ targets: { rust } }, { self }))).toThrow("reserved in Rust");
     expect(files(project({ targets: { rust, ...go } }, { record })).length).toBeGreaterThan(0);
     expect(() => files(project({ targets: ts }, { record }))).toThrow("reserved in TypeScript");
-    expect(files(project({ targets: { rust, ...ts } }, decodeError)).length).toBeGreaterThan(0);
-    expect(() => files(project({ targets: go }, decodeError))).toThrow("reserved in Go");
+    expect(files(project({ targets: { rust, ...ts } }, codeTooDeep)).length).toBeGreaterThan(0);
+    expect(() => files(project({ targets: go }, codeTooDeep))).toThrow("reserved in Go");
   });
 });

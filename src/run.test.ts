@@ -270,7 +270,7 @@ describe("formatters", () => {
     const result = cli(root, [], path);
     expect(result).toEqual({
       code: EXIT_OK,
-      out: ["Generated 8 files for typescript, rust, go."],
+      out: ["Generated 9 files for typescript, rust, go."],
       err: [],
     });
     const files = snapshot(root);
@@ -628,8 +628,12 @@ describe("explain", () => {
     expect(json.location).toBe("user.json#/$defs/role");
     expect(json.decls.map((d) => [d.name, d.kind])).toEqual([["Role", "enum"]]);
     expect(json.targets.map((t) => t.target)).toEqual(["rust", "go", "typescript"]);
-    expect(json.targets[2]?.code).toBe(
-      '/** What the user may do. */\nexport type Role = "owner" | "member";',
+    expect(json.targets[2]?.code).toContain(
+      '/** What the user may do. */\nexport type Role = "owner" | "member";\n\n' +
+        "/**\n * Decodes parsed JSON as Role, strictly.",
+    );
+    expect(json.targets[2]?.code).toContain(
+      "export function encodeRole(value: Role): unknown {\n  return value;\n}",
     );
   });
 
