@@ -1,0 +1,13 @@
+{
+  "$schema": "../../strictgen.schema.json",
+  "schemas": "schemas",
+  "ids": { "file": "common", "suffix": "Id" },
+  "targets": {
+    "rust": {
+      "out": "rust/src/generated",
+      "fixtures": { "out": "rust/tests/generated", "crate": "example_basic" }
+    },
+    "go": { "out": "go", "package": "types", "shared": true },
+    "typescript": { "out": "ts/generated" }
+  }
+}

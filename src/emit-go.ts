@@ -1,5 +1,5 @@
 import type { EmittedFile } from "./common.js";
-import { bySchema, compare, declTypes, HEADER } from "./common.js";
+import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER } from "./common.js";
 import type {
   Decl,
   EnumDecl,
@@ -13,7 +13,7 @@ import type {
 import { pascal, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
 
-/** The Go package every generated file belongs to. */
+/** The Go package every generated file belongs to, unless the options name another. */
 export const GO_PACKAGE = "types";
 /** Name of the file with the built in types and the decoding functions. */
 export const GO_HELPERS = "helpers.go";
@@ -47,19 +47,33 @@ interface Ctx {
   readonly decls: ReadonlyMap<string, Decl>;
 }
 
+/** Options for the Go emitters. */
+export interface GoOptions {
+  /** The header text each file starts with, as a comment. */
+  readonly header?: string;
+  /** The package clause of every file. Defaults to {@link GO_PACKAGE}. */
+  readonly package?: string;
+}
+
+/** The first lines of a generated Go file: header comment, then `doc` and the package clause. */
+function goHead(options: GoOptions, doc: string): string {
+  const comment = doc === "" ? "" : `// ${doc}\n\n`;
+  return `${commentHeader(options.header ?? DEFAULT_HEADER)}\n\n${comment}package ${options.package ?? GO_PACKAGE}\n\n`;
+}
+
 /**
  * Emits the Go files for the Go target's folder: one file per schema, named after the
  * schema file (`user-profile` to `user_profile.go`), and `helpers.go` with
  * the built in types and decoding functions. Everything is in one package, so
  * names are unique across schemas and files need no imports between them.
  */
-export function emitGo(model: Model): EmittedFile[] {
+export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])) };
   checkNames(model);
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
     contents: goFile(
-      `Types for ${schema}.json.`,
+      goHead(options, `Types for ${schema}.json.`),
       decls.some(usesJSON) ? ["encoding/json"] : [],
       decls.map((d) => declaration(ctx, d)),
     ),
@@ -68,7 +82,7 @@ export function emitGo(model: Model): EmittedFile[] {
   return [
     {
       name: GO_HELPERS,
-      contents: goFile("", HELPER_IMPORTS, [HELPERS, ...literals.map(literalType)]),
+      contents: goFile(goHead(options, ""), HELPER_IMPORTS, [HELPERS, ...literals.map(literalType)]),
     },
     ...files,
   ];
@@ -96,9 +110,9 @@ function usesJSON(decl: Decl): boolean {
  * The `.gitattributes` for the Go folder, which marks every generated file, so
  * pull request diffs collapse them while hand written files stay open.
  */
-export function emitGoAttributes(names: readonly string[]): string {
+export function emitGoAttributes(names: readonly string[], options: GoOptions = {}): string {
   const lines = [...names].sort(compare).map((name) => `${name} linguist-generated=true\n`);
-  return `# ${HEADER.slice(3)}\n# Marks the generated Go files, so diffs collapse them.\n${lines.join("")}`;
+  return `# ${options.header ?? DEFAULT_HEADER}\n# Marks the generated Go files, so diffs collapse them.\n${lines.join("")}`;
 }
 
 /** The Go file name of a schema, like `user-profile` to `user_profile.go`. */
@@ -116,8 +130,8 @@ export function fileName(schema: string, path: string): string {
   return `${name}.go`;
 }
 
-/** A Go source file: header, package clause, the imports the emitter says the body uses, then the body. */
-function goFile(doc: string, packages: readonly string[], parts: readonly string[]): string {
+/** A Go source file: `head`, the imports the emitter says the body uses, then the body. */
+function goFile(head: string, packages: readonly string[], parts: readonly string[]): string {
   const body = parts.join("\n");
   const imports =
     packages.length === 0
@@ -125,8 +139,7 @@ function goFile(doc: string, packages: readonly string[], parts: readonly string
       : packages.length === 1
         ? `import "${packages[0] ?? ""}"\n\n`
         : `import (\n${packages.map((p) => `\t"${p}"\n`).join("")})\n\n`;
-  const comment = doc === "" ? "" : `// ${doc}\n\n`;
-  return `${HEADER}\n\n${comment}package ${GO_PACKAGE}\n\n${imports}${body}`;
+  return `${head}${imports}${body}`;
 }
 
 /** Every package-level name must be unique, since all schemas share one package. */
@@ -507,7 +520,7 @@ function comment(lines: readonly string[], indent: string): string {
  * root (`"payment"`) and def (`"payment/cardPayment"`), for the fixture tests,
  * and every type with an UnmarshalJSON, for tests that cover them all.
  */
-export function emitGoFixtures(model: Model): string {
+export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
   const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])) };
   const entries = model.decls
     .filter((d) => d.source !== undefined)
@@ -527,11 +540,7 @@ export function emitGoFixtures(model: Model): string {
   ]
     .sort(compare)
     .map((name) => `\t\tnew(${name}),\n`);
-  return `${HEADER}
-
-package ${GO_PACKAGE}
-
-import "encoding/json"
+  return `${goHead(options, "")}import "encoding/json"
 
 // fixtureDecoders maps each fixture folder, "schema" for a root and "schema/def" for a def,
 // to a function that decodes JSON as the type generated for it.

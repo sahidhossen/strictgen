@@ -4,13 +4,14 @@ Four schemas and what strictgen generates from them.
 
 | Path | What it is |
 | ---- | ---------- |
+| `strictgen.json` | The config: where the schemas are and which targets to write |
 | `schemas/` | A webhook event envelope (`event.json`), a user (`user.json`), a payment method picked by its `type` key (`payment-method.json`) and shared IDs (`common.json`) |
 | `rust/src/generated/` | The Rust types, a module per schema. `rust/` is a crate that depends on `serde` and `serde_json` only |
 | `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go` and `codes_test.go` are written by hand |
 | `ts/generated/` | The TypeScript types |
 | `fixtures/` | JSON documents each language must accept (`valid/`) or reject (`invalid/`) |
 
-IDs are on, with `{ "file": "common", "suffix": "Id" }`, so `userId` and `eventId` become their own types.
+`strictgen.json` configures the three targets. IDs are on, with `{ "file": "common", "suffix": "Id" }`, so `userId` and `eventId` become their own types.
 
 ## Fixtures
 

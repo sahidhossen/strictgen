@@ -1,5 +1,5 @@
 import type { EmittedFile } from "./common.js";
-import { bySchema, compare, declTypes, HEADER, imports } from "./common.js";
+import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER, imports } from "./common.js";
 import type {
   Decl,
   EnumDecl,
@@ -49,18 +49,47 @@ const DERIVE_DATA = "#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserializ
 const DERIVE_ENUM =
   "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]";
 
+/** A lint the generated `mod.rs` allows for every module, and why. */
+export interface LintAllow {
+  /** The lint, like `clippy::doc_markdown`. */
+  readonly lint: string;
+  /** Why generated code can't avoid it. */
+  readonly reason: string;
+}
+
 /**
  * Lints generated code can't avoid, each with its reason. Kept short on purpose:
  * anything else clippy reports is a generator bug.
  */
-const ALLOWS: readonly (readonly [string, string])[] = [
-  ["clippy::doc_markdown", "descriptions come from the schemas, which name keys without backticks"],
-  [
-    "clippy::enum_variant_names",
-    "variant names come from schema values, which often share a prefix",
-  ],
-  ["clippy::large_enum_variant", "variants follow the schemas, only recursive ones are boxed"],
+export const DEFAULT_ALLOW: readonly LintAllow[] = [
+  {
+    lint: "clippy::doc_markdown",
+    reason: "descriptions come from the schemas, which name keys without backticks",
+  },
+  {
+    lint: "clippy::enum_variant_names",
+    reason: "variant names come from schema values, which often share a prefix",
+  },
+  {
+    lint: "clippy::large_enum_variant",
+    reason: "variants follow the schemas, only recursive ones are boxed",
+  },
 ];
+
+/** Options for {@link emitRust}. */
+export interface RustOptions {
+  /** The header text each file starts with, as a comment. */
+  readonly header?: string;
+  /** The lints `mod.rs` allows. Defaults to {@link DEFAULT_ALLOW}. */
+  readonly allow?: readonly LintAllow[];
+  /** Modules written by another emitter, like `schemas`, declared `pub` and not re-exported. */
+  readonly publicModules?: readonly string[];
+}
+
+/** A Rust string literal: `text` with backslashes and quotes escaped. */
+function rustString(text: string): string {
+  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+}
 
 /** Name of the module that holds the built in types and decoding functions. */
 export const HELPERS = "helpers";
@@ -73,7 +102,9 @@ export const HELPERS = "helpers";
  * `<crate>::Order` works whichever module holds it. `publicModules` are declared
  * `pub` and not re-exported, for modules written by another emitter, like `schemas`.
  */
-export function emitRust(model: Model, publicModules: readonly string[] = []): EmittedFile[] {
+export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[] {
+  const header = commentHeader(options.header ?? DEFAULT_HEADER);
+  const publicModules = options.publicModules ?? [];
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name)) {
       throw new CodegenError(decl.path, `type name ${decl.name} is reserved in Rust`);
@@ -85,6 +116,14 @@ export function emitRust(model: Model, publicModules: readonly string[] = []): E
     name: moduleName(schema, decls[0]?.path ?? schema),
     decls,
   }));
+  for (const m of modules) {
+    if (publicModules.includes(m.name)) {
+      throw new CodegenError(
+        m.decls[0]?.path ?? m.schema,
+        `schema file ${m.schema} clashes with the generated ${m.name} module`,
+      );
+    }
+  }
   const usesPresent = model.decls.some(
     (d) => d.kind === "struct" && d.fields.some((f) => !f.required),
   );
@@ -96,7 +135,7 @@ export function emitRust(model: Model, publicModules: readonly string[] = []): E
     NON_NULL_JSON,
   ];
   const helpers = [
-    `${HEADER}\n\n//! Built in types and decoding functions the generated modules share.\n`,
+    `${header}\n\n//! Built in types and decoding functions the generated modules share.\n`,
     "use serde::{Deserialize, Deserializer, Serialize};\n",
     NON_NULL,
     usesPresent ? PRESENT : "",
@@ -105,8 +144,10 @@ export function emitRust(model: Model, publicModules: readonly string[] = []): E
     literals.has("boolean") ? CONST_BOOL : "",
   ].join("\n");
   const root = [
-    `${HEADER}\n\n//! Types for every schema in the set.\n//!\n//! One module per schema file. Every type is re-exported here.\n`,
-    ALLOWS.map(([lint, reason]) => `#![allow(${lint}, reason = "${reason}")]\n`).join(""),
+    `${header}\n\n//! Types for every schema in the set.\n//!\n//! One module per schema file. Every type is re-exported here.\n`,
+    (options.allow ?? DEFAULT_ALLOW)
+      .map((a) => `#![allow(${a.lint}, reason = ${rustString(a.reason)})]\n`)
+      .join(""),
     "\n",
     [HELPERS, ...modules.map((m) => m.name)].map((m) => `mod ${m};\n`).join(""),
     publicModules.map((m) => `pub mod ${m};\n`).join(""),
@@ -119,7 +160,7 @@ export function emitRust(model: Model, publicModules: readonly string[] = []): E
     { name: `${HELPERS}.rs`, contents: helpers },
     ...modules.map((m) => ({
       name: `${m.name}.rs`,
-      contents: rustModule(model, m.schema, m.decls, moduleNames(modules)),
+      contents: rustModule(model, m.schema, m.decls, moduleNames(modules), header),
     })),
   ];
 }
@@ -143,6 +184,7 @@ function rustModule(
   schema: string,
   decls: readonly Decl[],
   modules: ReadonlyMap<string, string>,
+  header: string,
 ): string {
   const helpers = new Set<string>();
   const types = decls.flatMap(declTypes);
@@ -173,7 +215,7 @@ function rustModule(
   uses.push(`use serde::{Deserialize, ${deserializer}Serialize};\n`);
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
-    `${HEADER}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
+    `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
     ...decls.map((decl) => declaration(model, decl)),
   ];
   return parts.join("\n");
@@ -571,9 +613,13 @@ export function serdeCamel(ident: string): string {
 
 /**
  * The fixture registry, a Rust test file: one arm per schema root and def, decoding into the
- * types of the crate called `crate`, like `my_types`.
+ * types reached by the Rust path `crate`, like `my_types` or `my_types::generated`.
  */
-export function emitRustFixtures(model: Model, crate: string): string {
+export function emitRustFixtures(
+  model: Model,
+  crate: string,
+  options: { readonly header?: string } = {},
+): string {
   const arms = model.decls
     .filter((d) => d.source !== undefined)
     .map((d) => ({ decl: d, schema: d.source?.schema ?? "", def: d.source?.def }))
@@ -582,7 +628,7 @@ export function emitRustFixtures(model: Model, crate: string): string {
       const pattern = `(${JSON.stringify(schema)}, ${def === undefined ? "None" : `Some(${JSON.stringify(def)})`})`;
       return `        ${pattern} => run::<${crate}::${decl.name}>(json),\n`;
     });
-  return `${HEADER}
+  return `${commentHeader(options.header ?? DEFAULT_HEADER)}
 
 //! Maps each fixture folder to the type generated for it, for the fixture tests.
 
@@ -606,49 +652,6 @@ where
     serde_json::to_value(decoded).map_err(|error| error.to_string())
 }
 `;
-}
-
-/**
- * Emits `roots.rs`, declared as `pub mod roots`: decodes JSON strictly by schema name into the
- * root type generated for that schema, for the conformance runner's `json.decode`.
- */
-export function emitRustRoots(model: Model): EmittedFile {
-  const arms = model.decls
-    .filter((d) => d.source !== undefined && d.source.def === undefined)
-    .sort((a, b) => compare(a.source?.schema ?? "", b.source?.schema ?? ""))
-    .map(
-      (d) =>
-        `        ${JSON.stringify(d.source?.schema ?? "")} => run::<crate::${d.name}>(bytes),\n`,
-    );
-  return {
-    name: "roots.rs",
-    contents: `${HEADER}
-
-//! Decodes JSON by schema name, into the root type generated for that schema.
-
-use serde_json::Value;
-
-use crate::json::DecodeError;
-
-/// Decodes \`bytes\` strictly (\`crate::json::decode\`) as the root type generated for \`schema\`,
-/// like \`order\`, then encodes it again. Returns \`None\` for a schema with no root type, like a
-/// definitions-only schema.
-#[must_use]
-pub fn decode(schema: &str, bytes: &[u8]) -> Option<Result<Value, DecodeError>> {
-    Some(match schema {
-${arms.join("")}        _ => return None,
-    })
-}
-
-fn run<T>(bytes: &[u8]) -> Result<Value, DecodeError>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let decoded: T = crate::json::decode(bytes)?;
-    Ok(serde_json::to_value(decoded)?)
-}
-`,
-  };
 }
 
 /** Rustdoc lines, with `extra` lines after a blank line. */
