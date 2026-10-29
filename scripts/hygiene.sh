@@ -59,7 +59,7 @@ if [[ "${1:-}" == "--text" ]]; then
 fi
 
 # Every path in the index, raw (NUL separated, so git never quotes them).
-files="$(git ls-files --cached -z | tr '\0' '\n')"
+files="$(git ls-files --cached -z | LC_ALL=C tr '\0' '\n')"
 
 # 1. Internal files that must never be tracked, at any depth, in any case.
 internal='(^|/)(claude\.md|claude\.local\.md|\.claude/|\.local/|strictgen-spec\.md|\.hygiene-denylist)|\.local\.md$'
