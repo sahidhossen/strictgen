@@ -19,54 +19,58 @@ struct Case {
     path: PathBuf,
 }
 
-/// Every fixture below `dir`, sorted by path.
-fn cases(root: &Path, dir: &Path, out: &mut Vec<Case>) {
+/// Every `.json` file below `dir`, sorted by path.
+fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()))
         .map(|entry| entry.expect("a folder entry").path())
         .collect();
     entries.sort();
     for path in entries {
-        if !path.is_dir() {
-            continue;
-        }
-        let name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default();
-        if name == "valid" || name == "invalid" {
-            let key = dir.strip_prefix(root).expect("a folder below the root");
-            let key = key
-                .components()
-                .map(|c| c.as_os_str().to_string_lossy())
-                .collect::<Vec<_>>();
-            let mut files: Vec<PathBuf> = fs::read_dir(&path)
-                .expect("a fixture folder")
-                .map(|entry| entry.expect("a fixture").path())
-                .filter(|p| p.extension().is_some_and(|e| e == "json"))
-                .collect();
-            files.sort();
-            for file in files {
-                out.push(Case {
-                    key: key.join("/"),
-                    valid: name == "valid",
-                    path: file,
-                });
-            }
-        } else {
-            cases(root, &path, out);
+        if path.is_dir() {
+            json_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "json") {
+            out.push(path);
         }
     }
+}
+
+/// Every fixture below `root`. A `.json` file that isn't directly in a `valid` or `invalid`
+/// folder below a schema folder is a failure, so a misspelled folder never skips a case.
+fn cases(root: &Path, failures: &mut Vec<String>) -> Vec<Case> {
+    let mut files = Vec::new();
+    json_files(root, &mut files);
+    let mut out = Vec::new();
+    for path in files {
+        let rel = path.strip_prefix(root).expect("a file below the root");
+        let parts: Vec<String> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .collect();
+        let folder = parts.len().checked_sub(2).map(|i| parts[i].as_str());
+        if parts.len() < 3 || !matches!(folder, Some("valid" | "invalid")) {
+            failures.push(format!(
+                "{}: not in a valid or invalid folder",
+                parts.join("/")
+            ));
+            continue;
+        }
+        out.push(Case {
+            key: parts[..parts.len() - 2].join("/"),
+            valid: folder == Some("valid"),
+            path,
+        });
+    }
+    out
 }
 
 #[test]
 fn fixtures_round_trip() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
-    let mut all = Vec::new();
-    cases(&root, &root, &mut all);
+    let mut failures = Vec::new();
+    let all = cases(&root, &mut failures);
     assert!(!all.is_empty(), "no fixtures under {}", root.display());
 
-    let mut failures = Vec::new();
     for case in &all {
         let json = fs::read_to_string(&case.path).expect("a readable fixture");
         let (schema, def) = match case.key.split_once('/') {
