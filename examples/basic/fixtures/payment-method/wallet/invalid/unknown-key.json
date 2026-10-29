@@ -1,0 +1,5 @@
+{
+  "type": "wallet",
+  "provider": "apple_pay",
+  "token": "tok_1"
+}

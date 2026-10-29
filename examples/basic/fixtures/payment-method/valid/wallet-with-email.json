@@ -1,0 +1,5 @@
+{
+  "type": "wallet",
+  "provider": "google_pay",
+  "email": "ada@example.com"
+}

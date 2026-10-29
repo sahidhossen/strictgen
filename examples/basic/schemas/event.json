@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/event.json",
+  "title": "Event",
+  "description": "A webhook event envelope, delivered as the body of one POST request.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/eventId" },
+    "type": { "$ref": "#/$defs/eventType" },
+    "occurredAt": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/timestamp" },
+    "attempt": { "description": "The delivery attempt, starting at 1.", "type": "integer" },
+    "user": { "$ref": "https://example.com/schemas/v1/user.json" },
+    "paymentMethod": { "$ref": "https://example.com/schemas/v1/payment-method.json" },
+    "metadata": {
+      "description": "Key and value pairs the sender attached, by key.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    }
+  },
+  "required": ["id", "type", "occurredAt", "attempt", "user"],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "eventType": {
+      "description": "What happened.",
+      "enum": ["user.created", "user.updated", "payment_method.attached"]
+    }
+  }
+}

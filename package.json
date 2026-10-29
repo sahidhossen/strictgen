@@ -17,7 +17,9 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "hygiene": "scripts/hygiene.sh"
+    "hygiene": "scripts/hygiene.sh",
+    "examples": "pnpm build && tsc -p scripts/tsconfig.json && node --experimental-strip-types --no-warnings scripts/examples.ts",
+    "examples:check": "pnpm build && tsc -p scripts/tsconfig.json && node --experimental-strip-types --no-warnings scripts/examples.ts --check"
   },
   "devDependencies": {
     "@types/node": "^22",

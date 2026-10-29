@@ -454,6 +454,12 @@ describe("Go recursion and names", () => {
       "type name NonNullJson is reserved in Go",
     );
     expect(() => go(lib({ constInt1: { type: "string" } }))).toThrow("reserved in Go");
+    expect(() => go(lib({ codeTooDeep: { type: "string" } }))).toThrow(
+      "type name CodeTooDeep is reserved in Go",
+    );
+    expect(() => go(lib({ code: { enum: ["duplicate_key"] } }))).toThrow(
+      "Go name CodeDuplicateKey is also used by helpers.go",
+    );
     expect(() => go(lib({ mode: { enum: ["a-b", "a_b"] } }))).toThrow(
       "two values map to the Go name ModeAB",
     );
@@ -538,5 +544,38 @@ describe("Go encoding checks", () => {
     expect(registry).toContain("\t\tnew(CardPayment),\n\t\tnew(CardPaymentType),\n");
     expect(registry).toContain("\t\tnew(NonNullJson),\n");
     expect(registry).not.toContain("new(Payment)");
+  });
+});
+
+describe("JSON error codes", () => {
+  const helpers = file(lib({ name: { type: "string" } }), "helpers.go");
+
+  it("declare strictgen's own codes in the helpers", () => {
+    expect(helpers).toContain(
+      "const (\n" +
+        "\t// CodeInvalidJSON is a syntax error, invalid UTF-8, a lone surrogate, trailing data or a\n" +
+        "\t// number out of range.\n" +
+        '\tCodeInvalidJSON = "invalid_json"\n' +
+        "\t// CodeDuplicateKey is an object that gives the same key twice.\n" +
+        '\tCodeDuplicateKey = "duplicate_key"\n' +
+        "\t// CodeTooDeep is a value nested in maxDepth or more arrays and objects.\n" +
+        '\tCodeTooDeep = "too_deep"\n' +
+        ")\n",
+    );
+  });
+
+  it("report invalid JSON, a duplicate key and too deep nesting with them", () => {
+    expect(helpers).toContain('failAt(CodeInvalidJSON, invalidUTF8At(data), "not valid UTF-8")');
+    expect(helpers).toContain('failAt(CodeInvalidJSON, p.pos, "trailing characters")');
+    expect(helpers).toContain("return failAt(CodeInvalidJSON, p.pos, reason)");
+    expect(helpers).toContain('failAt(CodeInvalidJSON, start, "lone surrogate")');
+    expect(helpers).toContain('failAt(CodeInvalidJSON, start, "number out of range")');
+    expect(helpers).toContain("failAt(CodeDuplicateKey, keyAt,");
+    expect(helpers).toContain("failAt(CodeTooDeep, p.pos,");
+  });
+
+  it("use no code the helpers don't declare", () => {
+    const used = new Set(helpers.match(/\bCode[A-Z][A-Za-z]*\b/g));
+    expect([...used].sort()).toEqual(["CodeDuplicateKey", "CodeInvalidJSON", "CodeTooDeep"]);
   });
 });
