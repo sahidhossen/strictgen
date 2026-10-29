@@ -131,3 +131,58 @@ describe("the JSON kind each variant takes", () => {
     expect(contents).toContain("if let Ok(inner) = <Loose>::deserialize(&value) {");
   });
 });
+
+/** A closed object whose keys are keywords in Rust, Go or TypeScript. */
+const keywordFields: JsonObject = {
+  type: "object",
+  properties: {
+    type: { type: "string" },
+    match: { type: "string" },
+    func: { type: "string" },
+    default: { type: "boolean" },
+    self: { type: "string" },
+    crate: { type: "string" },
+  },
+  required: ["type", "default"],
+  unevaluatedProperties: false,
+};
+
+describe("reserved names", () => {
+  const lib = (entries: JsonObject) =>
+    emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: entries }) })));
+
+  it("escapes a field named like a keyword instead of failing", () => {
+    const out = lib({ rule: keywordFields })
+      .map((f) => f.contents)
+      .join("\n");
+    expect(out).toContain("    pub r#type: String,\n");
+    expect(out).toContain("    pub r#match: Option<String>,\n");
+    expect(out).toContain("    pub func: Option<String>,\n");
+    expect(out).toContain("    pub default: bool,\n");
+    // self and crate can't be raw identifiers, so they get a trailing underscore.
+    expect(out).toContain("    pub self_: Option<String>,\n");
+    expect(out).toContain("    pub crate_: Option<String>,\n");
+  });
+
+  it("fails on a type named like a keyword", () => {
+    expect(() => lib({ self: { type: "string" } })).toThrow(
+      "lib.json#/$defs/self: reserved-name: type name Self is reserved in Rust. Hint: rename the $defs entry",
+    );
+  });
+
+  it("fails on a type named like a helper of the generated module", () => {
+    expect(() => lib({ nonNullJson: { type: "string" } })).toThrow(
+      "reserved-name: type name NonNullJson is reserved in Rust",
+    );
+    expect(() => lib({ deserialize: { type: "string" } })).toThrow(
+      "reserved-name: type name Deserialize is reserved in Rust",
+    );
+  });
+
+  it("fails on a schema file named like a crate the generated code uses", () => {
+    const model = buildModel(schemaSet({ serde: schema("serde", { type: "string" }) }));
+    expect(() => emitRust(model)).toThrow(
+      "serde.json#: reserved-name: schema file serde has no Rust module name: serde is reserved in Rust. Hint: rename the schema file",
+    );
+  });
+});

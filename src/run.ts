@@ -5,6 +5,7 @@ import { parseArgs } from "node:util";
 import { differences } from "./check.js";
 import type { Config } from "./config.js";
 import { ConfigError, configFolders, loadConfig } from "./config.js";
+import { ExplainError, explain, explained, explanationLines } from "./explain.js";
 import { formatFiles, FormatterFailedError, FormatterMissingError } from "./format.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import type { OutputFile } from "./main.js";
@@ -57,6 +58,21 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       "installed, so the result is the same on every machine.",
     ],
     options: [CONFIG_OPTION, HELP_OPTION],
+  },
+  explain: {
+    summary: "Show how one schema type maps in each configured language",
+    usage: "strictgen explain <file.json[#/pointer]> [--json] [--config <path>]",
+    details: [
+      "Prints the model of the type at a schema location, like user.json#/$defs/address, or",
+      "user.json for a root, and its declaration in every configured target, formatted the way",
+      "generate writes it. When the type can't be generated, prints the rule it breaks and a",
+      "hint. Exits 1 when generation fails, and 2 for an unknown file or pointer.",
+    ],
+    options: [
+      "  --json           Print the model and each target's code or error as JSON",
+      CONFIG_OPTION,
+      HELP_OPTION,
+    ],
   },
   dirs: {
     summary: "Print the folders the targets write to",
@@ -147,10 +163,11 @@ function dispatch(argv: readonly string[], io: Io): number {
     throw new UsageError(error instanceof Error ? error.message : String(error));
   }
   const { values, positionals } = parsed;
-  if (positionals.length > 1) {
-    throw new UsageError(`unexpected argument ${JSON.stringify(positionals[1])}`);
-  }
   const name = positionals[0];
+  const most = name === "explain" ? 2 : 1;
+  if (positionals.length > most) {
+    throw new UsageError(`unexpected argument ${JSON.stringify(positionals[most])}`);
+  }
   const command = name === undefined ? undefined : COMMANDS[name];
   if (name !== undefined && command === undefined) {
     throw new UsageError(
@@ -166,11 +183,17 @@ function dispatch(argv: readonly string[], io: Io): number {
     for (const line of lines) io.out(line);
     return EXIT_OK;
   }
-  if (values.json === true && name !== "dirs") {
-    throw new UsageError("--json only applies to strictgen dirs");
+  if (values.json === true && name !== "dirs" && name !== "explain") {
+    throw new UsageError("--json only applies to strictgen dirs and strictgen explain");
+  }
+  const location = positionals[1];
+  if (name === "explain" && location === undefined) {
+    throw new UsageError("explain needs a schema location, like user.json#/$defs/address");
   }
   const config = loadConfig(values.config, io.cwd);
   switch (name) {
+    case "explain":
+      return explainCommand(config, io, location ?? "", values.json === true);
     case "check":
       return check(config, io);
     case "dirs":
@@ -187,7 +210,7 @@ function report(error: unknown, io: Io): number {
     io.err("Run strictgen --help for usage.");
     return EXIT_USAGE;
   }
-  if (error instanceof ConfigError) {
+  if (error instanceof ConfigError || error instanceof ExplainError) {
     io.err(`error: ${error.message}`);
     return EXIT_USAGE;
   }
@@ -247,6 +270,13 @@ function check(config: Config, io: Io): number {
     io.err(`  ${`${kind}:`.padEnd(8)} ${shown(io.cwd, join(config.root, path))}`);
   }
   return EXIT_FAILED;
+}
+
+function explainCommand(config: Config, io: Io, location: string, json: boolean): number {
+  const explanation = explain(config, location, io.cwd, io.env);
+  if (json) io.out(JSON.stringify(explanation, null, 2));
+  else for (const line of explanationLines(explanation)) io.out(line);
+  return explained(explanation) ? EXIT_OK : EXIT_FAILED;
 }
 
 function dirs(config: Config, io: Io, json: boolean): number {

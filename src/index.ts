@@ -25,6 +25,8 @@ export { DEFAULT_ALLOW, emitRust, emitRustFixtures } from "./emit-rust.js";
 export { emitRustSchemas } from "./emit-schemas.js";
 export type { TypeScriptOptions } from "./emit-ts.js";
 export { emitTypeScript } from "./emit-ts.js";
+export type { Explanation, Failure, TargetExplanation } from "./explain.js";
+export { explain, ExplainError, explanationLines } from "./explain.js";
 export type { FormatOptions, Formatter } from "./format.js";
 export {
   FORMAT_TIMEOUT,
@@ -46,6 +48,8 @@ export {
 export type * from "./model.js";
 export type { Json, JsonObject, SchemaFile, SchemaOptions, SchemaSet } from "./schema.js";
 export { CodegenError, idBaseOf, loadSchemas, schemaSet } from "./schema.js";
+export type { RuleId } from "./rules.js";
+export { isRuleId, RULE_IDS, RULES } from "./rules.js";
 export type { Io } from "./run.js";
 export { EXIT_FAILED, EXIT_OK, EXIT_USAGE, run, version } from "./run.js";
 export { configTargets, mainOptions, RUST_FIXTURES } from "./targets.js";

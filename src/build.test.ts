@@ -357,7 +357,11 @@ describe("exactly-one oneOf of required keys", () => {
         oneOf: [{ required: ["a"] }, { required: ["b"] }],
       },
     });
-    expect(failure(open).message).toContain("an open object is only allowed as an allOf base");
+    expect(failure(open)).toMatchObject({
+      rule: "open-object",
+      reason: "objects must be closed, unless only used as an allOf base",
+      hint: 'add "additionalProperties": false',
+    });
   });
 
   it("allows an at least one anyOf, a rule the types don't carry", () => {
@@ -795,7 +799,9 @@ describe("open objects", () => {
   ])("fail as %s", (_, entries, path) => {
     expect(failure(defs(entries as JsonObject))).toMatchObject({
       path,
-      reason: "an open object is only allowed as an allOf base",
+      rule: "open-object",
+      reason: "objects must be closed, unless only used as an allOf base",
+      hint: 'add "additionalProperties": false',
     });
   });
 
@@ -869,7 +875,9 @@ describe("ids", () => {
     expect(find(model, "OrderId")).toMatchObject({ kind: "alias" });
     expect(rustOf(model)).toContain("#[serde(transparent)]\npub struct UserKey(pub String);");
     const bad = { keys: schema("keys", { $defs: { userKey: { type: "boolean" } } }) };
-    expect(() => build(bad, ids)).toThrow("keys.json#/$defs/userKey: an id must be a string");
+    expect(() => build(bad, ids)).toThrow(
+      "keys.json#/$defs/userKey: type-mismatch: an id must be a string. Hint: ",
+    );
   });
 });
 
@@ -925,7 +933,7 @@ describe("more unsupported constructs", () => {
   it("a type named like a Rust built in", () => {
     const model = build(defs({ option: { description: "Clash.", type: "string" } }));
     expect(() => rustOf(model)).toThrow(
-      "lib.json#/$defs/option: type name Option is reserved in Rust",
+      "lib.json#/$defs/option: reserved-name: type name Option is reserved in Rust. Hint: rename",
     );
   });
 });

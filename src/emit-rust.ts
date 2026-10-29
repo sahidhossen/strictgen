@@ -10,7 +10,13 @@ import type {
   TypeExpr,
   UntaggedDecl,
 } from "./model.js";
-import { variantName } from "./naming.js";
+import {
+  RENAME_TYPE,
+  RUST_CRATE_ROOTS,
+  RUST_KEYWORDS as KEYWORDS,
+  RUST_NOT_RAW as NOT_RAW,
+  variantName,
+} from "./naming.js";
 import { CodegenError } from "./schema.js";
 
 /** Name of the built in type for any JSON value except `null`. */
@@ -34,16 +40,6 @@ const RESERVED = new Set([
   "ConstInt",
   "ConstBool",
 ]);
-
-const KEYWORDS = new Set(
-  (
-    "as break const continue crate else enum extern false fn for if impl in let loop match mod move mut " +
-    "pub ref return self static struct super trait true type unsafe use where while async await dyn " +
-    "abstract become box do final gen macro override priv try typeof unsized virtual yield"
-  ).split(" "),
-);
-/** Keywords that can't be raw identifiers. */
-const NOT_RAW = new Set(["crate", "self", "super", "Self"]);
 
 const DERIVE_DATA = "#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]";
 const DERIVE_ENUM =
@@ -106,8 +102,13 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
   const header = commentHeader(options.header ?? DEFAULT_HEADER);
   const publicModules = options.publicModules ?? [];
   for (const decl of model.decls) {
-    if (RESERVED.has(decl.name)) {
-      throw new CodegenError(decl.path, `type name ${decl.name} is reserved in Rust`);
+    if (RESERVED.has(decl.name) || KEYWORDS.has(decl.name)) {
+      throw new CodegenError(
+        decl.path,
+        "reserved-name",
+        `type name ${decl.name} is reserved in Rust`,
+        RENAME_TYPE,
+      );
     }
   }
   const groups = bySchema(model);
@@ -120,7 +121,9 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     if (publicModules.includes(m.name)) {
       throw new CodegenError(
         m.decls[0]?.path ?? m.schema,
+        "reserved-name",
         `schema file ${m.schema} clashes with the generated ${m.name} module`,
+        "rename the schema file",
       );
     }
   }
@@ -172,8 +175,21 @@ function moduleNames(modules: readonly { schema: string; name: string }[]): Map<
 /** The Rust module name of a schema file, like `user-profile` to `user_profile`. */
 export function moduleName(schema: string, path: string): string {
   const name = schema.replaceAll("-", "_");
-  if (!/^[a-z][a-z0-9_]*$/.test(name) || KEYWORDS.has(name) || name === HELPERS || name === "mod") {
-    throw new CodegenError(path, `schema file ${schema} has no Rust module name`);
+  if (!/^[a-z][a-z0-9_]*$/.test(name)) {
+    throw new CodegenError(
+      path,
+      "unsupported-name",
+      `schema file ${schema} has no Rust module name`,
+      "name schema files with lowercase letters, digits and dashes, starting with a letter",
+    );
+  }
+  if (KEYWORDS.has(name) || RUST_CRATE_ROOTS.has(name) || name === HELPERS || name === "mod") {
+    throw new CodegenError(
+      path,
+      "reserved-name",
+      `schema file ${schema} has no Rust module name: ${name} is reserved in Rust`,
+      "rename the schema file",
+    );
   }
   return name;
 }
@@ -377,7 +393,12 @@ function struct(decl: StructDecl): string {
   if (decl.rest !== undefined) {
     const rest = "rest";
     if (seen.has(rest))
-      throw new CodegenError(decl.path, "a field named rest clashes with the other keys");
+      throw new CodegenError(
+        decl.path,
+        "reserved-name",
+        "a field named rest clashes with the other keys",
+        "rename the rest key",
+      );
     fields.push(
       `    /// Keys other than the named fields.\n    #[serde(flatten)]\n    pub ${rest}: BTreeMap<${typeText(decl.rest.key)}, ${typeText(decl.rest.value)}>,\n`,
     );
@@ -423,7 +444,13 @@ function restSerialize(decl: StructDecl, idents: ReadonlySet<string>): string {
 
 function field(f: Field, decl: StructDecl, seen: Set<string>): string {
   const ident = fieldIdent(f.name, decl.path);
-  if (seen.has(ident)) throw new CodegenError(decl.path, `two keys map to the Rust field ${ident}`);
+  if (seen.has(ident))
+    throw new CodegenError(
+      decl.path,
+      "name-clash",
+      `two keys map to the Rust field ${ident}`,
+      "rename one of the keys",
+    );
   seen.add(ident);
   const attrs: string[] = [];
   if (serdeCamel(ident) !== f.name) attrs.push(`rename = ${JSON.stringify(f.name)}`);
@@ -528,9 +555,10 @@ function jsonKinds(model: Model, type: TypeExpr, depth = 0): Set<string> {
       // The builder resolves every ref and rejects alias cycles, so neither throw is reachable
       // from schemas; failing beats dropping the kind check for a variant.
       const decl = model.decls.find((d) => d.name === type.name);
-      if (decl === undefined) throw new CodegenError(type.name, "a union variant names no type");
+      if (decl === undefined)
+        throw new CodegenError(type.name, "internal", "a union variant names no type");
       if (depth > model.decls.length)
-        throw new CodegenError(type.name, "a union variant's kinds don't resolve");
+        throw new CodegenError(type.name, "internal", "a union variant's kinds don't resolve");
       switch (decl.kind) {
         case "struct":
         case "tagged":
@@ -548,7 +576,13 @@ function jsonKinds(model: Model, type: TypeExpr, depth = 0): Set<string> {
 }
 
 function unique(name: string, seen: Set<string>, path: string): string {
-  if (seen.has(name)) throw new CodegenError(path, `two variants map to the Rust name ${name}`);
+  if (seen.has(name))
+    throw new CodegenError(
+      path,
+      "name-clash",
+      `two variants map to the Rust name ${name}`,
+      "change one of the values so their names differ",
+    );
   seen.add(name);
   return name;
 }
@@ -590,7 +624,12 @@ export function fieldIdent(key: string, path: string): string {
     .replace(/^_+|_+$/g, "")
     .toLowerCase();
   if (snake === "" || /^[0-9]/.test(snake))
-    throw new CodegenError(path, `key ${key} has no Rust field name`);
+    throw new CodegenError(
+      path,
+      "unsupported-name",
+      `key ${key} has no Rust field name`,
+      "start the key with a letter",
+    );
   if (NOT_RAW.has(snake)) return `${snake}_`;
   return KEYWORDS.has(snake) ? `r#${snake}` : snake;
 }

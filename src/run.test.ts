@@ -125,7 +125,7 @@ describe("help, version and usage", () => {
       expect(result.code).toBe(EXIT_OK);
       expect(result.out[0]).toMatch(/^strictgen: /);
       expect(result.out).toContain("Usage: strictgen [command] [options]");
-      for (const name of ["generate", "check", "dirs"]) {
+      for (const name of ["generate", "check", "explain", "dirs"]) {
         expect(result.out.some((line) => line.startsWith(`  ${name} `))).toBe(true);
       }
     }
@@ -151,11 +151,13 @@ describe("help, version and usage", () => {
   });
 
   it.each([
-    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, dirs'],
+    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, dirs'],
     [["--bogus"], "error: Unknown option '--bogus'"],
     [["generate", "extra"], 'error: unexpected argument "extra"'],
-    [["--json"], "error: --json only applies to strictgen dirs"],
-    [["check", "--json"], "error: --json only applies to strictgen dirs"],
+    [["--json"], "error: --json only applies to strictgen dirs and strictgen explain"],
+    [["check", "--json"], "error: --json only applies to strictgen dirs and strictgen explain"],
+    [["explain"], "error: explain needs a schema location, like user.json#/$defs/address"],
+    [["explain", "order.json", "extra"], 'error: unexpected argument "extra"'],
     [["--config"], "error: Option '--config <value>' argument missing"],
   ])("exits 2 on bad usage: %j", (args, message) => {
     const result = cli(project(), args);
@@ -203,7 +205,7 @@ describe("generate", () => {
     const result = cli(root, []);
     expect(result.code).toBe(EXIT_FAILED);
     expect(result.err).toHaveLength(1);
-    expect(result.err[0]).toMatch(/^error: order\.json: not valid JSON: /);
+    expect(result.err[0]).toMatch(/^error: order\.json: invalid-json: not valid JSON: /);
   });
 });
 
@@ -499,6 +501,167 @@ describe("dirs", () => {
   });
 });
 
+describe("explain", () => {
+  const all = {
+    targets: { rust: { out: "rust/gen" }, go: { out: "go" }, typescript: { out: "ts" } },
+    format: { rust: "none", go: "none" },
+  };
+
+  /** A project with `order.json` and a `user.json` holding `defs`. */
+  function users(defs: object, config: object = all): string {
+    const root = project(config);
+    const user = {
+      $id: `${BASE}user.json`,
+      title: "User",
+      type: "object",
+      properties: { role: { $ref: "#/$defs/role" } },
+      required: ["role"],
+      unevaluatedProperties: false,
+      $defs: { role: { description: "What the user may do.", enum: ["owner", "member"] }, ...defs },
+    };
+    writeFileSync(join(root, "schemas", "user.json"), JSON.stringify(user));
+    return root;
+  }
+
+  it("prints the model and the declaration in each configured language, Rust, Go, TypeScript", () => {
+    const result = cli(users({}), ["explain", "user.json#/$defs/role"]);
+    expect(result.err).toEqual([]);
+    expect(result.code).toBe(EXIT_OK);
+    const text = result.out.join("\n");
+    expect(result.out.slice(0, 4)).toEqual([
+      "user.json#/$defs/role",
+      "",
+      "Model:",
+      '  enum Role: "owner", "member"',
+    ]);
+    expect(text).toContain("\nRust:\n/// What the user may do.\n");
+    expect(text).toContain("pub enum Role {\n");
+    expect(text).toContain("\nGo:\n// Role is generated from user.json#/$defs/role.\n");
+    expect(text).toContain("func (v *Role) decode(n *node) *DecodeError {");
+    expect(text).toContain(
+      '\nTypeScript:\n/** What the user may do. */\nexport type Role = "owner" | "member";',
+    );
+    expect(text.indexOf("Rust:")).toBeLessThan(text.indexOf("Go:"));
+    expect(text.indexOf("Go:")).toBeLessThan(text.indexOf("TypeScript:"));
+    // Only the explained type, not the root declared in the same file.
+    expect(text).not.toContain("pub struct User");
+    expect(text).not.toContain("type User struct");
+  });
+
+  it("explains a root from the file name alone, or a path inside the schemas folder", () => {
+    const root = users({});
+    for (const arg of ["user.json", "schemas/user.json", "./schemas/user.json#"]) {
+      const result = cli(root, ["explain", arg]);
+      expect(result.code, arg).toBe(EXIT_OK);
+      expect(result.out[0]).toBe("user.json#");
+      expect(result.out[3]).toBe("  struct User, closed, 1 fields");
+      expect(result.out[4]).toBe("    role  required  Role");
+    }
+  });
+
+  it("shows only the configured targets, formatted like generate", () => {
+    const root = users({}, { targets: { go: { out: "go" } } });
+    const sed = "/usr/bin/sed 's|^type Role string$|type Role string // formatted|'";
+    const fake = formatters({ gofmt: sed });
+    const result = cli(root, ["explain", "user.json#/$defs/role"], fake);
+    expect(result.code).toBe(EXIT_OK);
+    const text = result.out.join("\n");
+    expect(text).toContain("\nGo:\n");
+    expect(text).not.toContain("Rust");
+    expect(text).not.toContain("TypeScript");
+    // The fake gofmt marks the line it changed.
+    expect(text).toContain("\ntype Role string // formatted\n");
+  });
+
+  it("says when the output is unformatted because the formatter is missing", () => {
+    const root = users({}, { targets: { rust: { out: "rust/gen" } } });
+    const result = cli(root, ["explain", "user.json#/$defs/role"]);
+    expect(result.code).toBe(EXIT_OK);
+    expect(result.out).toContain("Rust (unformatted: rustfmt is not installed):");
+  });
+
+  it("prints the rule, the reason and the hint of a construct that fails, and exits 1", () => {
+    const root = users({ address: { type: "object", properties: { city: { type: "string" } } } });
+    const result = cli(root, ["explain", "user.json#/$defs/address"]);
+    expect(result.code).toBe(EXIT_FAILED);
+    expect(result.out).toEqual([
+      "user.json#/$defs/address",
+      "",
+      "Generation fails at user.json#/$defs/address:",
+      "  rule:   open-object",
+      "  reason: objects must be closed, unless only used as an allOf base",
+      '  hint:   add "additionalProperties": false',
+    ]);
+  });
+
+  it("says when generation fails elsewhere first", () => {
+    const root = users({ bad: { type: "string", format: "email" } });
+    const result = cli(root, ["explain", "user.json#/$defs/role"]);
+    expect(result.code).toBe(EXIT_FAILED);
+    expect(result.out[2]).toBe(
+      "Generation fails at user.json#/$defs/bad/format, so this can't be generated either:",
+    );
+    expect(result.out[3]).toBe("  rule:   unsupported-format");
+  });
+
+  it("shows a reserved name per language: the failing one with its rule, the others with code", () => {
+    const root = users({ self: { description: "A link to itself.", type: "string" } });
+    const result = cli(root, ["explain", "user.json#/$defs/self"]);
+    expect(result.code).toBe(EXIT_FAILED);
+    const text = result.out.join("\n");
+    expect(text).toContain(
+      "\nRust:\n  Generation fails at user.json#/$defs/self:\n    rule:   reserved-name\n" +
+        "    reason: type name Self is reserved in Rust\n    hint:   rename the $defs entry",
+    );
+    expect(text).toContain("\nGo:\n// Self is generated from user.json#/$defs/self.\n");
+    expect(text).toContain("\nTypeScript:\n/** A link to itself. */\nexport type Self = string;");
+  });
+
+  it("prints JSON with --json", () => {
+    const result = cli(users({}), ["explain", "user.json#/$defs/role", "--json"]);
+    expect(result.code).toBe(EXIT_OK);
+    const json = JSON.parse(result.out.join("\n")) as {
+      location: string;
+      decls: { name: string; kind: string }[];
+      targets: { target: string; code: string }[];
+    };
+    expect(json.location).toBe("user.json#/$defs/role");
+    expect(json.decls.map((d) => [d.name, d.kind])).toEqual([["Role", "enum"]]);
+    expect(json.targets.map((t) => t.target)).toEqual(["rust", "go", "typescript"]);
+    expect(json.targets[2]?.code).toBe(
+      '/** What the user may do. */\nexport type Role = "owner" | "member";',
+    );
+  });
+
+  it.each([
+    ["nope.json", "error: there is no nope.json in the schemas folder schemas"],
+    ["user.json#/$defs/nope", "error: user.json has nothing at #/$defs/nope"],
+    ["user.json#$defs/role", "error: the pointer after # must start with /"],
+    ["user", 'error: "user" names no schema file'],
+    ["other/user.json", "error: other/user.json is not in the schemas folder schemas"],
+    ["user.json#/properties/role", "error: no type is generated for user.json#/properties/role"],
+  ])("exits 2 for %s", (arg, message) => {
+    const result = cli(users({}), ["explain", arg]);
+    expect(result.code).toBe(EXIT_USAGE);
+    expect(result.out).toEqual([]);
+    expect(result.err).toHaveLength(1);
+    expect(result.err[0]?.startsWith(message), result.err[0]).toBe(true);
+  });
+
+  it("exits 2 for a file with no root type, and names a def to explain instead", () => {
+    const root = project(all);
+    const common = { $id: `${BASE}common.json`, $defs: { orderId: { type: "string" } } };
+    writeFileSync(join(root, "schemas", "common.json"), JSON.stringify(common));
+    expect(cli(root, ["explain", "common.json"])).toEqual({
+      code: EXIT_USAGE,
+      out: [],
+      err: [
+        "error: common.json# has no root type, only $defs. Explain one of them, like common.json#/$defs/orderId",
+      ],
+    });
+  });
+});
+
 describe("file system errors", () => {
   it("reports an out folder through a dangling symlink with the path, and exits 1", () => {
     const root = project({
@@ -511,7 +674,7 @@ describe("file system errors", () => {
     expect(result.code).toBe(EXIT_FAILED);
     expect(result.err).toHaveLength(1);
     expect(result.err[0]).toMatch(
-      /^error: link(\/types)?: can't write the output: a folder on the way is missing, or is a symlink that points nowhere \(ENOENT\)$/,
+      /^error: link(\/types)?: write-failed: can't write the output: a folder on the way is missing, or is a symlink that points nowhere \(ENOENT\)$/,
     );
   });
 
@@ -524,7 +687,7 @@ describe("file system errors", () => {
       code: EXIT_FAILED,
       out: [],
       err: [
-        "error: go/helpers.go: a folder is in the way of a generated file. Fix: move what it holds elsewhere and remove it",
+        "error: go/helpers.go: output-conflict: a folder is in the way of a generated file. Hint: move what it holds elsewhere and remove it",
       ],
     });
   });

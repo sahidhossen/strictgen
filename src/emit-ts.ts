@@ -2,9 +2,13 @@ import type { EmittedFile } from "./common.js";
 import { bySchema, commentHeader, DEFAULT_HEADER, declTypes, imports } from "./common.js";
 import { CodegenError } from "./schema.js";
 import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
+import { RENAME_TYPE, TS_RESERVED } from "./naming.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const WIDTH = 100;
+
+/** Global types the generated TypeScript names. A schema type named like one would shadow it. */
+const RESERVED = new Set(["Record", "Partial", "NonNullable"]);
 
 /** Options for {@link emitTypeScript}. */
 export interface TypeScriptOptions {
@@ -23,9 +27,24 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   const header = commentHeader(options.header ?? DEFAULT_HEADER);
   const valueModules = options.valueModules ?? [];
   const decls = new Map(model.decls.map((d) => [d.name, d]));
+  for (const decl of model.decls) {
+    if (RESERVED.has(decl.name) || TS_RESERVED.has(decl.name)) {
+      throw new CodegenError(
+        decl.path,
+        "reserved-name",
+        `type name ${decl.name} is reserved in TypeScript`,
+        RENAME_TYPE,
+      );
+    }
+  }
   const files = [...bySchema(model)].map(([schema, own]) => {
     if (schema === "index")
-      throw new CodegenError(own[0]?.path ?? schema, "a schema named index clashes with index.ts");
+      throw new CodegenError(
+        own[0]?.path ?? schema,
+        "reserved-name",
+        "a schema named index clashes with index.ts",
+        "rename the schema file",
+      );
     const uses = [...imports(model, own, tsTypes)].map(
       ([other, names]) => `import type { ${names.join(", ")} } from "./${other}.js";\n`,
     );

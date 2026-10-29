@@ -7,6 +7,7 @@ import type { LintAllow } from "./emit-rust.js";
 import { DEFAULT_ALLOW } from "./emit-rust.js";
 import { GO_PACKAGE } from "./emit-go.js";
 import { fsReason, isFsError } from "./fs-error.js";
+import { GO_KEYWORDS } from "./naming.js";
 import { samePath, within } from "./paths.js";
 
 /** The config file strictgen reads from the project root unless another path is given. */
@@ -104,11 +105,6 @@ export interface Config {
   readonly format: FormatConfig;
 }
 
-/** Go keywords, and the blank identifier, which can't name a package. */
-export const GO_KEYWORDS: readonly string[] = (
-  "_ break case chan const continue default defer else fallthrough for func go goto if import " +
-  "interface map package range return select struct switch type var"
-).split(" ");
 
 const READ_MODES = ["strict", "report"] as const;
 const ONE_LINE = /^[^\u0000-\u001f\u007f]+$/;
@@ -347,7 +343,8 @@ function readGo(r: Reader, value: unknown, path: Resolve): GoConfig {
     o.package === undefined
       ? GO_PACKAGE
       : r.string(o.package, `${at}.package`, GO_IDENTIFIER, "a Go identifier");
-  if (GO_KEYWORDS.includes(pkg)) {
+  // Neither a Go keyword nor the blank identifier can name a package.
+  if (pkg === "_" || GO_KEYWORDS.has(pkg)) {
     r.fail(`${at}.package`, `${JSON.stringify(pkg)} can't name a Go package`);
   }
   return {

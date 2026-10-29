@@ -1,0 +1,6 @@
+{
+  "url": "https://hooks.example.com/all",
+  "match": [],
+  "default": true,
+  "func": "deliver"
+}

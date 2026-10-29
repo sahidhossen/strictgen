@@ -195,7 +195,9 @@ describe("config Rust target", () => {
     const config = project({ targets: { rust: { ...rust, embedSchemas: true } } }, { schemas });
     expect(run(config)).toEqual({
       code: 1,
-      lines: ["schemas.json#: schema file schemas clashes with the generated schemas module"],
+      lines: [
+        "schemas.json#: reserved-name: schema file schemas clashes with the generated schemas module. Hint: rename the schema file",
+      ],
     });
     expect(run(project({ targets: { rust } }, { schemas })).code).toBe(0);
   });
@@ -284,7 +286,7 @@ describe("writeOutput safety", () => {
     const options = { ...mainOptions(config), targets: [target("schemas")] };
     const lines: string[] = [];
     expect(main(options, (line) => lines.push(line))).toBe(1);
-    expect(lines[0]).toMatch(/^schemas: refusing to clear this folder: it holds /);
+    expect(lines[0]).toMatch(/^schemas: output-conflict: refusing to clear this folder: it holds /);
     expect(existsSync(join(config.schemas, "order.json"))).toBe(true);
   });
 });
@@ -298,7 +300,7 @@ describe("config Go .gitattributes", () => {
     const result = run(config);
     expect(result.code).toBe(1);
     expect(result.lines[0]).toMatch(
-      /^go\/\.gitattributes: a hand written file is in the way of a generated one, .* Fix: /,
+      /^go\/\.gitattributes: output-conflict: a hand written file is in the way of a generated one, .* Hint: /,
     );
     expect(readFileSync(join(config.root, "go", ".gitattributes"), "utf8")).toBe("*.png binary\n");
     expect(existsSync(join(config.root, "go", "stale.go"))).toBe(true);
@@ -323,5 +325,24 @@ describe("config TypeScript target", () => {
     expect(run(config).code).toBe(0);
     expect(existsSync(join(config.root, "ts/generated/old.ts"))).toBe(false);
     expect(existsSync(join(config.root, "ts/generated/order.ts"))).toBe(true);
+  });
+});
+
+describe("reserved names per configured target", () => {
+  const self = { ...order, $id: `${BASE}self.json`, title: "Self" };
+  const record = { ...order, $id: `${BASE}record.json`, title: "Record" };
+  const decodeError = {
+    "decode-error": { ...order, $id: `${BASE}decode-error.json`, title: "DecodeError" },
+  };
+
+  it("apply only the lists of the targets the config lists", () => {
+    const ts = { typescript: { out: "ts" } };
+    const go = { go: { out: "go" } };
+    expect(files(project({ targets: { ...ts, ...go } }, { self })).length).toBeGreaterThan(0);
+    expect(() => files(project({ targets: { rust } }, { self }))).toThrow("reserved in Rust");
+    expect(files(project({ targets: { rust, ...go } }, { record })).length).toBeGreaterThan(0);
+    expect(() => files(project({ targets: ts }, { record }))).toThrow("reserved in TypeScript");
+    expect(files(project({ targets: { rust, ...ts } }, decodeError)).length).toBeGreaterThan(0);
+    expect(() => files(project({ targets: go }, decodeError))).toThrow("reserved in Go");
   });
 });

@@ -52,14 +52,16 @@ describe("resolveRef", () => {
   });
 
   it.each([
-    ["https://example.com/x.json", "is outside the schema set"],
-    [`${BASE}missing.json`, "names an unknown schema"],
-    [`${BASE}common.json#/properties/x`, "must point at a $defs entry"],
-    [`${BASE}common.json#/$defs/nope`, "names an unknown def"],
-  ])("rejects %s", (ref, reason) => {
-    expect(codegenError(() => resolveRef(set, ref, loc)).message).toBe(
-      `payment.json#/properties/id: $ref ${ref} ${reason}`,
-    );
+    ["https://example.com/x.json", "unresolved-ref", "is outside the schema set"],
+    [`${BASE}missing.json`, "unresolved-ref", "names an unknown schema"],
+    [`${BASE}common.json#/properties/x`, "ref-form", "must point at a $defs entry"],
+    [`${BASE}common.json#/$defs/nope`, "unresolved-ref", "names an unknown def"],
+  ])("rejects %s", (ref, rule, reason) => {
+    expect(codegenError(() => resolveRef(set, ref, loc))).toMatchObject({
+      path: "payment.json#/properties/id",
+      rule,
+      reason: `$ref ${ref} ${reason}`,
+    });
   });
 });
 
@@ -121,7 +123,7 @@ describe("idBase", () => {
     );
     expect(error.path).toBe("a.json#/$id");
     expect(error.message).toBe(
-      `a.json#/$id: $id is "${BASE}a.json", expected ${other}a.json (base ${other}, from the idBase option). Fix: set the $id to ${other}a.json, or change the idBase option`,
+      `a.json#/$id: schema-id: $id is "${BASE}a.json", expected ${other}a.json (base ${other}, from the idBase option). Hint: set the $id to ${other}a.json, or change the idBase option`,
     );
   });
 
@@ -142,7 +144,7 @@ describe("idBase", () => {
     );
     expect(error.path).toBe("b.json#/$id");
     expect(error.message).toBe(
-      `b.json#/$id: $id is "${other}b.json", expected ${BASE}b.json (base ${BASE}, taken from a.json). Fix: set the $id to ${BASE}b.json, or set the idBase option`,
+      `b.json#/$id: schema-id: $id is "${other}b.json", expected ${BASE}b.json (base ${BASE}, taken from a.json). Hint: set the $id to ${BASE}b.json, or set the idBase option`,
     );
   });
 
@@ -153,7 +155,7 @@ describe("idBase", () => {
       expect(error.message).toContain("expected <idBase>a.json");
       expect(error.message).toContain("so no idBase can be taken from it");
       expect(error.message).toContain(
-        "Fix: set the $id to a base ending in / or # followed by a.json, or set the idBase option",
+        "Hint: set the $id to a base ending in / or # followed by a.json, or set the idBase option",
       );
     }
   });
@@ -227,7 +229,7 @@ describe("naming", () => {
 
   it("rejects a key with no Rust field name", () => {
     expect(codegenError(() => fieldIdent("42", "x.json#")).message).toBe(
-      "x.json#: key 42 has no Rust field name",
+      "x.json#: unsupported-name: key 42 has no Rust field name. Hint: start the key with a letter",
     );
   });
 

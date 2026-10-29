@@ -31,11 +31,20 @@ strictgen                 # same as strictgen generate
 strictgen generate        # write every target, formatted
 strictgen check           # exit 1 if the generated files on disk are out of date, for CI
 strictgen dirs [--json]   # print the folders the targets write to
+strictgen explain user.json#/$defs/address   # show how one type maps in each language
 ```
 
 Every command takes `--config <path>` to read a config other than `strictgen.json` in the current folder, and `--help`. `strictgen --version` prints the version.
 
 Exit codes: `0` success, `1` generation failed or `check` found a difference, `2` bad usage or a config error. Errors name the file, and the option or JSON pointer, with one line per problem.
+
+A schema the generator can't map fails with its location, a stable rule id, the reason and, when there is an obvious fix, a hint:
+
+```text
+error: user.json#/$defs/address: open-object: objects must be closed, unless only used as an allOf base. Hint: add "additionalProperties": false
+```
+
+The rule ids, like `open-object`, `unsupported-keyword`, `unsupported-format`, `union-tag` or `reserved-name`, don't change between releases. `RULES` in the package lists every one with a one line summary.
 
 ### Formatters
 
@@ -46,6 +55,28 @@ Exit codes: `0` success, `1` generation failed or `check` found a difference, `2
 ### `dirs`
 
 `strictgen dirs` prints one folder per line, relative to the current folder, in config order: Rust (and its fixture folder), Go, TypeScript. strictgen clears an owned folder before writing. In a shared folder, like a Go package with hand written tests, it only replaces the files it generated. `--json` prints them as `{ "target", "dir", "shared" }` objects.
+
+### `explain`
+
+`strictgen explain <file.json#/pointer>` shows how one type maps: its model (a struct and its fields, an enum and its values, a union and its branches), then its declaration in Rust, Go and TypeScript, for the targets the config lists only, formatted the way `generate` writes it. Give `user.json` alone for a schema's root type. When a configured formatter isn't installed, the heading says the code is unformatted.
+
+```text
+$ strictgen explain user.json#/$defs/role
+user.json#/$defs/role
+
+Model:
+  enum Role: "owner", "admin", "member"
+
+Rust:
+/// What the user may do.
+...
+```
+
+When the type can't be generated, `explain` prints the rule it breaks, the reason and the hint, per language for a name one language reserves, and exits 1. An unknown file or pointer, or one that names no generated type, exits 2. `--json` prints the model and each target's code or error as JSON.
+
+### Reserved names
+
+A field named like a keyword is escaped where the language allows it: `r#type` and `r#match` in Rust (`self_` and `crate_` for the keywords that can't be raw), the exported field name in Go (`Type`, `Func`, `Default`), and the key as it is in TypeScript, which allows keywords as property names. A type named like a keyword, or like a name the generated code uses itself (`Self`, `Option` or `Deserialize` in Rust, `DecodeError` in Go, `Record` or `Partial` in TypeScript), fails with `reserved-name` and a hint to rename it. Only the configured targets' names apply, so a type named `Record` is fine when TypeScript isn't a target.
 
 ## License
 

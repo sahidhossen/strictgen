@@ -17,6 +17,7 @@ func fixtureDecoders() map[string]func([]byte) (any, error) {
 		"payment-method/bankAccount": asAny(decodeType[BankAccount]),
 		"payment-method/card":        asAny(decodeType[Card]),
 		"payment-method/wallet":      asAny(decodeType[Wallet]),
+		"subscription":               asAny(decodeType[Subscription]),
 		"user":                       asAny(decodeType[User]),
 		"user/role":                  asAny(decodeType[Role]),
 	}
@@ -43,6 +44,7 @@ func unmarshalers() []json.Unmarshaler {
 		new(EventType),
 		new(NonNullJson),
 		new(Role),
+		new(Subscription),
 		new(User),
 		new(UserId),
 		new(Wallet),

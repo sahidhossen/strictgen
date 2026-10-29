@@ -10,7 +10,7 @@ import type {
   UntaggedVariant,
 } from "./model.js";
 import { compare } from "./common.js";
-import { pascal } from "./naming.js";
+import { pascal, RENAME_TYPE } from "./naming.js";
 import type { DefKey, Json, JsonObject, Loc, SchemaSet } from "./schema.js";
 import {
   at,
@@ -71,6 +71,10 @@ const STRUCTURAL = new Set([
 const TYPES = new Set(["object", "array", "string", "integer", "number", "boolean"]);
 /** `date-time` and `date` stay strings, so they re-encode byte for byte. */
 const FORMATS = new Set(["date-time", "date"]);
+/** The hint for a type name that clashes or can't be used. */
+const RENAME = RENAME_TYPE;
+/** The hint for a type that contains itself through aliases. */
+const CYCLE = "wrap the recursive part in an object, so a struct holds it";
 
 /** Which defs become ID types: the defs of `<file>.json` whose names end in `suffix`. */
 export interface IdRule {
@@ -145,7 +149,9 @@ function nameDefs(set: SchemaSet): Map<string, string> {
       if (typeof title !== "string" || pascal(title) === "") {
         fail(
           { file: file.name, pointer: "/title" },
+          "missing-title",
           "a typed schema needs a title to name its root type",
+          'add a "title", like "title": "Order", or move the schema into $defs',
         );
       }
       wanted.set(`${file.name}#`, {
@@ -165,7 +171,10 @@ function nameDefs(set: SchemaSet): Map<string, string> {
     const clash = (counts.get(base) ?? 0) > 1 && key.def !== undefined;
     const name = clash ? pascal(key.file) + base : base;
     const owner = owners.get(name);
-    if (owner !== undefined) fail(keyLoc(key), `type name ${name} is also used by ${owner}`);
+    if (owner !== undefined)
+      fail(keyLoc(key), "name-clash", `type name ${name} is also used by ${owner}`, RENAME);
+    if (!/^[A-Za-z]/.test(name))
+      fail(keyLoc(key), "unsupported-name", `type name ${name} must start with a letter`, RENAME);
     owners.set(name, where(keyLoc(key)));
     names.set(id, name);
   }
@@ -229,12 +238,18 @@ function declareDef(ctx: Ctx, key: DefKey): void {
   if (typeof schema.$ref === "string") {
     const target = resolveRef(ctx.set, schema.$ref, loc);
     if (keyString(target) === keyString(key))
-      fail(at(loc, "$ref"), "a def can't be a $ref to itself");
+      fail(at(loc, "$ref"), "ref-cycle", "a def can't be a $ref to itself");
   }
   const type = typeOf(ctx, schema, loc, name, source);
   const base = { name, doc: docOf(schema), path: where(loc), schema: ctx.file, source };
   if (isIdDef(key, ctx.ids)) {
-    if (type.kind !== "string") fail(loc, "an id must be a string");
+    if (type.kind !== "string")
+      fail(
+        loc,
+        "type-mismatch",
+        "an id must be a string",
+        'give it "type": "string", or rename it so the ids suffix doesn\'t match',
+      );
     add(ctx, { ...base, kind: "id" });
     return;
   }
@@ -244,14 +259,19 @@ function declareDef(ctx: Ctx, key: DefKey): void {
 
 function nameOf(ctx: Ctx, key: DefKey): string {
   const name = ctx.names.get(keyString(key));
-  if (name === undefined) return fail(keyLoc(key), "def has no type name");
+  if (name === undefined) return fail(keyLoc(key), "internal", "def has no type name");
   return name;
 }
 
 function add(ctx: Ctx, decl: Decl): void {
   const other = ctx.decls.get(decl.name);
   if (other !== undefined) {
-    throw new CodegenError(decl.path, `type name ${decl.name} is also used by ${other.path}`);
+    throw new CodegenError(
+      decl.path,
+      "name-clash",
+      `type name ${decl.name} is also used by ${other.path}`,
+      RENAME,
+    );
   }
   ctx.decls.set(decl.name, decl);
 }
@@ -259,7 +279,8 @@ function add(ctx: Ctx, decl: Decl): void {
 /** Reserves `name`, builds its declaration and returns a ref to it. */
 function hoist(ctx: Ctx, name: string, loc: Loc, build: () => Decl): TypeExpr {
   const other = ctx.decls.get(name);
-  if (other !== undefined) fail(loc, `type name ${name} is also used by ${other.path}`);
+  if (other !== undefined)
+    fail(loc, "name-clash", `type name ${name} is also used by ${other.path}`, RENAME);
   add(ctx, build());
   return { kind: "ref", name };
 }
@@ -269,7 +290,7 @@ function docOf(schema: Json | undefined): string {
 }
 
 function schemaObject(value: Json | undefined, loc: Loc): JsonObject {
-  if (!isObject(value)) return fail(loc, "expected a schema object");
+  if (!isObject(value)) return fail(loc, "invalid-schema", "expected a schema object");
   return value;
 }
 
@@ -280,11 +301,27 @@ function checkKeywords(schema: JsonObject, loc: Loc, root: boolean): void {
       CONSTRAINTS.has(key) ||
       STRUCTURAL.has(key) ||
       (root && ROOT_KEYWORDS.has(key));
-    if (!known) fail(at(loc, key), `unsupported keyword ${key}`);
+    if (!known) {
+      fail(
+        at(loc, key),
+        "unsupported-keyword",
+        `unsupported keyword ${key}`,
+        ROOT_KEYWORDS.has(key)
+          ? `${key} is only allowed at the root of a schema file`
+          : 'remove it, or keep the note in "description" or "$comment"',
+      );
+    }
   }
   const type = schema.type;
   if (type !== undefined && (typeof type !== "string" || !TYPES.has(type))) {
-    fail(at(loc, "type"), "type must be one of object, array, string, integer, number or boolean");
+    fail(
+      at(loc, "type"),
+      "unsupported-type",
+      "type must be one of object, array, string, integer, number or boolean",
+      Array.isArray(type) && type.includes("null")
+        ? "use one type and make the key optional instead of allowing null"
+        : "use one of those types, or oneOf for a choice between them",
+    );
   }
 }
 
@@ -294,7 +331,8 @@ function structural(schema: JsonObject): string[] {
 
 function only(schema: JsonObject, loc: Loc, allowed: readonly string[]): void {
   for (const key of structural(schema)) {
-    if (!allowed.includes(key)) fail(at(loc, key), `${key} is not supported here`);
+    if (!allowed.includes(key))
+      fail(at(loc, key), "misplaced-keyword", `${key} is not supported here`);
   }
 }
 
@@ -312,7 +350,11 @@ function typeOf(
   if (keys.length === 0) return { kind: "any" };
   if (schema.not !== undefined && keys.length === 1) {
     if (isNullConst(schema.not)) return { kind: "nonNull" };
-    return fail(at(loc, "not"), 'a schema with only not must be { "not": { "const": null } }');
+    return fail(
+      at(loc, "not"),
+      "unsupported-not",
+      'a schema with only not must be { "not": { "const": null } }',
+    );
   }
   if (schema.const !== undefined) return constType(ctx, schema, loc, name, source);
   if (schema.enum !== undefined) return enumType(ctx, schema, loc, name, source);
@@ -328,13 +370,22 @@ function typeOf(
     case "string":
       only(schema, loc, ["type", "not", "format"]);
       if (schema.not !== undefined && !isStringExclusion(schema.not)) {
-        fail(at(loc, "not"), "not beside a string type may only exclude a pattern or values");
+        fail(
+          at(loc, "not"),
+          "unsupported-not",
+          "not beside a string type may only exclude a pattern or values",
+        );
       }
       if (
         schema.format !== undefined &&
         (typeof schema.format !== "string" || !FORMATS.has(schema.format))
       ) {
-        fail(at(loc, "format"), "only the date-time and date formats are supported");
+        fail(
+          at(loc, "format"),
+          "unsupported-format",
+          "only the date-time and date formats are supported",
+          'remove "format", or check the shape with "pattern"',
+        );
       }
       return { kind: "string" };
     case "integer":
@@ -347,12 +398,18 @@ function typeOf(
     case "object":
       return objectType(ctx, schema, loc, name, source);
     default:
-      return fail(loc, "schema has no type, $ref, const, enum or oneOf");
+      return fail(
+        loc,
+        "missing-type",
+        "schema has no type, $ref, const, enum or oneOf",
+        'add a "type", like "type": "object"',
+      );
   }
 }
 
 function arrayAt(value: Json | undefined, loc: Loc): readonly Json[] {
-  if (!Array.isArray(value) || value.length === 0) return fail(loc, "expected a non-empty array");
+  if (!Array.isArray(value) || value.length === 0)
+    return fail(loc, "invalid-schema", "expected a non-empty array");
   return value as readonly Json[];
 }
 
@@ -374,18 +431,28 @@ function isStringExclusion(value: Json | undefined): boolean {
 
 function refType(ctx: Ctx, schema: JsonObject, loc: Loc): TypeExpr {
   only(schema, loc, ["$ref", "type", "properties"]);
-  if (typeof schema.$ref !== "string") return fail(at(loc, "$ref"), "$ref must be a string");
+  if (typeof schema.$ref !== "string")
+    return fail(at(loc, "$ref"), "invalid-schema", "$ref must be a string");
   // Siblings may only narrow the target, like `properties: { target: false }`. Validators keep that rule.
   if (schema.properties !== undefined) {
     const props = schemaObject(schema.properties, at(loc, "properties"));
     for (const [key, value] of Object.entries(props)) {
       if (value !== false)
-        fail(at(loc, "properties", key), "properties beside $ref may only forbid a key with false");
+        fail(
+          at(loc, "properties", key),
+          "ref-siblings",
+          "properties beside $ref may only forbid a key with false",
+        );
     }
   }
   const key = resolveRef(ctx.set, schema.$ref, loc);
   if (key.def !== undefined && isOpenObject(schemaAt(ctx.set, key))) {
-    fail(loc, `$ref ${schema.$ref} names an open object, which is only allowed as an allOf base`);
+    fail(
+      loc,
+      "open-object",
+      `$ref ${schema.$ref} names an open object, which is only allowed as an allOf base`,
+      'use it in "allOf" beside "unevaluatedProperties": false, or close it',
+    );
   }
   return { kind: "ref", name: nameOf(ctx, key) };
 }
@@ -402,13 +469,17 @@ function constType(
   const want = typeof value === "number" ? ["integer", "number"] : [typeof value];
   const type = typeof schema.type === "string" ? schema.type : undefined;
   if (type !== undefined && !want.includes(type)) {
-    fail(at(loc, "type"), `type ${type} doesn't match the const`);
+    fail(at(loc, "type"), "unsupported-const", `type ${type} doesn't match the const`);
   }
   if ((typeof value === "number" && Number.isInteger(value)) || typeof value === "boolean") {
     return { kind: "literal", value };
   }
   if (typeof value !== "string") {
-    return fail(at(loc, "const"), "const must be a string, an integer or a boolean");
+    return fail(
+      at(loc, "const"),
+      "unsupported-const",
+      "const must be a string, an integer or a boolean",
+    );
   }
   return hoist(ctx, name, loc, () => ({
     kind: "enum",
@@ -424,11 +495,14 @@ function constType(
 function enumType(ctx: Ctx, schema: JsonObject, loc: Loc, name: string, source?: Source): TypeExpr {
   only(schema, loc, ["enum", "type"]);
   if (schema.type !== undefined && schema.type !== "string")
-    fail(at(loc, "type"), "enums must be strings");
+    fail(at(loc, "type"), "unsupported-enum", "enums must be strings");
   const values = arrayAt(schema.enum, at(loc, "enum")).map((v, i) =>
-    typeof v === "string" ? v : fail(at(loc, "enum", i), "enum values must be strings"),
+    typeof v === "string"
+      ? v
+      : fail(at(loc, "enum", i), "unsupported-enum", "enum values must be strings"),
   );
-  if (new Set(values).size !== values.length) fail(at(loc, "enum"), "enum values must be unique");
+  if (new Set(values).size !== values.length)
+    fail(at(loc, "enum"), "unsupported-enum", "enum values must be unique");
   return hoist(ctx, name, loc, () => ({
     kind: "enum",
     name,
@@ -456,11 +530,17 @@ function arrayType(
       checkKeywords(fragment, entryLoc, false);
       only(fragment, entryLoc, ["type"]);
       if (fragment.type !== undefined && fragment.type !== "array")
-        fail(at(entryLoc, "type"), "expected type array");
+        fail(at(entryLoc, "type"), "type-mismatch", "expected type array");
     });
   }
   if (lifted !== undefined) return { kind: "array", items: lifted };
-  if (schema.items === undefined) return fail(loc, "an array needs items");
+  if (schema.items === undefined)
+    return fail(
+      loc,
+      "missing-items",
+      "an array needs items",
+      'add "items", like "items": { "type": "string" }',
+    );
   return { kind: "array", items: typeOf(ctx, schema.items, at(loc, "items"), `${name}Item`) };
 }
 
@@ -477,7 +557,12 @@ function objectType(
     only(schema, loc, ["type", "propertyNames", "additionalProperties"]);
     const values = schema.additionalProperties;
     if (!isObject(values))
-      return fail(loc, "a map needs an additionalProperties schema for its values");
+      return fail(
+        loc,
+        "map-values",
+        "a map needs an additionalProperties schema for its values",
+        'add "additionalProperties" with the value schema, like { "type": "string" }',
+      );
     const key =
       schema.propertyNames === undefined
         ? { kind: "string" as const }
@@ -497,13 +582,13 @@ function keyType(ctx: Ctx, value: Json, loc: Loc, name: string): TypeExpr {
   if (schema.$ref !== undefined) {
     const target = deref(ctx, schema, loc).schema;
     if (target.type !== "string" && target.enum === undefined) {
-      fail(loc, "a map key $ref must name a string or a string enum");
+      fail(loc, "unsupported-map-key", "a map key $ref must name a string or a string enum");
     }
     return typeOf(ctx, schema, loc, name);
   }
   if (schema.enum !== undefined) return typeOf(ctx, schema, loc, name);
   only(schema, loc, ["type"]);
-  if (schema.type !== "string") fail(loc, "map keys must be strings");
+  if (schema.type !== "string") fail(loc, "unsupported-map-key", "map keys must be strings");
   return { kind: "string" };
 }
 
@@ -533,13 +618,31 @@ function structDecl(ctx: Ctx, name: string, schema: JsonObject, loc: Loc, source
     ? restOf(ctx, schema, loc, name, props)
     : undefined;
   if (rest === undefined && schema.propertyNames !== undefined) {
-    fail(at(loc, "propertyNames"), "propertyNames needs an additionalProperties schema");
+    fail(
+      at(loc, "propertyNames"),
+      "map-values",
+      "propertyNames needs an additionalProperties schema",
+      'add "additionalProperties" with the schema of the other keys\' values',
+    );
   }
   if (!closed && rest === undefined) {
-    fail(loc, "an open object is only allowed as an allOf base");
+    fail(
+      loc,
+      "open-object",
+      "objects must be closed, unless only used as an allOf base",
+      schema.allOf === undefined
+        ? 'add "additionalProperties": false'
+        : 'add "unevaluatedProperties": false',
+    );
   }
   for (const key of required) {
-    if (!props.has(key)) fail(at(loc, "required"), `required key ${key} has no property schema`);
+    if (!props.has(key))
+      fail(
+        at(loc, "required"),
+        "undeclared-key",
+        `required key ${key} has no property schema`,
+        `add ${key} to "properties"`,
+      );
   }
   const fields = fieldsOf(ctx, name, props, required, liftItems(ctx, name, conditionals, props));
   if (schema.anyOf !== undefined) requiredOnly(schema.anyOf, at(loc, "anyOf"), props); // An at least one rule.
@@ -559,17 +662,29 @@ function structDecl(ctx: Ctx, name: string, schema: JsonObject, loc: Loc, source
 /** Checks how an object is closed, and returns true when unknown keys are rejected. */
 function checkClosing(schema: JsonObject, loc: Loc): boolean {
   if (schema.unevaluatedProperties !== undefined && schema.unevaluatedProperties !== false) {
-    fail(at(loc, "unevaluatedProperties"), "unevaluatedProperties must be false");
+    fail(
+      at(loc, "unevaluatedProperties"),
+      "open-object",
+      "unevaluatedProperties must be false",
+      'set "unevaluatedProperties": false, or use "additionalProperties" with a schema for a map',
+    );
   }
   if (schema.additionalProperties === true) {
     fail(
       at(loc, "additionalProperties"),
+      "open-object",
       "open objects with additionalProperties true are not supported",
+      'set "additionalProperties": false, or give it the schema of the extra values',
     );
   }
   if (schema.additionalProperties === false && schema.allOf !== undefined) {
     // additionalProperties doesn't see keys from allOf, so it would reject every base key.
-    fail(at(loc, "additionalProperties"), "use unevaluatedProperties false beside allOf");
+    fail(
+      at(loc, "additionalProperties"),
+      "closed-with-allof",
+      "use unevaluatedProperties false beside allOf",
+      'replace "additionalProperties": false with "unevaluatedProperties": false',
+    );
   }
   return schema.unevaluatedProperties === false || schema.additionalProperties === false;
 }
@@ -594,7 +709,13 @@ function fieldsOf(
 
 /** An exactly-one oneOf of required-only branches, like a contact's email or phone: one struct per choice. */
 function exclusive(ctx: Ctx, whole: StructDecl, choices: readonly string[][], loc: Loc): Decl {
-  if (!whole.closed) fail(at(loc, "oneOf"), "an exactly-one oneOf needs a closed object");
+  if (!whole.closed)
+    fail(
+      at(loc, "oneOf"),
+      "open-object",
+      "an exactly-one oneOf needs a closed object",
+      'add "unevaluatedProperties": false',
+    );
   const choiceKeys = new Set(choices.flat());
   const variants: UntaggedVariant[] = choices.map((keys) => {
     const variant = pascal(keys.join(" "));
@@ -632,10 +753,12 @@ function collect(
         conditionals.push(conditional(fragment, entryLoc));
       } else if (fragment.$ref !== undefined) {
         only(fragment, entryLoc, ["$ref"]);
-        if (typeof fragment.$ref !== "string") fail(at(entryLoc, "$ref"), "$ref must be a string");
+        if (typeof fragment.$ref !== "string")
+          fail(at(entryLoc, "$ref"), "invalid-schema", "$ref must be a string");
         const key = resolveRef(ctx.set, fragment.$ref, entryLoc);
         const target = schemaAt(ctx.set, key);
-        if (target.type !== "object") fail(entryLoc, "an allOf base must be an object");
+        if (target.type !== "object")
+          fail(entryLoc, "type-mismatch", "an allOf base must be an object");
         checkFragment(target, keyLoc(key));
         collect(ctx, target, keyLoc(key), props, required, conditionals);
       } else {
@@ -653,14 +776,21 @@ function collect(
       if (value === true) {
         // Redeclared as true for Ajv strictRequired. The schema comes from a base.
         if (existing === undefined)
-          fail(propLoc, `property ${key} is true but no base declares it`);
+          fail(
+            propLoc,
+            "undeclared-key",
+            `property ${key} is true but no base declares it`,
+            `give ${key} a schema, or declare it in an allOf base`,
+          );
         continue;
       }
       const prop = schemaObject(value, propLoc);
       if (existing !== undefined && !sameJson(existing.schema, prop)) {
         fail(
           propLoc,
+          "property-redeclared",
           `property ${key} is redeclared with another schema (first at ${where(existing.loc)})`,
+          `declare ${key} once, or redeclare it as true`,
         );
       }
       if (existing === undefined) props.set(key, { schema: prop, loc: propLoc });
@@ -668,7 +798,8 @@ function collect(
   }
   if (schema.required !== undefined) {
     arrayAt(schema.required, at(loc, "required")).forEach((key, i) => {
-      if (typeof key !== "string") fail(at(loc, "required", i), "required keys must be strings");
+      if (typeof key !== "string")
+        fail(at(loc, "required", i), "invalid-schema", "required keys must be strings");
       required.add(key);
     });
   }
@@ -686,7 +817,7 @@ function checkFragment(fragment: JsonObject, loc: Loc): void {
     "unevaluatedProperties",
   ]);
   if (fragment.type !== undefined && fragment.type !== "object")
-    fail(at(loc, "type"), "expected type object");
+    fail(at(loc, "type"), "type-mismatch", "expected type object");
 }
 
 function conditional(schema: JsonObject, loc: Loc): Conditional {
@@ -727,7 +858,12 @@ function liftItems(
         const prop = props.get(key);
         const propLoc = at(branch.loc, "properties", key);
         if (prop === undefined)
-          fail(propLoc, `conditional property ${key} is not declared on the object`);
+          fail(
+            propLoc,
+            "undeclared-key",
+            `conditional property ${key} is not declared on the object`,
+            `add ${key} to the object's "properties"`,
+          );
         if (
           isObject(value) &&
           value.items !== undefined &&
@@ -773,13 +909,23 @@ function requiredOnly(value: Json, loc: Loc, props: ReadonlyMap<string, Prop>): 
         schemaObject(branch.properties, at(branchLoc, "properties")),
       )) {
         if (v !== true)
-          fail(at(branchLoc, "properties", key), "branch properties may only be true");
+          fail(
+            at(branchLoc, "properties", key),
+            "unsupported-branch",
+            "branch properties may only be true",
+            "declare the property's schema on the object and list it as true in the branch",
+          );
       }
     }
     const keys = arrayAt(branch.required, at(branchLoc, "required")).map((k, j) =>
       typeof k === "string" && props.has(k)
         ? k
-        : fail(at(branchLoc, "required", j), "required key has no property"),
+        : fail(
+            at(branchLoc, "required", j),
+            "undeclared-key",
+            "required key has no property",
+            "declare the key in the object's properties",
+          ),
     );
     return keys;
   });
@@ -811,12 +957,22 @@ function restOf(
   const others = arrayAt(keySchema.anyOf, at(namesLoc, "anyOf")).filter((branch, i) => {
     const branchLoc = at(namesLoc, "anyOf", i);
     if (!isObject(branch) || typeof branch.const !== "string") return true;
-    if (!props.has(branch.const)) fail(branchLoc, `key ${branch.const} has no property schema`);
+    if (!props.has(branch.const))
+      fail(
+        branchLoc,
+        "undeclared-key",
+        `key ${branch.const} has no property schema`,
+        `add ${branch.const} to "properties"`,
+      );
     return false;
   });
   const [other] = others;
   if (others.length !== 1 || other === undefined) {
-    return fail(namesLoc, "propertyNames anyOf needs one non-const branch for the other keys");
+    return fail(
+      namesLoc,
+      "unsupported-branch",
+      "propertyNames anyOf needs one non-const branch for the other keys",
+    );
   }
   return { key: keyType(ctx, other, namesLoc, `${name}Key`), value };
 }
@@ -838,7 +994,8 @@ function unionDecl(
     const variants: TaggedVariant[] = leaves.map((leaf, i) => {
       const value = tag.values[i] ?? "";
       const type = typeOf(ctx, leaf.schema, leaf.loc, `${name}${pascal(value)}`);
-      if (type.kind !== "ref") return fail(leaf.loc, "a tagged branch must be an object");
+      if (type.kind !== "ref")
+        return fail(leaf.loc, "type-mismatch", "a tagged branch must be an object");
       return { value, type: type.name, boxed: false };
     });
     return { ...base, kind: "tagged", tag: tag.key, variants };
@@ -850,7 +1007,13 @@ function unionDecl(
   const variants: UntaggedVariant[] = ranked.map(({ branch, index }) => {
     const type = typeOf(ctx, branch.schema, branch.loc, `${name}Variant${String(index + 1)}`);
     const variant = untaggedName(type);
-    if (seen.has(variant)) fail(branch.loc, `two branches of the union are both named ${variant}`);
+    if (seen.has(variant))
+      fail(
+        branch.loc,
+        "untagged-union",
+        `two branches of the union are both named ${variant}`,
+        'give every branch a required tag property with a distinct const, like "type": { "const": "card" }',
+      );
     seen.add(variant);
     return { name: variant, type, boxed: false };
   });
@@ -878,7 +1041,7 @@ function deref(ctx: Ctx, schema: Json, loc: Loc): { schema: JsonObject; loc: Loc
   let current = schemaObject(schema, loc);
   let currentLoc = loc;
   for (let depth = 0; typeof current.$ref === "string"; depth++) {
-    if (depth > 32) fail(loc, "$ref chain is too deep");
+    if (depth > 32) fail(loc, "ref-cycle", "$ref chain is too deep");
     const key = resolveRef(ctx.set, current.$ref, currentLoc);
     current = schemaAt(ctx.set, key);
     currentLoc = keyLoc(key);
@@ -948,7 +1111,12 @@ function tagOf(
   // A const some branches carry and others don't, or with repeated values, is a broken tag.
   const [partial] = keys;
   if (partial !== undefined) {
-    fail(loc, `branches carry the tag ${partial} only partly, or repeat its values`);
+    fail(
+      loc,
+      "union-tag",
+      `branches carry the tag ${partial} only partly, or repeat its values`,
+      `make ${partial} a required string const on every branch, with a different value on each`,
+    );
   }
   return undefined;
 }
@@ -991,7 +1159,7 @@ function resolveAlias(ctx: Ctx, type: TypeExpr): string | undefined {
     const decl = ctx.decls.get(current.name);
     if (decl?.kind !== "alias") return current.name;
     if (depth > ctx.decls.size)
-      throw new CodegenError(decl.path, `alias cycle through ${decl.name}`);
+      throw new CodegenError(decl.path, "alias-cycle", `alias cycle through ${decl.name}`, CYCLE);
     current = decl.type;
   }
   return undefined;
@@ -1018,7 +1186,12 @@ function checkAliasCycles(ctx: Ctx): void {
     while (stack.length > 0) {
       const next = stack.pop() ?? "";
       if (next === decl.name)
-        throw new CodegenError(decl.path, `alias ${decl.name} contains itself`);
+        throw new CodegenError(
+          decl.path,
+          "alias-cycle",
+          `alias ${decl.name} contains itself`,
+          CYCLE,
+        );
       const target = ctx.decls.get(next);
       if (seen.has(next) || target?.kind !== "alias") continue;
       seen.add(next);
