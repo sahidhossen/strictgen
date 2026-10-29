@@ -1,6 +1,6 @@
 import { ANNOTATIONS } from "./build.js";
 import type { EmittedFile } from "./common.js";
-import { HEADER } from "./common.js";
+import { commentHeader, DEFAULT_HEADER } from "./common.js";
 import type { Json, SchemaSet } from "./schema.js";
 import { isObject } from "./schema.js";
 
@@ -72,10 +72,13 @@ function entries(set: SchemaSet): string {
  * Emits `schemas.rs`, declared as `pub mod schemas`: every schema's JSON text by name, minified
  * and without annotations, so a Rust validator can load them without file access.
  */
-export function emitRustSchemas(set: SchemaSet): EmittedFile {
+export function emitRustSchemas(
+  set: SchemaSet,
+  options: { readonly header?: string } = {},
+): EmittedFile {
   return {
     name: "schemas.rs",
-    contents: `${HEADER}
+    contents: `${commentHeader(options.header ?? DEFAULT_HEADER)}
 
 //! The JSON Schemas of the set, minified and without annotations, for a validator.
 

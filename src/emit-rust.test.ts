@@ -1,8 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildModel } from "./build.js";
-import { HEADER } from "./common.js";
-import { emitRust, emitRustRoots } from "./emit-rust.js";
+import { emitRust } from "./emit-rust.js";
 import type { JsonObject } from "./schema.js";
 import { schemaSet } from "./schema.js";
 
@@ -17,36 +16,6 @@ function schema(name: string, body: JsonObject): JsonObject {
     ...body,
   };
 }
-
-describe("emitRustRoots", () => {
-  const model = buildModel(
-    schemaSet({
-      point: schema("point", {
-        type: "object",
-        properties: { x: { description: "X.", type: "integer" } },
-        required: ["x"],
-        unevaluatedProperties: false,
-        $defs: { label: { description: "A label.", type: "string" } },
-      }),
-      common: schema("common", {
-        $defs: { name: { description: "A name.", type: "string" } },
-      }),
-    }),
-  );
-  const file = emitRustRoots(model);
-
-  it("decodes each schema with a root type by its name, strictly", () => {
-    expect(file.name).toBe("roots.rs");
-    expect(file.contents.startsWith(`${HEADER}\n`)).toBe(true);
-    expect(file.contents).toContain('"point" => run::<crate::Point>(bytes),');
-    expect(file.contents).toContain("crate::json::decode(bytes)?");
-  });
-
-  it("leaves out defs and definitions-only schemas", () => {
-    expect(file.contents).not.toContain('"common"');
-    expect(file.contents).not.toContain("Label");
-  });
-});
 
 describe("untagged unions", () => {
   const model = buildModel(

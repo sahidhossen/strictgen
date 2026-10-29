@@ -1,18 +1,27 @@
 import type { EmittedFile } from "./common.js";
-import { bySchema, declTypes, HEADER, imports } from "./common.js";
+import { bySchema, commentHeader, DEFAULT_HEADER, declTypes, imports } from "./common.js";
 import { CodegenError } from "./schema.js";
 import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const WIDTH = 100;
 
+/** Options for {@link emitTypeScript}. */
+export interface TypeScriptOptions {
+  /** The header text each file starts with, as a comment. */
+  readonly header?: string;
+  /** Modules written by another emitter whose values `index.ts` re-exports. */
+  readonly valueModules?: readonly string[];
+}
+
 /**
  * Emits the TypeScript files for the folder the TypeScript target owns: one file per
  * schema, named after the schema file, importing the types it uses from the
- * others, and `index.ts`, which re-exports every type, and the values of `valueModules`,
- * modules written by another emitter.
+ * others, and `index.ts`, which re-exports every type, and the values of `valueModules`.
  */
-export function emitTypeScript(model: Model, valueModules: readonly string[] = []): EmittedFile[] {
+export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): EmittedFile[] {
+  const header = commentHeader(options.header ?? DEFAULT_HEADER);
+  const valueModules = options.valueModules ?? [];
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   const files = [...bySchema(model)].map(([schema, own]) => {
     if (schema === "index")
@@ -21,7 +30,7 @@ export function emitTypeScript(model: Model, valueModules: readonly string[] = [
       ([other, names]) => `import type { ${names.join(", ")} } from "./${other}.js";\n`,
     );
     const body = own.map((decl) => declaration(decl, decls)).join("\n");
-    const head = `${HEADER}\n\n/** Types for \`${schema}.json\`. */\n\n`;
+    const head = `${header}\n\n/** Types for \`${schema}.json\`. */\n\n`;
     return {
       name: `${schema}.ts`,
       contents: `${head}${uses.length > 0 ? `${uses.join("")}\n` : ""}${body}`,
@@ -31,7 +40,7 @@ export function emitTypeScript(model: Model, valueModules: readonly string[] = [
     ...files.map((f) => `export type * from "./${f.name.replace(/\.ts$/, ".js")}";\n`),
     ...valueModules.map((m) => `export * from "./${m}.js";\n`),
   ];
-  return [...files, { name: "index.ts", contents: `${HEADER}\n\n${index.join("")}` }];
+  return [...files, { name: "index.ts", contents: `${header}\n\n${index.join("")}` }];
 }
 
 /** The types the TypeScript output names: a rest map's keys are typed as `string` by the index signature. */
