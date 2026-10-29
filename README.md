@@ -16,13 +16,13 @@ A `strictgen.json` at the project root drives everything. Paths are relative to 
   "schemas": "schemas",
   "targets": {
     "rust": { "out": "rust/src/generated" },
-    "go": { "out": "go/types", "package": "types" },
+    "go": { "out": "go/types", "package": "types", "fixtures": true },
     "typescript": { "out": "src/generated" }
   }
 }
 ```
 
-[`strictgen.schema.json`](strictgen.schema.json) documents every option and its default. [`examples/basic`](examples/basic) has a full example.
+Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`. [`strictgen.schema.json`](strictgen.schema.json) documents every option and its default. [`examples/basic`](examples/basic) has a full example.
 
 ## License
 

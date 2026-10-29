@@ -47,6 +47,8 @@ export interface GoConfig {
   readonly out: string;
   readonly package: string;
   readonly shared: boolean;
+  /** Writes `registry_test.go`, the fixture registry. */
+  readonly fixtures: boolean;
   readonly read: ReadMode;
 }
 
@@ -330,7 +332,7 @@ function readAllow(r: Reader, value: unknown): LintAllow[] {
 
 function readGo(r: Reader, value: unknown, path: Resolve): GoConfig {
   const at = "targets.go";
-  const o = r.object(value, at, ["out", "package", "shared", "read"]);
+  const o = r.object(value, at, ["out", "package", "shared", "fixtures", "read"]);
   const out = path(r.required(o, at, "out"), `${at}.out`);
   const pkg =
     o.package === undefined
@@ -343,6 +345,7 @@ function readGo(r: Reader, value: unknown, path: Resolve): GoConfig {
     out,
     package: pkg,
     shared: r.boolean(o.shared, `${at}.shared`, true),
+    fixtures: r.boolean(o.fixtures, `${at}.fixtures`, false),
     read: r.oneOf(o.read, `${at}.read`, READ_MODES, "strict"),
   };
 }

@@ -63,8 +63,8 @@ function rustTarget(config: Config, rust: RustConfig): Target {
 }
 
 /**
- * Go writes one package: a file per schema, `helpers.go`, the fixture registry and a
- * `.gitattributes` that marks them. A shared folder keeps its hand written files.
+ * Go writes one package: a file per schema, `helpers.go`, the fixture registry when it is on,
+ * and a `.gitattributes` that marks them. A shared folder keeps its hand written files.
  */
 function goTarget(config: Config, go: GoConfig): Target {
   const out = under(config.root, go.out);
@@ -74,13 +74,18 @@ function goTarget(config: Config, go: GoConfig): Target {
     dirs: go.shared ? [] : [out],
     ...(go.shared ? { shared: [out] } : {}),
     emit: (model) => {
-      const files = emitGo(model, options);
+      const files = [
+        ...emitGo(model, options),
+        ...(go.fixtures ? [{ name: GO_FIXTURES, contents: emitGoFixtures(model, options) }] : []),
+      ];
       return [
         ...placed(out, files),
-        { path: `${out}/${GO_FIXTURES}`, contents: emitGoFixtures(model, options) },
         {
           path: `${out}/.gitattributes`,
-          contents: emitGoAttributes([...files.map((f) => f.name), GO_FIXTURES], options),
+          contents: emitGoAttributes(
+            files.map((f) => f.name),
+            options,
+          ),
         },
       ];
     },

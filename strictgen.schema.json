@@ -207,7 +207,7 @@
       "additionalProperties": false
     },
     "go": {
-      "description": "The Go target: a file per schema and helpers.go, all in one package, plus registry_test.go for fixture tests and a .gitattributes that marks the generated files.",
+      "description": "The Go target: a file per schema and helpers.go, all in one package, a .gitattributes that marks the generated files, and registry_test.go for fixture tests when fixtures is on.",
       "type": "object",
       "properties": {
         "out": {
@@ -249,6 +249,11 @@
             ]
           },
           "default": "types"
+        },
+        "fixtures": {
+          "description": "Writes registry_test.go, the fixture registry: a test file in the package that decodes each fixture folder with the type generated for it. Off by default.",
+          "type": "boolean",
+          "default": false
         },
         "shared": {
           "description": "true when the folder also holds hand written files, like go.mod and tests: only the files that start with the header are removed before writing. false clears the whole folder.",

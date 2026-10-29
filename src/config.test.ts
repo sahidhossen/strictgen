@@ -49,7 +49,7 @@ const FULL = {
       embedSchemas: true,
       read: "report",
     },
-    go: { out: "go/types", package: "orders", shared: false, read: "strict" },
+    go: { out: "go/types", package: "orders", shared: false, fixtures: true, read: "strict" },
     typescript: { out: "src/generated", decoders: false, read: "report" },
   },
   llm: { profiles: ["openai", "anthropic"], out: "llm", cleanup: true },
@@ -86,11 +86,12 @@ describe("config defaults", () => {
     );
   });
 
-  it("puts Go in the package types, in a shared folder", () => {
+  it("puts Go in the package types, in a shared folder, without a fixture registry", () => {
     expect(parse({ targets: { go: { out: "go" } } }).targets.go).toEqual({
       out: join(ROOT, "go"),
       package: "types",
       shared: true,
+      fixtures: false,
       read: "strict",
     });
   });
@@ -118,6 +119,7 @@ describe("config defaults", () => {
       out: join(ROOT, "go/types"),
       package: "orders",
       shared: false,
+      fixtures: true,
       read: "strict",
     });
     expect(config.targets.typescript).toEqual({
@@ -146,6 +148,7 @@ describe("config defaults", () => {
     const go = defs.go?.properties ?? {};
     expect(go.package?.default).toBe(config.targets.go?.package);
     expect(go.shared?.default).toBe(config.targets.go?.shared);
+    expect(go.fixtures?.default).toBe(config.targets.go?.fixtures);
     expect(defs.typescript?.properties.decoders?.default).toBe(config.targets.typescript?.decoders);
     expect((defs.read as { default?: unknown } | undefined)?.default).toBe("strict");
   });
@@ -231,6 +234,7 @@ const INVALID: readonly (readonly [string, unknown, string, string])[] = [
   ["Go package starting with a digit", { targets: { go: { out: "g", package: "2types" } } }, "targets.go.package", "is not a Go identifier"],
   ["Go package that is a keyword", { targets: { go: { out: "g", package: "type" } } }, "targets.go.package", "can't name a Go package"],
   ["Go package _", { targets: { go: { out: "g", package: "_" } } }, "targets.go.package", "can't name a Go package"],
+  ["Go fixtures not a boolean", { targets: { go: { out: "g", fixtures: { out: "t" } } } }, "targets.go.fixtures", "true or false"],
   ["shared not a boolean", { targets: { go: { out: "g", shared: "yes" } } }, "targets.go.shared", "true or false"],
   ["llm without profiles", { targets: ts, llm: { out: "llm" } }, "llm.profiles", "is required"],
   ["llm with no profile", { targets: ts, llm: { profiles: [], out: "llm" } }, "llm.profiles", "at least one"],
@@ -275,7 +279,7 @@ describe("config validation", () => {
 
   it("lists the known options of an object with an unknown one", () => {
     expect(failure({ targets: { go: { out: "g", pkg: "x" } } }).problem).toBe(
-      "unknown option. Known options: out, package, shared, read",
+      "unknown option. Known options: out, package, shared, fixtures, read",
     );
   });
 });

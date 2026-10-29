@@ -7,7 +7,7 @@
       "out": "rust/src/generated",
       "fixtures": { "out": "rust/tests/generated", "crate": "example_basic" }
     },
-    "go": { "out": "go", "package": "types", "shared": true },
+    "go": { "out": "go", "package": "types", "shared": true, "fixtures": true },
     "typescript": { "out": "ts/generated" }
   }
 }

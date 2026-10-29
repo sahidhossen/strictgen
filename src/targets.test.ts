@@ -70,10 +70,9 @@ describe("config targets", () => {
       "rust/src/generated/order.rs",
       "go/helpers.go",
       "go/order.go",
-      "go/registry_test.go",
       "go/.gitattributes",
     ]);
-    expect(run(config)).toEqual({ code: 0, lines: ["Generated 7 files for rust, go."] });
+    expect(run(config)).toEqual({ code: 0, lines: ["Generated 6 files for rust, go."] });
     expect(existsSync(join(config.root, "ts"))).toBe(false);
   });
 
@@ -117,7 +116,7 @@ describe("config header", () => {
   it("starts every file with the configured header", () => {
     const config = project({
       header: "Generated from schemas/, do not edit.",
-      targets: { rust: { ...rust, embedSchemas: true, fixtures: { out: "rust/tests/generated", crate: "orders" } }, go, typescript },
+      targets: { rust: { ...rust, embedSchemas: true, fixtures: { out: "rust/tests/generated", crate: "orders" } }, go: { ...go, fixtures: true }, typescript },
     });
     const all = files(config);
     expect(all).toHaveLength(11);
@@ -202,6 +201,26 @@ describe("config Rust target", () => {
 });
 
 describe("config Go target", () => {
+  it("writes no fixture registry unless asked, and leaves it out of .gitattributes", () => {
+    const config = project({ targets: { go } });
+    expect(files(config).map((f) => f.path)).toEqual(["go/helpers.go", "go/order.go", "go/.gitattributes"]);
+    const attributes = contents(config, "go/.gitattributes");
+    expect(attributes).not.toContain("registry_test.go");
+    expect(attributes).toContain("order.go linguist-generated=true\n");
+  });
+
+  it("writes registry_test.go in the package folder when fixtures is on", () => {
+    const config = project({ targets: { go: { ...go, package: "orders", fixtures: true } } });
+    expect(files(config).map((f) => f.path)).toEqual([
+      "go/helpers.go",
+      "go/order.go",
+      "go/registry_test.go",
+      "go/.gitattributes",
+    ]);
+    expect(contents(config, "go/registry_test.go")).toContain("package orders\n");
+    expect(contents(config, "go/.gitattributes")).toContain("registry_test.go linguist-generated=true\n");
+  });
+
   it("puts every file in the configured package", () => {
     const config = project({ targets: { go: { ...go, package: "orders" } } });
     for (const file of files(config).filter((f) => f.path.endsWith(".go"))) {
