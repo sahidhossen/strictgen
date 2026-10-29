@@ -18,6 +18,7 @@ pub fn round_trip(schema: &str, def: Option<&str>, json: &str) -> Option<Result<
         ("payment-method", Some("bankAccount")) => run::<example_basic::BankAccount>(json),
         ("payment-method", Some("card")) => run::<example_basic::Card>(json),
         ("payment-method", Some("wallet")) => run::<example_basic::Wallet>(json),
+        ("subscription", None) => run::<example_basic::Subscription>(json),
         ("user", None) => run::<example_basic::User>(json),
         ("user", Some("role")) => run::<example_basic::Role>(json),
         _ => return None,

@@ -86,7 +86,9 @@ function checkWrite(
       if (within(kept, path)) {
         throw new CodegenError(
           dir,
-          `refusing to clear this folder: it holds ${kept}. Fix: point the target at a folder of its own`,
+          "output-conflict",
+          `refusing to clear this folder: it holds ${kept}`,
+          "point the target at a folder of its own",
         );
       }
     }
@@ -98,14 +100,17 @@ function checkWrite(
     if (!statSync(path).isFile()) {
       throw new CodegenError(
         file.path,
-        "a folder is in the way of a generated file. Fix: move what it holds elsewhere and remove it",
+        "output-conflict",
+        "a folder is in the way of a generated file",
+        "move what it holds elsewhere and remove it",
       );
     }
     if (!isGenerated(readFileSync(path, "utf8"), header)) {
       throw new CodegenError(
         file.path,
-        "a hand written file is in the way of a generated one, and strictgen won't overwrite it. " +
-          "Fix: move what it holds elsewhere (for .gitattributes, to one in a parent folder) and remove it",
+        "output-conflict",
+        "a hand written file is in the way of a generated one, and strictgen won't overwrite it",
+        "move what it holds elsewhere (for .gitattributes, to one in a parent folder) and remove it",
       );
     }
   }
@@ -149,7 +154,11 @@ export function writeOutput(
 export function writeError(rootDir: string, error: unknown): unknown {
   if (!isFsError(error)) return error;
   const path = error.path === undefined ? "." : relative(rootDir, error.path).split(sep).join("/");
-  return new CodegenError(path === "" ? "." : path, `can't write the output: ${fsReason(error)}`);
+  return new CodegenError(
+    path === "" ? "." : path,
+    "write-failed",
+    `can't write the output: ${fsReason(error)}`,
+  );
 }
 
 /** Receives one line of output, without a trailing newline. */

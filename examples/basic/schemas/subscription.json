@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/subscription.json",
+  "title": "Subscription",
+  "description": "Where webhook events are delivered. Several keys are keywords in Rust, Go or TypeScript, so the generated field names show how each language escapes them.",
+  "type": "object",
+  "properties": {
+    "url": { "description": "The endpoint events are posted to.", "type": "string" },
+    "match": {
+      "description": "The event types delivered to this endpoint.",
+      "type": "array",
+      "items": { "$ref": "https://example.com/schemas/v1/event.json#/$defs/eventType" }
+    },
+    "default": {
+      "description": "True when events no other subscription matches go here.",
+      "type": "boolean"
+    },
+    "async": {
+      "description": "True to deliver without waiting for the endpoint's reply.",
+      "type": "boolean"
+    },
+    "select": {
+      "description": "The top-level event keys to send. Every key when absent.",
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "self": { "description": "The URL of this subscription in the API.", "type": "string" }
+  },
+  "required": ["url", "match", "default"],
+  "unevaluatedProperties": false
+}

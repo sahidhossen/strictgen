@@ -156,7 +156,7 @@ describe("main", () => {
     expect(run(root)).toEqual({
       code: 1,
       lines: [
-        "point.json#/properties/x/type: type must be one of object, array, string, integer, number or boolean",
+        "point.json#/properties/x/type: unsupported-type: type must be one of object, array, string, integer, number or boolean. Hint: use one of those types, or oneOf for a choice between them",
       ],
     });
     expect(existsSync(join(root, "ts/generated"))).toBe(false);

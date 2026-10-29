@@ -20,10 +20,12 @@ mod common;
 mod event;
 mod helpers;
 mod payment_method;
+mod subscription;
 mod user;
 
 pub use common::*;
 pub use event::*;
 pub use helpers::NonNullJson;
 pub use payment_method::*;
+pub use subscription::*;
 pub use user::*;

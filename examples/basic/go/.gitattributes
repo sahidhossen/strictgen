@@ -5,4 +5,5 @@ event.go linguist-generated=true
 helpers.go linguist-generated=true
 payment_method.go linguist-generated=true
 registry_test.go linguist-generated=true
+subscription.go linguist-generated=true
 user.go linguist-generated=true

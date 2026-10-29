@@ -10,7 +10,7 @@ import type {
   TypeExpr,
   UntaggedDecl,
 } from "./model.js";
-import { pascal, variantName } from "./naming.js";
+import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
 
 /** The Go package every generated file belongs to, unless the options name another. */
@@ -125,7 +125,12 @@ export function fileName(schema: string, path: string): string {
     `${name}.go` === GO_HELPERS ||
     `${name}.go` === GO_FIXTURES
   ) {
-    throw new CodegenError(path, `schema file ${schema} has no safe Go file name`);
+    throw new CodegenError(
+      path,
+      "unsupported-name",
+      `schema file ${schema} has no safe Go file name`,
+      "rename the schema file, so it doesn't end in a Go build suffix like -test or -linux",
+    );
   }
   return `${name}.go`;
 }
@@ -149,12 +154,23 @@ function checkNames(model: Model): void {
   const claim = (name: string, path: string): void => {
     const other = owners.get(name);
     if (other !== undefined)
-      throw new CodegenError(path, `Go name ${name} is also used by ${other}`);
+      throw new CodegenError(
+        path,
+        "name-clash",
+        `Go name ${name} is also used by ${other}`,
+        RENAME_TYPE,
+      );
     owners.set(name, path);
   };
   for (const decl of model.decls) {
-    if (RESERVED.has(decl.name) || /^Const(Int|Bool)/.test(decl.name)) {
-      throw new CodegenError(decl.path, `type name ${decl.name} is reserved in Go`);
+    const name = decl.name;
+    if (RESERVED.has(name) || GO_KEYWORDS.has(name) || /^Const(Int|Bool)/.test(name)) {
+      throw new CodegenError(
+        decl.path,
+        "reserved-name",
+        `type name ${decl.name} is reserved in Go`,
+        RENAME_TYPE,
+      );
     }
     claim(decl.name, decl.path);
     if (decl.kind === "enum") for (const c of enumConsts(decl)) claim(c.name, decl.path);
@@ -233,11 +249,34 @@ function fieldNames(decl: StructDecl): string[] {
   const names = decl.fields.map((f) => {
     const name = pascal(f.name);
     if (!/^[A-Z][A-Za-z0-9]*$/.test(name))
-      throw new CodegenError(decl.path, `key ${f.name} has no Go field name`);
+      throw new CodegenError(
+        decl.path,
+        "unsupported-name",
+        `key ${f.name} has no Go field name`,
+        "start the key with a letter",
+      );
     if (!TAG_NAME.test(f.name))
-      throw new CodegenError(decl.path, `key ${f.name} can't be a Go struct tag`);
-    if (seen.has(name) || METHODS.has(name) || (decl.rest !== undefined && name === "Rest")) {
-      throw new CodegenError(decl.path, `two keys map to the Go field ${name}`);
+      throw new CodegenError(
+        decl.path,
+        "unsupported-name",
+        `key ${f.name} can't be a Go struct tag`,
+        "drop quotes, backslashes and commas from the key",
+      );
+    if (METHODS.has(name) || (decl.rest !== undefined && name === "Rest")) {
+      throw new CodegenError(
+        decl.path,
+        "reserved-name",
+        `key ${f.name} maps to the Go field ${name}, which the generated code uses itself`,
+        "rename the key",
+      );
+    }
+    if (seen.has(name)) {
+      throw new CodegenError(
+        decl.path,
+        "name-clash",
+        `two keys map to the Go field ${name}`,
+        "rename one of the keys",
+      );
     }
     seen.add(name);
     return name;
@@ -363,7 +402,13 @@ function enumConsts(decl: EnumDecl): { name: string; value: string }[] {
   const seen = new Set<string>();
   return decl.values.map((value) => {
     const name = `${decl.name}${variantName(value)}`;
-    if (seen.has(name)) throw new CodegenError(decl.path, `two values map to the Go name ${name}`);
+    if (seen.has(name))
+      throw new CodegenError(
+        decl.path,
+        "name-clash",
+        `two values map to the Go name ${name}`,
+        "change one of the values so their names differ",
+      );
     seen.add(name);
     return { name, value };
   });

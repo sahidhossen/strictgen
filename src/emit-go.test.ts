@@ -181,7 +181,10 @@ describe("Go closed objects", () => {
         { fooBar: { type: "string" }, "foo-bar": { type: "string" } },
         "two keys map to the Go field FooBar",
       ],
-      [{ unmarshalJSON: { type: "string" } }, "two keys map to the Go field UnmarshalJSON"],
+      [
+        { unmarshalJSON: { type: "string" } },
+        "reserved-name: key unmarshalJSON maps to the Go field UnmarshalJSON, which the generated code uses itself",
+      ],
     ];
     for (const [properties, message] of cases) {
       expect(() => go(lib({ x: closed(properties) }))).toThrow(message);
@@ -345,7 +348,7 @@ describe("Go exactly-one choices and named keys beside a map", () => {
         additionalProperties: { type: "string" },
       },
     });
-    expect(() => go(bad)).toThrow("two keys map to the Go field Rest");
+    expect(() => go(bad)).toThrow("reserved-name: key rest maps to the Go field Rest");
   });
 });
 
@@ -577,5 +580,39 @@ describe("JSON error codes", () => {
   it("use no code the helpers don't declare", () => {
     const used = new Set(helpers.match(/\bCode[A-Z][A-Za-z]*\b/g));
     expect([...used].sort()).toEqual(["CodeDuplicateKey", "CodeInvalidJSON", "CodeTooDeep"]);
+  });
+});
+
+describe("reserved names", () => {
+  it("exports a field named like a keyword instead of failing", () => {
+    const out = go(
+      lib({
+        rule: closed(
+          {
+            type: { type: "string" },
+            func: { type: "string" },
+            default: { type: "boolean" },
+            select: { type: "string" },
+          },
+          ["type", "default"],
+        ),
+      }),
+    );
+    expect(out).toContain('\tType string `json:"type"`\n');
+    expect(out).toContain('\tFunc *string `json:"func,omitempty"`\n');
+    expect(out).toContain('\tDefault bool `json:"default"`\n');
+    expect(out).toContain('\tSelect *string `json:"select,omitempty"`\n');
+  });
+
+  it("fails on a type named like a helper of the generated package", () => {
+    expect(() => go(lib({ decodeError: { type: "string" } }))).toThrow(
+      "lib.json#/$defs/decodeError: reserved-name: type name DecodeError is reserved in Go. Hint: rename the $defs entry",
+    );
+  });
+
+  it("fails on a key that maps to a method the generated type has", () => {
+    expect(() => go(lib({ x: closed({ marshalJSON: { type: "string" } }) }))).toThrow(
+      "reserved-name: key marshalJSON maps to the Go field MarshalJSON",
+    );
   });
 });

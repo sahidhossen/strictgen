@@ -3,4 +3,5 @@
 export type * from "./common.js";
 export type * from "./event.js";
 export type * from "./payment-method.js";
+export type * from "./subscription.js";
 export type * from "./user.js";

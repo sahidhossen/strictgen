@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { fsReason, isFsError } from "./fs-error.js";
+import type { RuleId } from "./rules.js";
 
 /** A parsed JSON value. */
 export type Json = null | boolean | number | string | readonly Json[] | JsonObject;
@@ -20,14 +21,23 @@ export interface SchemaFile {
 /** Every schema of the set, sorted by name. */
 export type SchemaSet = readonly SchemaFile[];
 
-/** A schema that the generator can't map, with the schema path that holds it. */
+/**
+ * A schema that the generator can't map, with the schema path that holds it, the rule it
+ * breaks (see {@link RULES}) and a fix hint when there is an obvious one. The message reads
+ * `user.json#/$defs/address: open-object: <reason>. Hint: <hint>`.
+ */
 export class CodegenError extends Error {
+  readonly hint: string | undefined;
+
   constructor(
     readonly path: string,
+    readonly rule: RuleId,
     readonly reason: string,
+    hint?: string,
   ) {
-    super(`${path}: ${reason}`);
+    super(`${path}: ${rule}: ${reason}${hint === undefined ? "" : `. Hint: ${hint}`}`);
     this.name = "CodegenError";
+    this.hint = hint;
   }
 }
 
@@ -50,9 +60,9 @@ export function at(loc: Loc, ...segments: readonly (string | number)[]): Loc {
   return { file: loc.file, pointer: loc.pointer + tail };
 }
 
-/** Throws a {@link CodegenError} at `loc`. */
-export function fail(loc: Loc, reason: string): never {
-  throw new CodegenError(where(loc), reason);
+/** Throws a {@link CodegenError} at `loc` for breaking `rule`, with an optional fix hint. */
+export function fail(loc: Loc, rule: RuleId, reason: string, hint?: string): never {
+  throw new CodegenError(where(loc), rule, reason, hint);
 }
 
 /** Returns true for a JSON object (not an array or null). */
@@ -80,19 +90,20 @@ export function loadSchemas(dir: string, options: SchemaOptions = {}): SchemaSet
       .sort();
   } catch (error) {
     if (!isFsError(error)) throw error;
-    throw new CodegenError(dir, `can't read the schemas folder: ${fsReason(error)}`);
+    throw new CodegenError(dir, "read-failed", `can't read the schemas folder: ${fsReason(error)}`);
   }
   for (const file of names) {
     let parsed: Json;
     try {
       parsed = JSON.parse(readFileSync(join(dir, file), "utf8")) as Json;
     } catch (error) {
-      if (isFsError(error)) throw new CodegenError(file, `can't read it: ${fsReason(error)}`);
+      if (isFsError(error))
+        throw new CodegenError(file, "read-failed", `can't read it: ${fsReason(error)}`);
       const reason = error instanceof Error ? error.message : String(error);
-      throw new CodegenError(file, `not valid JSON: ${reason}`);
+      throw new CodegenError(file, "invalid-json", `not valid JSON: ${reason}`);
     }
     if (!isObject(parsed))
-      fail({ file: file.slice(0, -5), pointer: "" }, "schema is not an object");
+      fail({ file: file.slice(0, -5), pointer: "" }, "invalid-schema", "schema is not an object");
     files[file.slice(0, -5)] = parsed;
   }
   return schemaSet(files, options);
@@ -117,7 +128,7 @@ export function schemaSet(
   return names.map((name) => {
     const root = files[name];
     const loc = { file: name, pointer: "" };
-    if (root === undefined) return fail(loc, "missing schema");
+    if (root === undefined) return fail(loc, "internal", "missing schema");
     const id = root.$id;
     const tail = `${name}.json`;
     if (base === undefined) {
@@ -126,9 +137,10 @@ export function schemaSet(
       if (derived === undefined || !/[/#]$/.test(derived)) {
         return fail(
           at(loc, "$id"),
+          "schema-id",
           `$id is ${shown(id)}, expected <idBase>${tail} with a base that ends in / or #, ` +
-            `so no idBase can be taken from it. ` +
-            `Fix: set the $id to a base ending in / or # followed by ${tail}, or set the idBase option`,
+            `so no idBase can be taken from it`,
+          `set the $id to a base ending in / or # followed by ${tail}, or set the idBase option`,
         );
       }
       base = derived;
@@ -137,8 +149,9 @@ export function schemaSet(
       const source = from === undefined ? "from the idBase option" : `taken from ${from}.json`;
       fail(
         at(loc, "$id"),
-        `$id is ${shown(id)}, expected ${base}${tail} (base ${base}, ${source}). ` +
-          `Fix: set the $id to ${base}${tail}` +
+        "schema-id",
+        `$id is ${shown(id)}, expected ${base}${tail} (base ${base}, ${source})`,
+        `set the $id to ${base}${tail}` +
           (from === undefined ? ", or change the idBase option" : ", or set the idBase option"),
       );
     }
@@ -186,16 +199,29 @@ export function resolveRef(set: SchemaSet, ref: string, loc: Loc): DefKey {
     const match = /^([a-z0-9-]+)\.json$/.exec(
       prefix !== undefined && base.startsWith(prefix) ? base.slice(prefix.length) : "",
     );
-    if (match?.[1] === undefined) fail(loc, `$ref ${ref} is outside the schema set`);
+    if (match?.[1] === undefined)
+      fail(
+        loc,
+        "unresolved-ref",
+        `$ref ${ref} is outside the schema set`,
+        "refer to a schema in the schemas folder by its full $id, or to #/$defs/<name> in the same file",
+      );
     file = match[1];
   }
   const schema = set.find((s) => s.name === file);
-  if (schema === undefined) return fail(loc, `$ref ${ref} names an unknown schema`);
+  if (schema === undefined)
+    return fail(loc, "unresolved-ref", `$ref ${ref} names an unknown schema`);
   if (pointer === "") return { file, def: undefined };
   const def = /^\/\$defs\/([A-Za-z0-9]+)$/.exec(pointer)?.[1];
-  if (def === undefined) return fail(loc, `$ref ${ref} must point at a $defs entry`);
+  if (def === undefined)
+    return fail(
+      loc,
+      "ref-form",
+      `$ref ${ref} must point at a $defs entry`,
+      "move the schema it points at into $defs and refer to #/$defs/<name>",
+    );
   if (!isObject(schema.root.$defs) || !isObject(schema.root.$defs[def])) {
-    fail(loc, `$ref ${ref} names an unknown def`);
+    fail(loc, "unresolved-ref", `$ref ${ref} names an unknown def`);
   }
   return { file, def };
 }
@@ -203,11 +229,11 @@ export function resolveRef(set: SchemaSet, ref: string, loc: Loc): DefKey {
 /** The schema a def key names. */
 export function schemaAt(set: SchemaSet, key: DefKey): JsonObject {
   const file = set.find((s) => s.name === key.file);
-  if (file === undefined) return fail(keyLoc(key), "unknown schema");
+  if (file === undefined) return fail(keyLoc(key), "unresolved-ref", "unknown schema");
   if (key.def === undefined) return file.root;
   const defs = file.root.$defs;
   const schema = isObject(defs) ? defs[key.def] : undefined;
-  if (!isObject(schema)) return fail(keyLoc(key), "unknown def");
+  if (!isObject(schema)) return fail(keyLoc(key), "unresolved-ref", "unknown def");
   return schema;
 }
 
