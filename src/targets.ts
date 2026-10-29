@@ -110,6 +110,7 @@ export function mainOptions(config: Config): MainOptions {
   return {
     schemaDir: config.schemas,
     rootDir: config.root,
+    configFile: config.file,
     targets: configTargets(config),
     header: config.header,
     ...(config.idBase === undefined ? {} : { idBase: config.idBase }),

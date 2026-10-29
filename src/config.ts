@@ -1,11 +1,12 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, resolve } from "node:path";
 
 import type { IdRule } from "./build.js";
 import { DEFAULT_HEADER } from "./common.js";
 import type { LintAllow } from "./emit-rust.js";
 import { DEFAULT_ALLOW } from "./emit-rust.js";
 import { GO_PACKAGE } from "./emit-go.js";
+import { samePath, within } from "./paths.js";
 
 /** The config file strictgen reads from the project root unless another path is given. */
 export const CONFIG_FILE = "strictgen.json";
@@ -394,12 +395,6 @@ function readFormat(r: Reader, value: unknown): FormatConfig {
   };
 }
 
-/** True when `path` is `dir` or below it. */
-function within(path: string, dir: string): boolean {
-  const rel = relative(dir, path);
-  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-}
-
 /** A folder a target writes to. An owned one is cleared before writing. */
 export interface ConfigFolder {
   readonly option: string;
@@ -424,7 +419,8 @@ export function configFolders(config: Config): ConfigFolder[] {
 
 /**
  * Owned folders are cleared before writing, so none may hold the config file, the schemas or
- * another target's folder, and no two targets may write to the same folder.
+ * another target's folder, and no two targets may write to the same folder. Paths are compared
+ * as the filesystem sees them: symlinks resolved and case ignored.
  */
 function checkFolders(r: Reader, config: Config): void {
   const folders = configFolders(config);
@@ -439,7 +435,7 @@ function checkFolders(r: Reader, config: Config): void {
   }
   for (const [i, a] of folders.entries()) {
     for (const b of folders.slice(i + 1)) {
-      if (a.path === b.path) r.fail(b.option, `is the same folder as ${a.option}`);
+      if (samePath(a.path, b.path)) r.fail(b.option, `is the same folder as ${a.option}`);
       const [outer, inner] = within(b.path, a.path) ? [a, b] : [b, a];
       if (outer.owned && within(inner.path, outer.path)) {
         r.fail(inner.option, `is inside ${outer.option}, which is cleared before writing`);

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,8 +7,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import { HEADER } from "./common.js";
 import type { Config } from "./config.js";
 import { parseConfig } from "./config.js";
-import type { OutputFile } from "./main.js";
-import { generateProject, main, targetDirs } from "./main.js";
+import type { OutputFile, Target } from "./main.js";
+import { generateProject, main, targetDirs, writeOutput } from "./main.js";
+import { CodegenError } from "./schema.js";
 import { configTargets, mainOptions } from "./targets.js";
 
 const BASE = "https://example.com/schemas/v1/";
@@ -245,6 +246,72 @@ describe("config Go target", () => {
     writeFileSync(join(config.root, "go", "decode_test.go"), "package types\n");
     run(config);
     expect(existsSync(join(config.root, "go", "decode_test.go"))).toBe(true);
+  });
+});
+
+describe("writeOutput safety", () => {
+  const target = (dir: string): Target => ({ name: "typescript", dirs: [dir], emit: () => [] });
+
+  it("refuses to clear a folder that holds the project, the config file or the schemas, removing nothing", () => {
+    const config = project({ targets: { typescript } });
+    const parent = join(config.root, "..");
+    for (const [dir, protect] of [
+      [".", []],
+      ["..", []],
+      ["SCHEMAS", [config.schemas]],
+      [".", [config.file]],
+    ] as const) {
+      expect(() => writeOutput(config.root, [target(dir)], [], HEADER.slice(3), protect)).toThrow(
+        CodegenError,
+      );
+    }
+    expect(existsSync(join(config.root, "strictgen.json"))).toBe(true);
+    expect(existsSync(join(config.schemas, "order.json"))).toBe(true);
+    expect(existsSync(parent)).toBe(true);
+  });
+
+  it("refuses a schemas folder reached through a symlink", () => {
+    const config = project({ targets: { typescript } });
+    symlinkSync(".", join(config.root, "link"));
+    expect(() =>
+      writeOutput(config.root, [target("link/schemas")], [], undefined, [config.schemas]),
+    ).toThrow("refusing to clear this folder");
+    expect(existsSync(join(config.schemas, "order.json"))).toBe(true);
+  });
+
+  it("returns 1 from main instead of clearing a protected folder", () => {
+    const config = project({ targets: { typescript } });
+    const options = { ...mainOptions(config), targets: [target("schemas")] };
+    const lines: string[] = [];
+    expect(main(options, (line) => lines.push(line))).toBe(1);
+    expect(lines[0]).toMatch(/^schemas: refusing to clear this folder: it holds /);
+    expect(existsSync(join(config.schemas, "order.json"))).toBe(true);
+  });
+});
+
+describe("config Go .gitattributes", () => {
+  it("won't overwrite a hand written .gitattributes in a shared folder, and writes nothing", () => {
+    const config = project({ targets: { go } });
+    mkdirSync(join(config.root, "go"));
+    writeFileSync(join(config.root, "go", ".gitattributes"), "*.png binary\n");
+    writeFileSync(join(config.root, "go", "stale.go"), `${HEADER}\n\npackage types\n`);
+    const result = run(config);
+    expect(result.code).toBe(1);
+    expect(result.lines[0]).toMatch(
+      /^go\/\.gitattributes: a hand written file is in the way of a generated one, .* Fix: /,
+    );
+    expect(readFileSync(join(config.root, "go", ".gitattributes"), "utf8")).toBe("*.png binary\n");
+    expect(existsSync(join(config.root, "go", "stale.go"))).toBe(true);
+    expect(existsSync(join(config.root, "go", "order.go"))).toBe(false);
+  });
+
+  it("replaces a generated .gitattributes, and writes one where there is none", () => {
+    const config = project({ targets: { go } });
+    expect(run(config).code).toBe(0);
+    const path = join(config.root, "go", ".gitattributes");
+    expect(readFileSync(path, "utf8")).toContain("order.go linguist-generated=true\n");
+    expect(run(config).code).toBe(0);
+    expect(readFileSync(path, "utf8").startsWith(`# ${HEADER.slice(3)}\n`)).toBe(true);
   });
 });
 

@@ -81,6 +81,6 @@ if (check) {
   }
   process.stdout.write(`examples: ${String(files.length)} files up to date\n`);
 } else {
-  writeOutput(CONFIG.root, TARGETS, files, CONFIG.header);
+  writeOutput(CONFIG.root, TARGETS, files, CONFIG.header, [CONFIG.schemas, CONFIG.file]);
   process.stdout.write(`examples: wrote ${String(files.length)} files\n`);
 }

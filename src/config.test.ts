@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -196,6 +196,70 @@ describe("config paths", () => {
   it("names a file that is not JSON", () => {
     const dir = project("{ targets: }");
     expect(() => loadConfig(undefined, dir)).toThrow(/^strictgen\.json: not valid JSON: /);
+  });
+});
+
+describe("config folder safety", () => {
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  /** A project folder `proj` with `schemas/` and a config, inside a temp folder. */
+  function project(config: object, setup?: (dir: string) => void): string {
+    const parent = mkdtempSync(join(tmpdir(), "strictgen-safety-"));
+    dirs.push(parent);
+    const dir = join(parent, "proj");
+    mkdirSync(join(dir, "schemas"), { recursive: true });
+    writeFileSync(join(dir, "strictgen.json"), JSON.stringify(config));
+    setup?.(dir);
+    return dir;
+  }
+
+  function problem(dir: string): string {
+    try {
+      loadConfig(undefined, dir);
+    } catch (error) {
+      if (error instanceof ConfigError) return `${error.option}: ${error.problem}`;
+      throw error;
+    }
+    return "accepted";
+  }
+
+  it("rejects the project folder spelled in another case, from its parent", () => {
+    const dir = project({ targets: { typescript: { out: "../PROJ" } } });
+    expect(problem(dir)).toBe(
+      "targets.typescript.out: holds the config file, and the folder is cleared before writing",
+    );
+  });
+
+  it("rejects the schemas folder spelled in another case", () => {
+    const dir = project({ targets: { typescript: { out: "Schemas" } } });
+    expect(problem(dir)).toBe(
+      "targets.typescript.out: holds the schemas folder, and the folder is cleared before writing",
+    );
+  });
+
+  it("rejects the schemas folder reached through a symlink", () => {
+    const dir = project({ targets: { typescript: { out: "link/schemas" } } }, (d) => {
+      symlinkSync(".", join(d, "link"));
+    });
+    expect(problem(dir)).toBe(
+      "targets.typescript.out: holds the schemas folder, and the folder is cleared before writing",
+    );
+    const direct = project({ targets: { typescript: { out: "lnk" } } }, (d) => {
+      symlinkSync("schemas", join(d, "lnk"));
+    });
+    expect(problem(direct)).toContain("holds the schemas folder");
+  });
+
+  it("rejects two targets whose folders differ only in case, or by a trailing slash", () => {
+    expect(problem(project({ targets: { typescript: { out: "gen" }, rust: { out: "GEN" } } }))).toBe(
+      "targets.typescript.out: is the same folder as targets.rust.out",
+    );
+    expect(problem(project({ targets: { typescript: { out: "g" }, rust: { out: "g/" } } }))).toBe(
+      "targets.typescript.out: is the same folder as targets.rust.out",
+    );
   });
 });
 
