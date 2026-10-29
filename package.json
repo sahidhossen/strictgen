@@ -1,0 +1,27 @@
+{
+  "name": "strictgen",
+  "version": "0.0.0",
+  "description": "One JSON Schema. Strict Rust, Go and TypeScript types and decoders that accept and reject exactly the same JSON.",
+  "private": true,
+  "license": "Apache-2.0",
+  "author": "Sahid Hossen",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sahidhossen/strictgen.git"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run --passWithNoTests",
+    "hygiene": "scripts/hygiene.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^22",
+    "typescript": "^6",
+    "vitest": "^5"
+  }
+}

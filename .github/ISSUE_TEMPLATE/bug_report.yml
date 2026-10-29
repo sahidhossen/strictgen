@@ -1,0 +1,56 @@
+name: Bug report
+description: Something generates wrong code, or languages disagree
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The most useful bug is a small schema and a payload that one language handles differently from another, or differently from the schema.
+  - type: input
+    id: version
+    attributes:
+      label: strictgen version
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: checkboxes
+    id: languages
+    attributes:
+      label: Languages affected
+      options:
+        - label: Rust
+        - label: Go
+        - label: TypeScript
+        - label: LLM output
+  - type: textarea
+    id: schema
+    attributes:
+      label: Schema
+      description: The smallest schema that shows the problem
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: payload
+    attributes:
+      label: Payload
+      description: The JSON payload, if the bug is about decoding or encoding
+      render: json
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: Generated code, error output, or each language's result
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node.js, Rust and Go versions if relevant

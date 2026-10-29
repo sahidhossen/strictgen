@@ -1,0 +1,29 @@
+name: Feature request
+description: A new construct, command or option
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What you'd like strictgen to do. For a schema construct, include a small example schema and what each language should accept and reject
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds or other tools you've tried
+  - type: checkboxes
+    id: parity
+    attributes:
+      label: Language parity
+      options:
+        - label: This can work the same way in Rust, Go and TypeScript

@@ -1,0 +1,15 @@
+# Node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+npm-debug.log*
+pnpm-debug.log*
+
+# Rust
+target/
+
+# Go
+/bin/
+*.test
+*.out
