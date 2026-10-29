@@ -28,7 +28,8 @@ function typescriptTarget(config: Config, ts: TypeScriptConfig): Target {
   return {
     name: "typescript",
     dirs: [out],
-    emit: (model) => placed(out, emitTypeScript(model, { header: config.header })),
+    emit: (model) =>
+      placed(out, emitTypeScript(model, { header: config.header, decoders: ts.decoders })),
   };
 }
 

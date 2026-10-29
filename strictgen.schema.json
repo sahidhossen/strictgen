@@ -274,7 +274,7 @@
           "description": "The folder the TypeScript files are written to. strictgen owns it: it is cleared before writing."
         },
         "decoders": {
-          "description": "Not yet active. Generates a strict decoder per type.",
+          "description": "Generates decodeX, tryDecodeX and encodeX per type, and helpers.ts, which they share. false writes the types only.",
           "type": "boolean",
           "default": true
         },

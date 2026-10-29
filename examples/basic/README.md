@@ -8,14 +8,14 @@ Five schemas and what strictgen generates from them.
 | `schemas/` | A webhook event envelope (`event.json`), a user (`user.json`), a payment method picked by its `type` key (`payment-method.json`), a webhook subscription whose keys are keywords in Rust, Go or TypeScript (`subscription.json`) and shared IDs (`common.json`) |
 | `rust/src/generated/` | The Rust types, a module per schema. `rust/` is a crate that depends on `serde` and `serde_json` only |
 | `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go` and `codes_test.go` are written by hand |
-| `ts/generated/` | The TypeScript types |
+| `ts/generated/` | The TypeScript types and their decoders, with `helpers.ts`, which they share |
 | `fixtures/` | JSON documents each language must accept (`valid/`) or reject (`invalid/`) |
 
 `strictgen.json` configures the three targets. IDs are on, with `{ "file": "common", "suffix": "Id" }`, so `userId` and `eventId` become their own types.
 
 ## Fixtures
 
-A fixture for a schema's root type lives in `fixtures/<schema>/valid` or `fixtures/<schema>/invalid`, and one for a def in `fixtures/<schema>/<def>/valid` or `invalid`. The Rust and Go tests decode every fixture with the type generated for its folder. A valid case must decode and encode again to the same JSON value, and an invalid case must fail.
+A fixture for a schema's root type lives in `fixtures/<schema>/valid` or `fixtures/<schema>/invalid`, and one for a def in `fixtures/<schema>/<def>/valid` or `invalid`. The Rust and Go tests decode every fixture with the type generated for its folder. The repository tests run them through the TypeScript decoders too, except `event` and `payment-method`, whose tagged union TypeScript can't decode yet. A valid case must decode and encode again to the same JSON value, and an invalid case must fail.
 
 ```bash
 cd examples/basic/rust && cargo test
