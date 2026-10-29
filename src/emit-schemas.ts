@@ -79,11 +79,11 @@ export function emitRustSchemas(set: SchemaSet): EmittedFile {
 
 //! The JSON Schemas of the set, minified and without annotations, for a validator.
 
-/// Every schema's name, like \`site\`, and its JSON text, sorted by name.
+/// Every schema's name, like \`order\`, and its JSON text, sorted by name.
 pub const ALL: &[(&str, &str)] = &[
 ${entries(set)}];
 
-/// The JSON text of the schema called \`name\`, like \`site\`.
+/// The JSON text of the schema called \`name\`, like \`order\`.
 #[must_use]
 pub fn get(name: &str) -> Option<&'static str> {
     ALL.iter()

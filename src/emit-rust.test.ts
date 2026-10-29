@@ -53,18 +53,18 @@ describe("untagged unions", () => {
     schemaSet({
       common: schema("common", {
         $defs: {
-          binding: {
-            description: "A binding.",
+          accountRef: {
+            description: "An account reference.",
             type: "object",
-            properties: { $bind: { description: "The path.", type: "string" } },
-            required: ["$bind"],
+            properties: { $account: { description: "The path.", type: "string" } },
+            required: ["$account"],
             unevaluatedProperties: false,
           },
           names: {
-            description: "Names, or a binding.",
+            description: "Names, or an account reference.",
             oneOf: [
               { type: "array", items: { type: "string" } },
-              { $ref: "#/$defs/binding" },
+              { $ref: "#/$defs/accountRef" },
               { description: "Anything.", $ref: "#/$defs/anything" },
             ],
           },
@@ -77,14 +77,14 @@ describe("untagged unions", () => {
 
   it("decode by the value's JSON kind, so a struct never reads an array, in decode order", () => {
     expect(contents).toContain("impl<'de> Deserialize<'de> for Names {");
-    const binding = contents.indexOf(
-      "if value.is_object()\n            && let Ok(inner) = <Binding>::deserialize(&value)",
+    const accountRef = contents.indexOf(
+      "if value.is_object()\n            && let Ok(inner) = <AccountRef>::deserialize(&value)",
     );
     const list = contents.indexOf(
       "if value.is_array()\n            && let Ok(inner) = <Vec<String>>::deserialize(&value)",
     );
-    expect(binding).toBeGreaterThan(-1);
-    expect(list).toBeGreaterThan(binding);
+    expect(accountRef).toBeGreaterThan(-1);
+    expect(list).toBeGreaterThan(accountRef);
   });
 
   it("try a branch of any JSON without a kind check, and fail like serde when nothing fits", () => {
@@ -99,7 +99,7 @@ describe("the JSON kind each variant takes", () => {
       common: schema("common", {
         $defs: {
           color: { description: "A color.", enum: ["red", "blue"] },
-          pageId: { description: "A page id.", type: "string" },
+          userId: { description: "A user id.", type: "string" },
           words: { description: "Words.", type: "array", items: { type: "string" } },
           labels: {
             description: "Labels.",
@@ -118,7 +118,7 @@ describe("the JSON kind each variant takes", () => {
           loose: { description: "Loose.", oneOf: [{ type: "string" }, { not: { const: null } }] },
           numbers: { description: "N.", oneOf: [{ type: "integer" }, { type: "boolean" }] },
           measures: { description: "M.", oneOf: [{ type: "number" }, { $ref: "#/$defs/color" }] },
-          collections: {
+          lists: {
             description: "Co.",
             oneOf: [{ $ref: "#/$defs/words" }, { $ref: "#/$defs/labels" }],
           },
@@ -134,7 +134,7 @@ describe("the JSON kind each variant takes", () => {
             description: "Y.",
             oneOf: [{ const: true }, { type: "array", items: { type: "string" } }],
           },
-          target: { description: "T.", oneOf: [{ $ref: "#/$defs/pageId" }, { type: "boolean" }] },
+          target: { description: "T.", oneOf: [{ $ref: "#/$defs/userId" }, { type: "boolean" }] },
         },
       }),
     }),
@@ -148,7 +148,7 @@ describe("the JSON kind each variant takes", () => {
     ["boolean", "boolean", "bool"],
     ["number", "number", "serde_json::Number"],
     ["enum", "string", "Color"],
-    ["id", "string", "PageId"],
+    ["id", "string", "UserId"],
     ["alias of an array", "array", "Words"],
     ["map", "object", "Labels"],
     ["tagged union", "object", "Shape"],

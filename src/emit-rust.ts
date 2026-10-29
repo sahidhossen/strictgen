@@ -70,7 +70,7 @@ export const HELPERS = "helpers";
  * named after the schema file (`user-profile` to `user_profile.rs`), a
  * `helpers` module with the built in types, and `mod.rs`, which declares them,
  * carries the clippy allows every module inherits and re-exports every type, so
- * `<crate>::Block` works whichever module holds it. `publicModules` are declared
+ * `<crate>::Order` works whichever module holds it. `publicModules` are declared
  * `pub` and not re-exported, for modules written by another emitter, like `schemas`.
  */
 export function emitRust(model: Model, publicModules: readonly string[] = []): EmittedFile[] {
@@ -435,7 +435,7 @@ function tagged(decl: TaggedDecl): string {
 /**
  * An untagged union decodes by the JSON kind of the value first, then tries the variants that
  * take that kind, in order. serde's own untagged decoding would let a struct variant read a JSON
- * array as its fields in order, so a one entry list like `["ast_…"]` would decode as a binding.
+ * array as its fields in order, so a one entry list like `["id_…"]` would decode as a struct.
  */
 function untagged(model: Model, decl: UntaggedDecl): string {
   const seen = new Set<string>();
@@ -540,7 +540,7 @@ function typeText(type: TypeExpr): string {
   }
 }
 
-/** A snake_case Rust field name for a JSON key, like `visibleIf` to `visible_if` and `$bind` to `bind`. */
+/** A snake_case Rust field name for a JSON key, like `shippedAt` to `shipped_at` and `$account` to `account`. */
 export function fieldIdent(key: string, path: string): string {
   const snake = key
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
@@ -631,7 +631,7 @@ use serde_json::Value;
 use crate::json::DecodeError;
 
 /// Decodes \`bytes\` strictly (\`crate::json::decode\`) as the root type generated for \`schema\`,
-/// like \`site\`, then encodes it again. Returns \`None\` for a schema with no root type, like a
+/// like \`order\`, then encodes it again. Returns \`None\` for a schema with no root type, like a
 /// definitions-only schema.
 #[must_use]
 pub fn decode(schema: &str, bytes: &[u8]) -> Option<Result<Value, DecodeError>> {

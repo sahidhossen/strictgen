@@ -56,15 +56,15 @@ const closed = (properties: JsonObject, required: string[] = []): JsonObject => 
   unevaluatedProperties: false,
 });
 
-const blockDefs: JsonObject = {
-  headingBlock: closed(
+const paymentDefs: JsonObject = {
+  cardPayment: closed(
     {
-      type: { description: "Type.", const: "heading" },
-      level: { description: "Level.", type: "integer" },
+      type: { description: "Type.", const: "card" },
+      installments: { description: "Installments.", type: "integer" },
     },
-    ["type", "level"],
+    ["type", "installments"],
   ),
-  imageBlock: closed({ type: { const: "image" }, alt: { type: "string" } }, ["type"]),
+  wirePayment: closed({ type: { const: "wire" }, iban: { type: "string" } }, ["type"]),
 };
 
 describe("Go files", () => {
@@ -72,8 +72,8 @@ describe("Go files", () => {
     "user-profile": schema("user-profile", {
       $defs: { name: { type: "string" }, point: closed({ x: { type: "integer" } }, ["x"]) },
     }),
-    page: schema("page", {
-      title: "Page",
+    order: schema("order", {
+      title: "Order",
       type: "object",
       properties: { owner: { $ref: `${BASE}user-profile.json#/$defs/point` } },
       required: ["owner"],
@@ -83,17 +83,17 @@ describe("Go files", () => {
 
   it("write one file per schema plus the helpers, each starting with the header", () => {
     const files = emitGo(model);
-    expect(files.map((f) => f.name)).toEqual(["helpers.go", "page.go", "user_profile.go"]);
+    expect(files.map((f) => f.name)).toEqual(["helpers.go", "order.go", "user_profile.go"]);
     for (const f of files) expect(f.contents.startsWith(`${HEADER}\n\n`)).toBe(true);
-    expect(file(model, "page.go")).toContain(
-      "// Types for page.json.\n\npackage types\n",
+    expect(file(model, "order.go")).toContain(
+      "// Types for order.json.\n\npackage types\n",
     );
   });
 
   it("refer to types of other schemas without imports, since they share one package", () => {
-    const page = file(model, "page.go");
-    expect(page).toContain('\tOwner Point `json:"owner"`\n');
-    expect(page).not.toContain("import");
+    const order = file(model, "order.go");
+    expect(order).toContain('\tOwner Point `json:"owner"`\n');
+    expect(order).not.toContain("import");
   });
 
   it("import only the standard library packages a file uses", () => {
@@ -112,7 +112,7 @@ describe("Go files", () => {
 
   it("name files after the schema, refusing names Go would constrain or treat as tests", () => {
     expect(fileName("user-profile", "x")).toBe("user_profile.go");
-    for (const bad of ["helpers", "registry-test", "site-test", "theme-linux", "a-wasm", "Block"]) {
+    for (const bad of ["helpers", "registry-test", "order-test", "order-linux", "a-wasm", "Order"]) {
       expect(() => fileName(bad, "x.json#")).toThrow("has no safe Go file name");
     }
   });
@@ -120,7 +120,7 @@ describe("Go files", () => {
   it("write a fixture registry with a decoder per root and def", () => {
     const registry = emitGoFixtures(model);
     expect(registry.startsWith(`${HEADER}\n\npackage types\n`)).toBe(true);
-    expect(registry).toContain('\t\t"page": asAny(decodeType[Page]),\n');
+    expect(registry).toContain('\t\t"order": asAny(decodeType[Order]),\n');
     expect(registry).toContain('\t\t"user-profile/name": asAny(decodeString),\n');
     expect(registry).toContain('\t\t"user-profile/point": asAny(decodeType[Point]),\n');
   });
@@ -135,7 +135,7 @@ describe("Go closed objects", () => {
           x: { description: "X.", type: "integer" },
           y: { type: "integer" },
           tags: { type: "array", items: { type: "string" } },
-          $bind: { type: "string" },
+          $account: { type: "string" },
         },
         ["x"],
       ),
@@ -151,7 +151,7 @@ describe("Go closed objects", () => {
     expect(out).toContain('\t// X.\n\tX int64 `json:"x"`\n');
     expect(out).toContain('\t// The y key.\n\tY *int64 `json:"y,omitempty"`\n');
     expect(out).toContain('\tTags *[]string `json:"tags,omitempty"`\n');
-    expect(out).toContain('\tBind *string `json:"$bind,omitempty"`\n');
+    expect(out).toContain('\tAccount *string `json:"$account,omitempty"`\n');
   });
 
   it("decode strictly through a generated UnmarshalJSON", () => {
@@ -161,7 +161,7 @@ describe("Go closed objects", () => {
         '\t\trequired(d, "x", &out.X, decodeInt)\n' +
         '\t\toptional(d, "y", &out.Y, decodeInt)\n' +
         '\t\toptional(d, "tags", &out.Tags, decodeSlice(decodeString))\n' +
-        '\t\toptional(d, "$bind", &out.Bind, decodeString)\n' +
+        '\t\toptional(d, "$account", &out.Account, decodeString)\n' +
         "\t}, func() { *v = out })\n}\n",
     );
   });
@@ -191,106 +191,106 @@ describe("Go closed objects", () => {
 
 describe("Go tagged unions", () => {
   const model = build({
-    block: schema("block", {
-      title: "Block",
-      oneOf: [{ $ref: "#/$defs/headingBlock" }, { $ref: "#/$defs/imageBlock" }],
+    payment: schema("payment", {
+      title: "Payment",
+      oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
       $defs: {
-        ...blockDefs,
-        page: closed(
+        ...paymentDefs,
+        checkout: closed(
           {
-            root: { $ref: "#/$defs/anyBlock" },
+            root: { $ref: "#/$defs/anyPayment" },
             extra: { $ref: "#" },
-            blocks: { type: "array", items: { $ref: "#" } },
+            payments: { type: "array", items: { $ref: "#" } },
           },
           ["root"],
         ),
-        anyBlock: { $ref: "#" },
+        anyPayment: { $ref: "#" },
       },
     }),
   });
   const out = go(model);
 
   it("are an interface with a marker method on each branch", () => {
-    expect(out).toContain("type Block interface {\n\tisBlock()\n}\n");
-    expect(out).toContain("func (HeadingBlock) isBlock() {}\nfunc (ImageBlock) isBlock() {}\n");
+    expect(out).toContain("type Payment interface {\n\tisPayment()\n}\n");
+    expect(out).toContain("func (CardPayment) isPayment() {}\nfunc (WirePayment) isPayment() {}\n");
     expect(out).toContain(
-      '// It holds one of HeadingBlock or ImageBlock, picked by the "type" key.\n',
+      '// It holds one of CardPayment or WirePayment, picked by the "type" key.\n',
     );
   });
 
   it("decode by reading the tag first, through a Decode function", () => {
     expect(out).toContain(
-      "func DecodeBlock(data []byte) (Block, error) { return decodeRoot(data, unionBlock) }\n\n" +
-        '// unionBlock decodes a parsed Block by its "type" key.\n' +
-        "func unionBlock(n *node) (Block, *DecodeError) {\n" +
-        '\treturn decodeTagged(n, "type", map[string]func(*node) (Block, *DecodeError){\n' +
-        '\t\t"heading": branch[Block, HeadingBlock],\n' +
-        '\t\t"image": branch[Block, ImageBlock],\n' +
+      "func DecodePayment(data []byte) (Payment, error) { return decodeRoot(data, unionPayment) }\n\n" +
+        '// unionPayment decodes a parsed Payment by its "type" key.\n' +
+        "func unionPayment(n *node) (Payment, *DecodeError) {\n" +
+        '\treturn decodeTagged(n, "type", map[string]func(*node) (Payment, *DecodeError){\n' +
+        '\t\t"card": branch[Payment, CardPayment],\n' +
+        '\t\t"wire": branch[Payment, WirePayment],\n' +
         "\t})\n}\n",
     );
   });
 
   it("are fields without a pointer, since a nil interface means absent", () => {
-    expect(out).toContain('\tRoot AnyBlock `json:"root"`\n');
-    expect(out).toContain('\tExtra Block `json:"extra,omitempty"`\n');
-    expect(out).toContain('\t\trequired(d, "root", &out.Root, unionBlock)\n');
-    expect(out).toContain('\t\toptionalValue(d, "extra", &out.Extra, unionBlock)\n');
-    expect(out).toContain('\t\toptional(d, "blocks", &out.Blocks, decodeSlice(unionBlock))\n');
+    expect(out).toContain('\tRoot AnyPayment `json:"root"`\n');
+    expect(out).toContain('\tExtra Payment `json:"extra,omitempty"`\n');
+    expect(out).toContain('\t\trequired(d, "root", &out.Root, unionPayment)\n');
+    expect(out).toContain('\t\toptionalValue(d, "extra", &out.Extra, unionPayment)\n');
+    expect(out).toContain('\t\toptional(d, "payments", &out.Payments, decodeSlice(unionPayment))\n');
   });
 
   it("check string consts through their enum", () => {
     expect(out).toContain(
-      '\t// HeadingBlockTypeHeading is "heading".\n\tHeadingBlockTypeHeading HeadingBlockType = "heading"\n',
+      '\t// CardPaymentTypeCard is "card".\n\tCardPaymentTypeCard CardPaymentType = "card"\n',
     );
     expect(out).toContain(
-      "func (v *HeadingBlockType) decode(n *node) *DecodeError {\n\treturn decodeEnum(n, v, HeadingBlockTypeHeading)\n}\n",
+      "func (v *CardPaymentType) decode(n *node) *DecodeError {\n\treturn decodeEnum(n, v, CardPaymentTypeCard)\n}\n",
     );
   });
 
   it("reject a Decode function name that a type already has", () => {
     const clash = build({
-      block: schema("block", {
-        title: "Block",
-        oneOf: [{ $ref: "#/$defs/headingBlock" }, { $ref: "#/$defs/imageBlock" }],
-        $defs: { ...blockDefs, decodeBlock: { type: "string" } },
+      payment: schema("payment", {
+        title: "Payment",
+        oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
+        $defs: { ...paymentDefs, decodePayment: { type: "string" } },
       }),
     });
-    expect(() => go(clash)).toThrow("Go name DecodeBlock is also used by block.json#");
+    expect(() => go(clash)).toThrow("Go name DecodePayment is also used by payment.json#");
   });
 });
 
 describe("Go untagged unions", () => {
   const model = lib({
-    binding: closed({ $bind: { type: "string" } }, ["$bind"]),
-    localeCode: { type: "string" },
-    localizedText: {
+    accountRef: closed({ $account: { type: "string" } }, ["$account"]),
+    currencyCode: { type: "string" },
+    currencyAmounts: {
       type: "object",
-      propertyNames: { $ref: "#/$defs/localeCode" },
+      propertyNames: { $ref: "#/$defs/currencyCode" },
       additionalProperties: { type: "string" },
     },
-    boundText: { oneOf: [{ $ref: "#/$defs/localizedText" }, { $ref: "#/$defs/binding" }] },
+    amountsOrRef: { oneOf: [{ $ref: "#/$defs/currencyAmounts" }, { $ref: "#/$defs/accountRef" }] },
     loose: { oneOf: [{ type: "string" }, {}] },
   });
   const out = go(model);
 
   it("are a struct with one field per variant, tried in the generator's order", () => {
     expect(out).toContain(
-      "type BoundText struct {\n\t// Binding is set when the value decodes as Binding.\n\tBinding *Binding\n" +
-        "\t// LocalizedText is set when the value decodes as LocalizedText.\n\tLocalizedText *LocalizedText\n}\n",
+      "type AmountsOrRef struct {\n\t// AccountRef is set when the value decodes as AccountRef.\n\tAccountRef *AccountRef\n" +
+        "\t// CurrencyAmounts is set when the value decodes as CurrencyAmounts.\n\tCurrencyAmounts *CurrencyAmounts\n}\n",
     );
     expect(out).toContain(
-      "// Exactly one field is set. Decoding tries them in order: Binding or LocalizedText.\n",
+      "// Exactly one field is set. Decoding tries them in order: AccountRef or CurrencyAmounts.\n",
     );
     expect(out).toContain(
-      '\treturn decodeUntagged(n, "BoundText", func() { *v = out },\n' +
-        "\t\ttry(&out.Binding, decodeType[Binding]),\n" +
-        "\t\ttry(&out.LocalizedText, decodeMap(decodeString, decodeString)),\n\t)\n",
+      '\treturn decodeUntagged(n, "AmountsOrRef", func() { *v = out },\n' +
+        "\t\ttry(&out.AccountRef, decodeType[AccountRef]),\n" +
+        "\t\ttry(&out.CurrencyAmounts, decodeMap(decodeString, decodeString)),\n\t)\n",
     );
   });
 
   it("encode the one variant that is set", () => {
     expect(out).toContain(
-      '\treturn encodeUntagged("BoundText", some(v.Binding), some(v.LocalizedText))\n',
+      '\treturn encodeUntagged("AmountsOrRef", some(v.AccountRef), some(v.CurrencyAmounts))\n',
     );
   });
 
@@ -307,8 +307,8 @@ describe("Go exactly-one choices and named keys beside a map", () => {
       lib({
         link: {
           type: "object",
-          properties: { href: { type: "string" }, pageId: { type: "string" } },
-          oneOf: [{ required: ["href"] }, { required: ["pageId"] }],
+          properties: { href: { type: "string" }, userId: { type: "string" } },
+          oneOf: [{ required: ["href"] }, { required: ["userId"] }],
           unevaluatedProperties: false,
         },
       }),
@@ -322,7 +322,7 @@ describe("Go exactly-one choices and named keys beside a map", () => {
   it("encode the rest map through a guard so a named key is never written twice", () => {
     const out = go(
       lib({
-        families: {
+        prices: {
           type: "object",
           properties: { default: { type: "string" }, size: { type: "integer" } },
           additionalProperties: { type: "string" },
@@ -333,13 +333,13 @@ describe("Go exactly-one choices and named keys beside a map", () => {
     expect(out).toContain('\tRest map[string]string `json:"-"`\n');
     expect(out).toContain("\t\trest(d, &out.Rest, decodeString, decodeString)\n");
     expect(out).toContain(
-      'func (v Families) MarshalJSON() ([]byte, error) {\n\ttype named Families\n\treturn encodeWithRest(named(v), v.Rest, []string{"default", "size"}, []string{})\n}\n',
+      'func (v Prices) MarshalJSON() ([]byte, error) {\n\ttype named Prices\n\treturn encodeWithRest(named(v), v.Rest, []string{"default", "size"}, []string{})\n}\n',
     );
   });
 
   it("refuse a key named rest beside the map", () => {
     const bad = lib({
-      families: {
+      prices: {
         type: "object",
         properties: { rest: { type: "string" } },
         additionalProperties: { type: "string" },
@@ -353,11 +353,11 @@ describe("Go scalars, ids, aliases and consts", () => {
   const model = build({
     common: schema("common", {
       $defs: {
-        blockId: { type: "string" },
-        children: { type: "array", items: { $ref: "#/$defs/blockId" } },
+        orderId: { type: "string" },
+        children: { type: "array", items: { $ref: "#/$defs/orderId" } },
         index: {
           type: "object",
-          propertyNames: { $ref: "#/$defs/blockId" },
+          propertyNames: { $ref: "#/$defs/orderId" },
           additionalProperties: { type: "boolean" },
         },
         anyValue: {},
@@ -380,17 +380,17 @@ describe("Go scalars, ids, aliases and consts", () => {
   const out = go(model);
 
   it("make ids named strings that decode from JSON strings", () => {
-    expect(out).toContain("type BlockId string\n");
+    expect(out).toContain("type OrderId string\n");
     expect(out).toContain(
-      "func (v *BlockId) decode(n *node) *DecodeError { return decodeStringInto(n, v) }\n",
+      "func (v *OrderId) decode(n *node) *DecodeError { return decodeStringInto(n, v) }\n",
     );
   });
 
   it("make aliases Go aliases and keep typed map keys", () => {
-    expect(out).toContain("type Children = []BlockId\n");
-    expect(out).toContain("type Index = map[BlockId]bool\n");
+    expect(out).toContain("type Children = []OrderId\n");
+    expect(out).toContain("type Index = map[OrderId]bool\n");
     expect(emitGoFixtures(model)).toContain(
-      '"common/index": asAny(decodeMap(decodeType[BlockId], decodeBool)),',
+      '"common/index": asAny(decodeMap(decodeType[OrderId], decodeBool)),',
     );
   });
 
@@ -465,10 +465,10 @@ describe("Go recursion and names", () => {
 
 describe("Go determinism", () => {
   const files = {
-    block: schema("block", {
-      title: "Block",
-      oneOf: [{ $ref: "#/$defs/headingBlock" }, { $ref: "#/$defs/imageBlock" }],
-      $defs: blockDefs,
+    payment: schema("payment", {
+      title: "Payment",
+      oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
+      $defs: paymentDefs,
     }),
     lib: schema("lib", { $defs: { flag: { const: true }, version: { const: 1 } } }),
   };
@@ -487,12 +487,12 @@ describe("Go determinism", () => {
 
 describe("Go encoding checks", () => {
   const model = build({
-    block: schema("block", {
-      title: "Block",
-      oneOf: [{ $ref: "#/$defs/headingBlock" }, { $ref: "#/$defs/imageBlock" }],
+    payment: schema("payment", {
+      title: "Payment",
+      oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
       $defs: {
-        ...blockDefs,
-        page: closed(
+        ...paymentDefs,
+        checkout: closed(
           {
             root: { $ref: "#" },
             tags: { type: "array", items: { type: "string" } },
@@ -502,7 +502,7 @@ describe("Go encoding checks", () => {
           },
           ["root", "tags", "names", "title"],
         ),
-        families: {
+        prices: {
           type: "object",
           properties: {
             default: { type: "string" },
@@ -518,10 +518,10 @@ describe("Go encoding checks", () => {
 
   it("fail to encode a required slice, map or union that is nil, naming the key", () => {
     expect(out).toContain(
-      "func (v Page) MarshalJSON() ([]byte, error) {\n\ttype plain Page\n" +
+      "func (v Checkout) MarshalJSON() ([]byte, error) {\n\ttype plain Checkout\n" +
         '\treturn encodeRequired(plain(v), []string{"root", "tags", "names"}, v.Root != nil, v.Tags != nil, v.Names != nil)\n}\n',
     );
-    expect(out).not.toContain("func (v HeadingBlock) MarshalJSON");
+    expect(out).not.toContain("func (v CardPayment) MarshalJSON");
   });
 
   it("check required fields beside a rest map too", () => {
@@ -535,8 +535,8 @@ describe("Go encoding checks", () => {
       `# ${HEADER.slice(3)}\n# Marks the generated Go files, so diffs collapse them.\na.go linguist-generated=true\nb.go linguist-generated=true\n`,
     );
     const registry = emitGoFixtures(model);
-    expect(registry).toContain("\t\tnew(HeadingBlock),\n\t\tnew(HeadingBlockType),\n");
+    expect(registry).toContain("\t\tnew(CardPayment),\n\t\tnew(CardPaymentType),\n");
     expect(registry).toContain("\t\tnew(NonNullJson),\n");
-    expect(registry).not.toContain("new(Block)");
+    expect(registry).not.toContain("new(Payment)");
   });
 });

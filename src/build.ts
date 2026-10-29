@@ -76,7 +76,7 @@ const FORMATS = new Set(["date-time", "date"]);
 export interface IdRule {
   /** The schema file name, without `.json`, like `common`. */
   readonly file: string;
-  /** The def name suffix, like `Id`, so `blockId` is an ID. */
+  /** The def name suffix, like `Id`, so `orderId` is an ID. */
   readonly suffix: string;
 }
 
@@ -89,7 +89,7 @@ export interface BuildOptions {
 interface Ctx {
   readonly set: SchemaSet;
   readonly ids: IdRule | undefined;
-  /** Type name per def key string, like `block#headingBlock` to `HeadingBlock`. */
+  /** Type name per def key string, like `payment#cardPayment` to `CardPayment`. */
   readonly names: ReadonlyMap<string, string>;
   /** Def key strings that some allOf names as a base. */
   readonly bases: ReadonlySet<string>;
@@ -173,7 +173,7 @@ function nameDefs(set: SchemaSet): Map<string, string> {
 }
 
 /**
- * True for an ID def: a def of the rule's file whose name ends in its suffix, like `blockId`
+ * True for an ID def: a def of the rule's file whose name ends in its suffix, like `orderId`
  * in `common.json` for `{ file: "common", suffix: "Id" }`. Without a rule, nothing is an ID.
  * This is the one place that decides it.
  */
@@ -182,7 +182,7 @@ export function isIdDef(key: DefKey, ids: IdRule | undefined): boolean {
 }
 
 /**
- * An object that is neither closed nor a map, like `blockBase`. It is only
+ * An object that is neither closed nor a map, like `paymentBase`. It is only
  * allowed as an allOf base, so it gets no type of its own.
  */
 function isOpenObject(schema: JsonObject): boolean {
@@ -592,7 +592,7 @@ function fieldsOf(
   });
 }
 
-/** An exactly-one oneOf of required-only branches, like a link's href or pageId: one struct per choice. */
+/** An exactly-one oneOf of required-only branches, like a contact's email or phone: one struct per choice. */
 function exclusive(ctx: Ctx, whole: StructDecl, choices: readonly string[][], loc: Loc): Decl {
   if (!whole.closed) fail(at(loc, "oneOf"), "an exactly-one oneOf needs a closed object");
   const choiceKeys = new Set(choices.flat());
@@ -710,7 +710,7 @@ function conditional(schema: JsonObject, loc: Loc): Conditional {
 
 /**
  * Checks if/then properties exist on the object, and lifts array items that
- * only a then branch declares, like the ops of a batch per target kind.
+ * only a then branch declares, like the commands of a batch per target kind.
  */
 function liftItems(
   ctx: Ctx,
@@ -785,7 +785,7 @@ function requiredOnly(value: Json, loc: Loc, props: ReadonlyMap<string, Prop>): 
   });
 }
 
-/** The data keys of an object with named properties, like the locales beside `default`. */
+/** The data keys of an object with named properties, like the currencies beside `default`. */
 function restOf(
   ctx: Ctx,
   schema: JsonObject,
@@ -897,8 +897,8 @@ function leavesOf(ctx: Ctx, branch: Branch): Branch[] {
 }
 
 /**
- * The leaves of `then` branches that list the same item union, like the ops a
- * page batch and a layout batch share: a def an earlier branch already allows
+ * The leaves of `then` branches that list the same item union, like the commands an
+ * order batch and a shipment batch share: a def an earlier branch already allows
  * gives no second variant. A def one branch lists twice is kept every time, so
  * the tag check still rejects it as the schema mistake it is.
  */
@@ -954,8 +954,8 @@ function tagOf(
 }
 
 /**
- * Decode order for untagged unions: objects with required keys first (like a
- * binding), then arrays, maps (like a locale map), enums, strings, integers,
+ * Decode order for untagged unions: objects with required keys first (like an
+ * account reference), then arrays, maps (like a currency map), enums, strings, integers,
  * numbers, booleans, other unions and any JSON last.
  */
 function rankOf(ctx: Ctx, schema: Json, loc: Loc): number {
@@ -1027,16 +1027,16 @@ function checkAliasCycles(ctx: Ctx): void {
   }
 }
 
-interface Site {
+interface Edge {
   readonly to: string;
   readonly mark: () => void;
 }
 
-function sitesOf(ctx: Ctx, decl: Decl): Site[] {
-  const sites: Site[] = [];
+function edgesOf(ctx: Ctx, decl: Decl): Edge[] {
+  const edges: Edge[] = [];
   const push = (type: TypeExpr, mark: () => void): void => {
     const to = resolveAlias(ctx, type);
-    if (to !== undefined) sites.push({ to, mark });
+    if (to !== undefined) edges.push({ to, mark });
   };
   switch (decl.kind) {
     case "struct":
@@ -1052,7 +1052,7 @@ function sitesOf(ctx: Ctx, decl: Decl): Site[] {
     default:
       break;
   }
-  return sites;
+  return edges;
 }
 
 /**
@@ -1066,10 +1066,10 @@ function box(ctx: Ctx): void {
     const decl = ctx.decls.get(name);
     if (decl === undefined) return;
     state.set(name, "active");
-    for (const site of sitesOf(ctx, decl)) {
-      const seen = state.get(site.to);
-      if (seen === "active") site.mark();
-      else if (seen === undefined) visit(site.to);
+    for (const edge of edgesOf(ctx, decl)) {
+      const seen = state.get(edge.to);
+      if (seen === "active") edge.mark();
+      else if (seen === undefined) visit(edge.to);
     }
     state.set(name, "done");
   };

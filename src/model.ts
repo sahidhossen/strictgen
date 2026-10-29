@@ -31,7 +31,7 @@ export interface Field {
   boxed: boolean;
 }
 
-/** Extra keys of a struct that are data, like the locale keys beside `default` in a font's `families`. */
+/** Extra keys of a struct that are data, like the currency keys beside `default` in a price list's `prices`. */
 export interface Rest {
   readonly key: TypeExpr;
   readonly value: TypeExpr;
@@ -49,7 +49,7 @@ interface DeclBase {
   /** Schema path, for messages. */
   readonly path: string;
   /**
-   * Name of the schema file the type belongs to, like `block` or `user-profile`.
+   * Name of the schema file the type belongs to, like `order` or `user-profile`.
    * Hoisted types belong to the file of the root or def that owns them. Emitters
    * write one file or module per schema.
    */
@@ -110,7 +110,7 @@ export interface AliasDecl extends DeclBase {
 }
 
 /**
- * An id, like `blockId`: a string that languages with nominal types wrap in a
+ * An id, like `orderId`: a string that languages with nominal types wrap in a
  * type of its own (a Rust newtype), so ids of different kinds don't mix.
  */
 export interface IdDecl extends DeclBase {

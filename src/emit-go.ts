@@ -500,7 +500,7 @@ function comment(lines: readonly string[], indent: string): string {
 
 /**
  * The fixture registry, `registry_test.go`: a decoder per schema
- * root (`"block"`) and def (`"block/headingBlock"`), for the fixture tests,
+ * root (`"payment"`) and def (`"payment/cardPayment"`), for the fixture tests,
  * and every type with an UnmarshalJSON, for tests that cover them all.
  */
 export function emitGoFixtures(model: Model): string {
@@ -578,7 +578,7 @@ type DecodeError struct {
 	Code   string
 }
 
-// Error returns the path and the reason, like /ops/0: op "setProps": missing key "value".
+// Error returns the path and the reason, like /items/0: kind "card": missing key "number".
 func (e *DecodeError) Error() string {
 	if e.Path == "" {
 		return e.Reason

@@ -35,7 +35,7 @@ export interface Loc {
   readonly pointer: string;
 }
 
-/** Formats a location like `block.json#/$defs/headingBlock`. */
+/** Formats a location like `payment.json#/$defs/cardPayment`. */
 export function where(loc: Loc): string {
   return `${loc.file}.json#${loc.pointer}`;
 }
@@ -62,8 +62,8 @@ export function isObject(value: Json | undefined): value is JsonObject {
 export interface SchemaOptions {
   /**
    * The base every `$id` starts with: a schema in `<file>.json` must have the `$id`
-   * `<idBase><file>.json`. When left out, it is taken from the first schema by file name, and
-   * every other schema must use the same base.
+   * `<idBase><file>.json`. When left out, it is taken from the first schema by file name, must
+   * end in `/` or `#`, and every other schema must use the same base.
    */
   readonly idBase?: string;
 }
@@ -106,21 +106,23 @@ export function schemaSet(
     const id = root.$id;
     const tail = `${name}.json`;
     if (base === undefined) {
-      if (typeof id !== "string" || !id.endsWith(tail)) {
-        fail(
+      const derived =
+        typeof id === "string" && id.endsWith(tail) ? id.slice(0, -tail.length) : undefined;
+      if (derived === undefined || !/[/#]$/.test(derived)) {
+        return fail(
           at(loc, "$id"),
-          `$id is ${shown(id)}, expected <idBase>${tail}, so no idBase can be taken from it. ` +
-            `Fix: end the $id with ${tail}, or set the idBase option`,
+          `$id is ${shown(id)}, expected <idBase>${tail} with a base that ends in / or #, ` +
+            `so no idBase can be taken from it. ` +
+            `Fix: set the $id to a base ending in / or # followed by ${tail}, or set the idBase option`,
         );
       }
-      base = id.slice(0, -tail.length);
+      base = derived;
       from = name;
     } else if (id !== `${base}${tail}`) {
-      const source =
-        from === undefined ? "the idBase option" : `the base taken from ${from}.json`;
+      const source = from === undefined ? "from the idBase option" : `taken from ${from}.json`;
       fail(
         at(loc, "$id"),
-        `$id is ${shown(id)}, expected ${base}${tail} (base ${base}, from ${source}). ` +
+        `$id is ${shown(id)}, expected ${base}${tail} (base ${base}, ${source}). ` +
           `Fix: set the $id to ${base}${tail}` +
           (from === undefined ? ", or change the idBase option" : ", or set the idBase option"),
       );
@@ -145,7 +147,7 @@ export interface DefKey {
   readonly def: string | undefined;
 }
 
-/** Formats a def key like `block#headingBlock`, or `block#` for a root. */
+/** Formats a def key like `payment#cardPayment`, or `payment#` for a root. */
 export function keyString(key: DefKey): string {
   return `${key.file}#${key.def ?? ""}`;
 }

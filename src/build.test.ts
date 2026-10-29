@@ -63,18 +63,18 @@ function failure(files: Record<string, JsonObject>): CodegenError {
   throw new Error("expected a CodegenError");
 }
 
-const binding: JsonObject = {
-  description: "A binding.",
+const accountRef: JsonObject = {
+  description: "An account reference.",
   type: "object",
-  properties: { $bind: { description: "Path.", type: "string" } },
-  required: ["$bind"],
+  properties: { $account: { description: "Path.", type: "string" } },
+  required: ["$account"],
   unevaluatedProperties: false,
 };
-const localeCode: JsonObject = { description: "A locale.", type: "string", pattern: "^[a-z]{2}$" };
-const localizedText: JsonObject = {
-  description: "Text per locale.",
+const currencyCode: JsonObject = { description: "A currency.", type: "string", pattern: "^[A-Z]{3}$" };
+const currencyAmounts: JsonObject = {
+  description: "Amount per currency.",
   type: "object",
-  propertyNames: { $ref: "#/$defs/localeCode" },
+  propertyNames: { $ref: "#/$defs/currencyCode" },
   additionalProperties: { type: "string" },
 };
 
@@ -184,23 +184,23 @@ describe("allOf bases", () => {
   });
 });
 
-const blockDefs: JsonObject = {
-  headingBlock: {
-    description: "A heading.",
+const paymentDefs: JsonObject = {
+  cardPayment: {
+    description: "A card payment.",
     type: "object",
     properties: {
-      type: { description: "Type.", const: "heading" },
-      level: { description: "Level.", type: "integer" },
+      type: { description: "Type.", const: "card" },
+      installments: { description: "Installments.", type: "integer" },
     },
-    required: ["type", "level"],
+    required: ["type", "installments"],
     unevaluatedProperties: false,
   },
-  imageBlock: {
+  wirePayment: {
     description: "An image.",
     type: "object",
     properties: {
-      type: { description: "Type.", const: "image" },
-      alt: { description: "Alt.", type: "string" },
+      type: { description: "Type.", const: "wire" },
+      iban: { description: "IBAN.", type: "string" },
     },
     required: ["type"],
     unevaluatedProperties: false,
@@ -209,55 +209,55 @@ const blockDefs: JsonObject = {
 
 describe("const-tagged oneOf", () => {
   const model = build({
-    block: schema("block", {
-      title: "Block",
-      oneOf: [{ $ref: "#/$defs/headingBlock" }, { $ref: "#/$defs/imageBlock" }],
-      $defs: blockDefs,
+    payment: schema("payment", {
+      title: "Payment",
+      oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
+      $defs: paymentDefs,
     }),
   });
 
   it("becomes a tagged union whose branches keep their tag", () => {
-    expect(find(model, "Block")).toMatchObject({
+    expect(find(model, "Payment")).toMatchObject({
       kind: "tagged",
       tag: "type",
       variants: [
-        { value: "heading", type: "HeadingBlock" },
-        { value: "image", type: "ImageBlock" },
+        { value: "card", type: "CardPayment" },
+        { value: "wire", type: "WirePayment" },
       ],
     });
-    expect(find(model, "HeadingBlockType")).toMatchObject({ kind: "enum", values: ["heading"] });
+    expect(find(model, "CardPaymentType")).toMatchObject({ kind: "enum", values: ["card"] });
   });
 
   it("decodes in Rust by reading the tag first", () => {
     const rust = rustOf(model);
-    expect(rust).toContain("impl<'de> Deserialize<'de> for Block {");
+    expect(rust).toContain("impl<'de> Deserialize<'de> for Payment {");
     expect(rust).toContain('match tag::<D::Error>(&value, "type")?.as_str() {');
-    expect(rust).toContain('"heading" => variant(value, "type", "heading").map(Self::Heading),');
+    expect(rust).toContain('"card" => variant(value, "type", "card").map(Self::Card),');
     expect(rust).toContain(
-      'other => Err(serde::de::Error::unknown_variant(other, &["heading", "image"])),',
+      'other => Err(serde::de::Error::unknown_variant(other, &["card", "wire"])),',
     );
   });
 
   it("is a discriminated union in TypeScript", () => {
     const ts = tsOf(model);
-    expect(ts).toContain("export type Block = HeadingBlock | ImageBlock;");
-    expect(ts).toContain('export type HeadingBlockType = "heading";');
+    expect(ts).toContain("export type Payment = CardPayment | WirePayment;");
+    expect(ts).toContain('export type CardPaymentType = "card";');
   });
 
   it("spreads nested unions that share the tag", () => {
     const nested = build({
-      block: schema("block", {
-        title: "Block",
-        oneOf: [{ $ref: "#/$defs/heading" }, { $ref: "#/$defs/imageBlock" }],
+      payment: schema("payment", {
+        title: "Payment",
+        oneOf: [{ $ref: "#/$defs/card" }, { $ref: "#/$defs/wirePayment" }],
         $defs: {
-          ...blockDefs,
-          heading: { description: "Headings.", oneOf: [{ $ref: "#/$defs/headingBlock" }] },
+          ...paymentDefs,
+          card: { description: "Cards.", oneOf: [{ $ref: "#/$defs/cardPayment" }] },
         },
       }),
     });
-    expect(find(nested, "Block")).toMatchObject({
+    expect(find(nested, "Payment")).toMatchObject({
       kind: "tagged",
-      variants: [{ value: "heading" }, { value: "image" }],
+      variants: [{ value: "card" }, { value: "wire" }],
     });
   });
 });
@@ -265,12 +265,12 @@ describe("const-tagged oneOf", () => {
 describe("untagged oneOf", () => {
   const model = build(
     defs({
-      localeCode,
-      localizedText,
-      binding,
-      boundText: {
-        description: "Text or a binding.",
-        oneOf: [{ $ref: "#/$defs/localizedText" }, { $ref: "#/$defs/binding" }],
+      currencyCode,
+      currencyAmounts,
+      accountRef,
+      amountsOrRef: {
+        description: "Amounts or an account reference.",
+        oneOf: [{ $ref: "#/$defs/currencyAmounts" }, { $ref: "#/$defs/accountRef" }],
       },
       scalar: {
         description: "A value.",
@@ -286,12 +286,12 @@ describe("untagged oneOf", () => {
   );
 
   it("tries an object with required keys before a map", () => {
-    expect(find(model, "BoundText")).toMatchObject({
+    expect(find(model, "AmountsOrRef")).toMatchObject({
       kind: "untagged",
-      variants: [{ name: "Binding" }, { name: "LocalizedText" }],
+      variants: [{ name: "AccountRef" }, { name: "CurrencyAmounts" }],
     });
     expect(rustOf(model)).toContain(
-      "#[serde(untagged)]\npub enum BoundText {\n    /// A `Binding`.\n    Binding(Binding),\n    /// A `LocalizedText`.\n    LocalizedText(LocalizedText),\n}",
+      "#[serde(untagged)]\npub enum AmountsOrRef {\n    /// A `AccountRef`.\n    AccountRef(AccountRef),\n    /// A `CurrencyAmounts`.\n    CurrencyAmounts(CurrencyAmounts),\n}",
     );
   });
 
@@ -318,12 +318,12 @@ describe("exactly-one oneOf of required keys", () => {
         type: "object",
         properties: {
           href: { description: "URL.", type: "string" },
-          pageId: { description: "Page.", type: "string" },
+          userId: { description: "User.", type: "string" },
           target: { description: "Window.", enum: ["_self", "_blank"] },
         },
         oneOf: [
           { properties: { href: true }, required: ["href"] },
-          { properties: { pageId: true }, required: ["pageId"] },
+          { properties: { userId: true }, required: ["userId"] },
         ],
         unevaluatedProperties: false,
       },
@@ -333,16 +333,16 @@ describe("exactly-one oneOf of required keys", () => {
   it("becomes one closed struct per choice, which forbids the other keys", () => {
     expect(find(model, "LinkTarget")).toMatchObject({
       kind: "untagged",
-      variants: [{ name: "Href" }, { name: "PageId" }],
+      variants: [{ name: "Href" }, { name: "UserId" }],
     });
     expect(find(model, "LinkTargetHref")).toMatchObject({
       kind: "struct",
       closed: true,
-      forbidden: ["pageId"],
+      forbidden: ["userId"],
     });
     const ts = tsOf(model);
     expect(ts).toContain("  href: string;\n");
-    expect(ts).toContain("  pageId?: never;\n");
+    expect(ts).toContain("  userId?: never;\n");
   });
 
   it("names a _self variant without clashing with Self", () => {
@@ -379,8 +379,8 @@ describe("exactly-one oneOf of required keys", () => {
 describe("maps", () => {
   const model = build(
     defs({
-      localeCode,
-      localizedText,
+      currencyCode,
+      currencyAmounts,
       weekday: { description: "A day.", enum: ["mon", "tue"] },
       hours: {
         description: "Hours per day.",
@@ -388,8 +388,8 @@ describe("maps", () => {
         propertyNames: { $ref: "#/$defs/weekday" },
         additionalProperties: { type: "integer" },
       },
-      props: {
-        description: "Any props.",
+      metadata: {
+        description: "Any metadata.",
         type: "object",
         additionalProperties: { not: { const: null } },
       },
@@ -397,12 +397,12 @@ describe("maps", () => {
   );
 
   it("keep a propertyNames key type", () => {
-    expect(find(model, "LocalizedText")).toMatchObject({
+    expect(find(model, "CurrencyAmounts")).toMatchObject({
       kind: "alias",
-      type: { kind: "map", key: { kind: "ref", name: "LocaleCode" }, value: { kind: "string" } },
+      type: { kind: "map", key: { kind: "ref", name: "CurrencyCode" }, value: { kind: "string" } },
     });
-    expect(rustOf(model)).toContain("pub type LocalizedText = BTreeMap<LocaleCode, String>;");
-    expect(tsOf(model)).toContain("export type LocalizedText = Record<LocaleCode, string>;");
+    expect(rustOf(model)).toContain("pub type CurrencyAmounts = BTreeMap<CurrencyCode, String>;");
+    expect(tsOf(model)).toContain("export type CurrencyAmounts = Record<CurrencyCode, string>;");
   });
 
   it("allow missing keys in TypeScript when keys are an enum", () => {
@@ -410,19 +410,19 @@ describe("maps", () => {
   });
 
   it("use string keys when only additionalProperties is given", () => {
-    expect(rustOf(model)).toContain("pub type Props = BTreeMap<String, NonNullJson>;");
+    expect(rustOf(model)).toContain("pub type Metadata = BTreeMap<String, NonNullJson>;");
   });
 
-  it("can sit beside named keys, like default beside locales", () => {
-    const font = build(
+  it("can sit beside named keys, like default beside currencies", () => {
+    const priced = build(
       defs({
-        localeCode,
-        families: {
-          description: "Family per locale.",
+        currencyCode,
+        prices: {
+          description: "Price per currency.",
           type: "object",
           propertyNames: {
             type: "string",
-            anyOf: [{ const: "default" }, { $ref: "#/$defs/localeCode" }],
+            anyOf: [{ const: "default" }, { $ref: "#/$defs/currencyCode" }],
           },
           properties: { default: { description: "Fallback.", type: "string" } },
           additionalProperties: { type: "string" },
@@ -430,22 +430,22 @@ describe("maps", () => {
         },
       }),
     );
-    expect(find(font, "Families")).toMatchObject({
+    expect(find(priced, "Prices")).toMatchObject({
       kind: "struct",
-      rest: { key: { kind: "ref", name: "LocaleCode" }, value: { kind: "string" } },
+      rest: { key: { kind: "ref", name: "CurrencyCode" }, value: { kind: "string" } },
     });
-    const rust = rustOf(font);
-    expect(rust).toContain("    #[serde(flatten)]\n    pub rest: BTreeMap<LocaleCode, String>,");
+    const rust = rustOf(priced);
+    expect(rust).toContain("    #[serde(flatten)]\n    pub rest: BTreeMap<CurrencyCode, String>,");
     expect(rust).not.toContain("deny_unknown_fields");
-    expect(tsOf(font)).toContain("  default: string;\n  [key: string]: string;\n");
+    expect(tsOf(priced)).toContain("  default: string;\n  [key: string]: string;\n");
   });
 });
 
 describe("aliases and JSON values", () => {
   const model = build(
     defs({
-      localeCode,
-      language: { description: "Same as a locale.", $ref: "#/$defs/localeCode" },
+      currencyCode,
+      settlementCurrency: { description: "Same as a currency.", $ref: "#/$defs/currencyCode" },
       anyValue: { description: "Any JSON, null included." },
       jsonValue: { description: "Any JSON but null.", not: { const: null } },
       version: { description: "The version.", const: 1 },
@@ -454,12 +454,12 @@ describe("aliases and JSON values", () => {
   );
 
   it("make a def that is only a $ref an alias", () => {
-    expect(find(model, "Language")).toMatchObject({
+    expect(find(model, "SettlementCurrency")).toMatchObject({
       kind: "alias",
-      type: { kind: "ref", name: "LocaleCode" },
+      type: { kind: "ref", name: "CurrencyCode" },
     });
-    expect(rustOf(model)).toContain("pub type Language = LocaleCode;");
-    expect(tsOf(model)).toContain("export type Language = LocaleCode;");
+    expect(rustOf(model)).toContain("pub type SettlementCurrency = CurrencyCode;");
+    expect(tsOf(model)).toContain("export type SettlementCurrency = CurrencyCode;");
   });
 
   it("keep null in anyValue and reject it in jsonValue", () => {
@@ -505,39 +505,39 @@ describe("numbers", () => {
 
 describe("if/then", () => {
   const files = {
-    ops: schema("ops", {
+    commands: schema("commands", {
       title: "Batch",
       type: "object",
       properties: {
-        kind: { description: "Kind.", enum: ["page", "site"] },
-        ops: { description: "Ops.", type: "array" },
+        kind: { description: "Kind.", enum: ["order", "user"] },
+        commands: { description: "Commands.", type: "array" },
       },
-      required: ["kind", "ops"],
+      required: ["kind", "commands"],
       unevaluatedProperties: false,
       allOf: [
         {
-          if: { properties: { kind: { const: "page" } }, required: ["kind"] },
-          then: { properties: { ops: { items: { $ref: "#/$defs/pageOp" } } } },
+          if: { properties: { kind: { const: "order" } }, required: ["kind"] },
+          then: { properties: { commands: { items: { $ref: "#/$defs/orderCommand" } } } },
         },
         {
-          if: { properties: { kind: { const: "site" } }, required: ["kind"] },
-          then: { properties: { ops: { items: { $ref: "#/$defs/siteOp" } } } },
+          if: { properties: { kind: { const: "user" } }, required: ["kind"] },
+          then: { properties: { commands: { items: { $ref: "#/$defs/userCommand" } } } },
         },
       ],
       $defs: {
-        pageOp: { description: "Page ops.", oneOf: [{ $ref: "#/$defs/insertOp" }] },
-        siteOp: { description: "Site ops.", oneOf: [{ $ref: "#/$defs/setThemeOp" }] },
-        insertOp: {
+        orderCommand: { description: "Order commands.", oneOf: [{ $ref: "#/$defs/createOrder" }] },
+        userCommand: { description: "User commands.", oneOf: [{ $ref: "#/$defs/renameUser" }] },
+        createOrder: {
           description: "Insert.",
           type: "object",
-          properties: { op: { description: "Op.", const: "insert" } },
+          properties: { op: { description: "Op.", const: "createOrder" } },
           required: ["op"],
           unevaluatedProperties: false,
         },
-        setThemeOp: {
-          description: "Set theme.",
+        renameUser: {
+          description: "Rename a user.",
           type: "object",
-          properties: { op: { description: "Op.", const: "setTheme" } },
+          properties: { op: { description: "Op.", const: "renameUser" } },
           required: ["op"],
           unevaluatedProperties: false,
         },
@@ -550,46 +550,46 @@ describe("if/then", () => {
     const batch = find(model, "Batch");
     expect(batch.kind === "struct" && batch.fields[1]?.type).toEqual({
       kind: "array",
-      items: { kind: "ref", name: "BatchOpsItem" },
+      items: { kind: "ref", name: "BatchCommandsItem" },
     });
-    expect(find(model, "BatchOpsItem")).toMatchObject({
+    expect(find(model, "BatchCommandsItem")).toMatchObject({
       kind: "tagged",
       tag: "op",
       variants: [
-        { value: "insert", type: "InsertOp" },
-        { value: "setTheme", type: "SetThemeOp" },
+        { value: "createOrder", type: "CreateOrder" },
+        { value: "renameUser", type: "RenameUser" },
       ],
     });
   });
 
-  /** The ops schema with a layout batch whose then branch allows `items`. */
-  function withLayoutBatch(items: JsonObject): Record<string, JsonObject> {
-    const root = structuredClone(files.ops) as Record<string, Json>;
+  /** The commands schema with a shipment batch whose then branch allows `items`. */
+  function withShipmentBatch(items: JsonObject): Record<string, JsonObject> {
+    const root = structuredClone(files.commands) as Record<string, Json>;
     (root.properties as Record<string, Json>).kind = {
       description: "Kind.",
-      enum: ["page", "layout", "site"],
+      enum: ["order", "shipment", "user"],
     };
     (root.allOf as JsonObject[]).push({
-      if: { properties: { kind: { const: "layout" } }, required: ["kind"] },
-      then: { properties: { ops: { items } } },
+      if: { properties: { kind: { const: "shipment" } }, required: ["kind"] },
+      then: { properties: { commands: { items } } },
     });
-    return { ops: root };
+    return { commands: root };
   }
 
   it("make one variant of a def that two then branches both allow", () => {
-    const model = build(withLayoutBatch({ oneOf: [{ $ref: "#/$defs/insertOp" }] }));
-    expect(find(model, "BatchOpsItem")).toMatchObject({
+    const model = build(withShipmentBatch({ oneOf: [{ $ref: "#/$defs/createOrder" }] }));
+    expect(find(model, "BatchCommandsItem")).toMatchObject({
       kind: "tagged",
       variants: [
-        { value: "insert", type: "InsertOp" },
-        { value: "setTheme", type: "SetThemeOp" },
+        { value: "createOrder", type: "CreateOrder" },
+        { value: "renameUser", type: "RenameUser" },
       ],
     });
   });
 
   it("reject a def that one then branch repeats, even one an earlier branch allows", () => {
-    const insert = { $ref: "#/$defs/insertOp" };
-    expect(failure(withLayoutBatch({ oneOf: [insert, insert] })).message).toContain(
+    const insert = { $ref: "#/$defs/createOrder" };
+    expect(failure(withShipmentBatch({ oneOf: [insert, insert] })).message).toContain(
       "repeat its values",
     );
   });
@@ -659,14 +659,14 @@ describe("names", () => {
 
   it("name a typed root after its title and hoist inline types after their owner", () => {
     const model = build({
-      site: schema("site", {
-        title: "Site settings",
+      account: schema("account", {
+        title: "Account settings",
         type: "object",
         properties: { mode: { description: "Mode.", enum: ["a", "b"] } },
         unevaluatedProperties: false,
       }),
     });
-    expect(model.decls.map((d) => d.name)).toEqual(["SiteSettings", "SiteSettingsMode"]);
+    expect(model.decls.map((d) => d.name)).toEqual(["AccountSettings", "AccountSettingsMode"]);
   });
 
   it("reject a hoisted name that clashes with a def", () => {
@@ -747,12 +747,12 @@ describe("unsupported constructs", () => {
 
 describe("determinism", () => {
   const files = {
-    block: schema("block", {
-      title: "Block",
-      oneOf: [{ $ref: "#/$defs/headingBlock" }, { $ref: "#/$defs/imageBlock" }],
-      $defs: blockDefs,
+    payment: schema("payment", {
+      title: "Payment",
+      oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
+      $defs: paymentDefs,
     }),
-    ...defs({ localeCode, localizedText, binding }),
+    ...defs({ currencyCode, currencyAmounts, accountRef }),
   };
 
   it("emits the same output on every run and for any input key order", () => {
@@ -821,35 +821,35 @@ describe("ids", () => {
   const model = build({
     common: schema("common", {
       $defs: {
-        blockId: { description: "A block id.", type: "string", pattern: "^blk_" },
+        orderId: { description: "An order id.", type: "string", pattern: "^ord_" },
         label: { type: "string" },
       },
     }),
   });
 
   it("are newtypes in Rust and strings in TypeScript", () => {
-    expect(find(model, "BlockId")).toMatchObject({ kind: "id" });
+    expect(find(model, "OrderId")).toMatchObject({ kind: "id" });
     expect(find(model, "Label")).toMatchObject({ kind: "alias" });
-    expect(rustOf(model)).toContain("#[serde(transparent)]\npub struct BlockId(pub String);");
+    expect(rustOf(model)).toContain("#[serde(transparent)]\npub struct OrderId(pub String);");
     expect(rustOf(model)).toContain(
       "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]\n#[serde(transparent)]",
     );
-    expect(tsOf(model)).toContain("export type BlockId = string;");
+    expect(tsOf(model)).toContain("export type OrderId = string;");
   });
 
   it("must be strings", () => {
-    const bad = { common: schema("common", { $defs: { blockId: { type: "integer" } } }) };
-    expect(failure(bad).path).toBe("common.json#/$defs/blockId");
+    const bad = { common: schema("common", { $defs: { orderId: { type: "integer" } } }) };
+    expect(failure(bad).path).toBe("common.json#/$defs/orderId");
   });
 
   it("are off by default, so a def ending in Id is a plain alias", () => {
     const files = {
-      common: schema("common", { $defs: { blockId: { type: "string" }, count: { type: "integer" } } }),
+      common: schema("common", { $defs: { orderId: { type: "string" }, count: { type: "integer" } } }),
     };
     const off = buildModel(schemaSet(files));
-    expect(find(off, "BlockId")).toMatchObject({ kind: "alias", type: { kind: "string" } });
+    expect(find(off, "OrderId")).toMatchObject({ kind: "alias", type: { kind: "string" } });
     expect(off.decls.some((d) => d.kind === "id")).toBe(false);
-    expect(rustOf(off)).not.toContain("pub struct BlockId(pub String);");
+    expect(rustOf(off)).not.toContain("pub struct OrderId(pub String);");
   });
 
   it("follow a custom file and suffix", () => {
@@ -859,14 +859,14 @@ describe("ids", () => {
         keys: schema("keys", {
           $defs: { userKey: { type: "string" }, orderKey: { type: "string" }, label: { type: "string" } },
         }),
-        common: schema("common", { $defs: { blockId: { type: "string" } } }),
+        common: schema("common", { $defs: { orderId: { type: "string" } } }),
       },
       ids,
     );
     expect(find(model, "UserKey")).toMatchObject({ kind: "id" });
     expect(find(model, "OrderKey")).toMatchObject({ kind: "id" });
     expect(find(model, "Label")).toMatchObject({ kind: "alias" });
-    expect(find(model, "BlockId")).toMatchObject({ kind: "alias" });
+    expect(find(model, "OrderId")).toMatchObject({ kind: "alias" });
     expect(rustOf(model)).toContain("#[serde(transparent)]\npub struct UserKey(pub String);");
     const bad = { keys: schema("keys", { $defs: { userKey: { type: "boolean" } } }) };
     expect(() => build(bad, ids)).toThrow("keys.json#/$defs/userKey: an id must be a string");
@@ -934,7 +934,7 @@ describe("named keys beside a map of the other keys", () => {
   it("serialize through a guard so a named key is never written twice", () => {
     const model = build(
       defs({
-        families: {
+        prices: {
           type: "object",
           properties: {
             default: { description: "Fallback.", type: "string" },
@@ -946,7 +946,7 @@ describe("named keys beside a map of the other keys", () => {
       }),
     );
     const rust = rustOf(model);
-    expect(rust).toContain("impl Serialize for Families {");
+    expect(rust).toContain("impl Serialize for Prices {");
     expect(rust).toContain('        map.serialize_entry("default", &self.default)?;\n');
     expect(rust).toContain("        if let Some(value) = &self.size {\n");
     expect(rust).toContain('                && ["default", "size"].contains(&name.as_str())\n');
@@ -957,13 +957,13 @@ describe("named keys beside a map of the other keys", () => {
 describe("one file per schema", () => {
   const files = {
     common: schema("common", {
-      $defs: { blockId: { type: "string" }, anyValue: {}, flag: { const: true } },
+      $defs: { orderId: { type: "string" }, anyValue: {}, flag: { const: true } },
     }),
     "item-list": schema("item-list", {
       title: "Item list",
       type: "object",
       properties: {
-        ids: { type: "array", items: { $ref: `${BASE}common.json#/$defs/blockId` } },
+        ids: { type: "array", items: { $ref: `${BASE}common.json#/$defs/orderId` } },
         value: { $ref: `${BASE}common.json#/$defs/anyValue` },
         by: { type: "object", additionalProperties: { type: "string" } },
       },
@@ -976,10 +976,10 @@ describe("one file per schema", () => {
   it("writes a Rust module per schema that imports what it uses from the others", () => {
     const out = emitRust(model);
     expect(out.map((f) => f.name)).toEqual(["mod.rs", "helpers.rs", "common.rs", "item_list.rs"]);
-    const page = out[3]?.contents ?? "";
-    expect(page).toContain("//! Types for `item-list.json`.\n");
-    expect(page).toContain(
-      "use super::common::{AnyValue, BlockId};\nuse super::helpers::present;\nuse serde::{Deserialize, Serialize};\nuse std::collections::BTreeMap;\n",
+    const itemList = out[3]?.contents ?? "";
+    expect(itemList).toContain("//! Types for `item-list.json`.\n");
+    expect(itemList).toContain(
+      "use super::common::{AnyValue, OrderId};\nuse super::helpers::present;\nuse serde::{Deserialize, Serialize};\nuse std::collections::BTreeMap;\n",
     );
     const common = out[2]?.contents ?? "";
     expect(common).toContain(
@@ -1014,7 +1014,7 @@ describe("one file per schema", () => {
     const out = emitTypeScript(model);
     expect(out.map((f) => f.name)).toEqual(["common.ts", "item-list.ts", "index.ts"]);
     expect(out[1]?.contents).toContain(
-      '/** Types for `item-list.json`. */\n\nimport type { AnyValue, BlockId } from "./common.js";\n\n',
+      '/** Types for `item-list.json`. */\n\nimport type { AnyValue, OrderId } from "./common.js";\n\n',
     );
     expect(out[0]?.contents).not.toContain("import");
     expect(out[2]?.contents).toBe(
@@ -1024,14 +1024,14 @@ describe("one file per schema", () => {
 
   it("imports a rest map's key type in Rust only, since TypeScript keys it by string", () => {
     const rest = build({
-      common: schema("common", { $defs: { localeCode: { type: "string" } } }),
-      theme: schema("theme", {
+      common: schema("common", { $defs: { currencyCode: { type: "string" } } }),
+      pricing: schema("pricing", {
         $defs: {
-          families: {
+          prices: {
             type: "object",
             properties: { default: { type: "string" } },
             propertyNames: {
-              anyOf: [{ const: "default" }, { $ref: `${BASE}common.json#/$defs/localeCode` }],
+              anyOf: [{ const: "default" }, { $ref: `${BASE}common.json#/$defs/currencyCode` }],
             },
             additionalProperties: { type: "string" },
             required: ["default"],
@@ -1039,10 +1039,10 @@ describe("one file per schema", () => {
         },
       }),
     });
-    expect(emitRust(rest).find((f) => f.name === "theme.rs")?.contents).toContain(
-      "use super::common::LocaleCode;\n",
+    expect(emitRust(rest).find((f) => f.name === "pricing.rs")?.contents).toContain(
+      "use super::common::CurrencyCode;\n",
     );
-    expect(emitTypeScript(rest).find((f) => f.name === "theme.ts")?.contents).not.toContain(
+    expect(emitTypeScript(rest).find((f) => f.name === "pricing.ts")?.contents).not.toContain(
       "import",
     );
   });
@@ -1055,9 +1055,9 @@ describe("one file per schema", () => {
   it("keeps each hoisted type with the schema of its owner", () => {
     expect(model.decls.map((d) => [d.name, d.schema])).toEqual([
       ["AnyValue", "common"],
-      ["BlockId", "common"],
       ["Flag", "common"],
       ["ItemList", "item-list"],
+      ["OrderId", "common"],
     ]);
   });
 });

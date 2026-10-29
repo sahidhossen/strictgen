@@ -1,6 +1,6 @@
 /**
- * Turns a schema name, title or enum value into PascalCase, like `headingBlock`
- * to `HeadingBlock`, `sans-serif` to `SansSerif` and `GET` to `Get`. Returns an
+ * Turns a schema name, title or enum value into PascalCase, like `cardPayment`
+ * to `CardPayment`, `sans-serif` to `SansSerif` and `GET` to `Get`. Returns an
  * empty string when there are no letters or digits.
  */
 export function pascal(text: string): string {

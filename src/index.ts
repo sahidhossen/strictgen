@@ -3,7 +3,7 @@ export { buildModel, isIdDef } from "./build.js";
 export type { EmittedFile } from "./common.js";
 export { HEADER } from "./common.js";
 export { emitGo, emitGoAttributes, emitGoFixtures, GO_FIXTURES } from "./emit-go.js";
-export { emitRust, emitRustFixtures, emitRustRoots } from "./emit-rust.js";
+export { emitRust, emitRustFixtures } from "./emit-rust.js";
 export { emitRustSchemas } from "./emit-schemas.js";
 export { emitTypeScript } from "./emit-ts.js";
 export type { Log, MainOptions, OutputFile, Target } from "./main.js";

@@ -22,8 +22,8 @@ import {
 const BASE = "https://example.com/schemas/v1/";
 
 const set: SchemaSet = schemaSet({
-  common: { $id: `${BASE}common.json`, $defs: { blockId: { type: "string" } } },
-  block: { $id: `${BASE}block.json`, type: "object" },
+  common: { $id: `${BASE}common.json`, $defs: { orderId: { type: "string" } } },
+  payment: { $id: `${BASE}payment.json`, type: "object" },
 });
 
 function codegenError(run: () => unknown): CodegenError {
@@ -37,18 +37,18 @@ function codegenError(run: () => unknown): CodegenError {
 }
 
 describe("resolveRef", () => {
-  const loc = { file: "block", pointer: "/properties/id" };
+  const loc = { file: "payment", pointer: "/properties/id" };
 
   it("resolves local and absolute refs", () => {
-    expect(resolveRef(set, `${BASE}common.json#/$defs/blockId`, loc)).toEqual({
+    expect(resolveRef(set, `${BASE}common.json#/$defs/orderId`, loc)).toEqual({
       file: "common",
-      def: "blockId",
+      def: "orderId",
     });
-    expect(resolveRef(set, `${BASE}block.json`, loc)).toEqual({
-      file: "block",
+    expect(resolveRef(set, `${BASE}payment.json`, loc)).toEqual({
+      file: "payment",
       def: undefined,
     });
-    expect(resolveRef(set, "#", loc)).toEqual({ file: "block", def: undefined });
+    expect(resolveRef(set, "#", loc)).toEqual({ file: "payment", def: undefined });
   });
 
   it.each([
@@ -58,7 +58,7 @@ describe("resolveRef", () => {
     [`${BASE}common.json#/$defs/nope`, "names an unknown def"],
   ])("rejects %s", (ref, reason) => {
     expect(codegenError(() => resolveRef(set, ref, loc)).message).toBe(
-      `block.json#/properties/id: $ref ${ref} ${reason}`,
+      `payment.json#/properties/id: $ref ${ref} ${reason}`,
     );
   });
 });
@@ -85,7 +85,7 @@ describe("schemas", () => {
   });
 
   it("finds defs and roots, and fails on unknown ones", () => {
-    expect(schemaAt(set, { file: "common", def: "blockId" })).toEqual({ type: "string" });
+    expect(schemaAt(set, { file: "common", def: "orderId" })).toEqual({ type: "string" });
     expect(codegenError(() => schemaAt(set, { file: "common", def: "x" })).path).toBe(
       "common.json#/$defs/x",
     );
@@ -142,7 +142,7 @@ describe("idBase", () => {
     );
     expect(error.path).toBe("b.json#/$id");
     expect(error.message).toBe(
-      `b.json#/$id: $id is "${other}b.json", expected ${BASE}b.json (base ${BASE}, from the base taken from a.json). Fix: set the $id to ${BASE}b.json, or set the idBase option`,
+      `b.json#/$id: $id is "${other}b.json", expected ${BASE}b.json (base ${BASE}, taken from a.json). Fix: set the $id to ${BASE}b.json, or set the idBase option`,
     );
   });
 
@@ -151,13 +151,44 @@ describe("idBase", () => {
       const error = codegenError(() => schemaSet({ a: root }));
       expect(error.path).toBe("a.json#/$id");
       expect(error.message).toContain("expected <idBase>a.json");
-      expect(error.message).toContain("Fix: end the $id with a.json, or set the idBase option");
+      expect(error.message).toContain("so no idBase can be taken from it");
+      expect(error.message).toContain(
+        "Fix: set the $id to a base ending in / or # followed by a.json, or set the idBase option",
+      );
     }
+  });
+
+  it("fails on the first schema when its base doesn't end in / or #", () => {
+    const error = codegenError(() =>
+      schemaSet({
+        a: { $id: "https://example.com/schemas/v1a.json" },
+        b: { $id: `${BASE}b.json` },
+      }),
+    );
+    expect(error.path).toBe("a.json#/$id");
+    expect(error.message).toContain("so no idBase can be taken from it");
+  });
+
+  it("fails on a relative $id, which leaves an empty base", () => {
+    const error = codegenError(() => schemaSet({ a: { $id: "a.json" } }));
+    expect(error.path).toBe("a.json#/$id");
+    expect(error.message).toContain("so no idBase can be taken from it");
+  });
+
+  it("fails on a $id whose file name only ends like the schema's", () => {
+    const error = codegenError(() => schemaSet({ event: { $id: `${BASE}my-event.json` } }));
+    expect(error.path).toBe("event.json#/$id");
+    expect(error.message).toContain("so no idBase can be taken from it");
+  });
+
+  it("accepts a derived base ending in #", () => {
+    const hashed = schemaSet({ a: { $id: "urn:example:schemas#a.json" } });
+    expect(idBaseOf(hashed)).toBe("urn:example:schemas#");
   });
 
   it("rejects a $ref under a base other than the set's", () => {
     expect(
-      codegenError(() => resolveRef(set, `${other}block.json`, { file: "block", pointer: "" }))
+      codegenError(() => resolveRef(set, `${other}payment.json`, { file: "payment", pointer: "" }))
         .message,
     ).toContain("is outside the schema set");
   });
@@ -165,7 +196,7 @@ describe("idBase", () => {
 
 describe("naming", () => {
   it.each([
-    ["headingBlock", "HeadingBlock"],
+    ["cardPayment", "CardPayment"],
     ["sans-serif", "SansSerif"],
     ["image/webp", "ImageWebp"],
     ["GET", "Get"],
@@ -185,8 +216,8 @@ describe("naming", () => {
   });
 
   it.each([
-    ["visibleIf", "visible_if"],
-    ["$bind", "bind"],
+    ["shippedAt", "shipped_at"],
+    ["$account", "account"],
     ["type", "r#type"],
     ["self", "self_"],
     ["h1", "h1"],
@@ -201,9 +232,9 @@ describe("naming", () => {
   });
 
   it("matches serde's camelCase", () => {
-    expect(serdeCamel("visible_if")).toBe("visibleIf");
+    expect(serdeCamel("shipped_at")).toBe("shippedAt");
     expect(serdeCamel("r#type")).toBe("type");
-    expect(serdeCamel("bind")).toBe("bind");
+    expect(serdeCamel("account")).toBe("account");
   });
 
   it("reserves NonNullJson in Rust", () => {
