@@ -11,6 +11,13 @@
 # origin/main, empty means every commit reachable from HEAD.
 set -euo pipefail
 
+# Case-insensitive matching of non-ASCII words needs a UTF-8 locale.
+if locale -a 2>/dev/null | grep -qiE '^c\.utf-?8$'; then
+  export LC_ALL=C.UTF-8
+else
+  export LC_ALL=en_US.UTF-8
+fi
+
 cd "$(git rev-parse --show-toplevel)"
 
 fail=0
@@ -28,8 +35,8 @@ if [[ -n "${HYGIENE_DENYLIST:-}" ]]; then
 elif [[ -f .hygiene-denylist ]]; then
   cat .hygiene-denylist >"$denylist"
 fi
-# Drop carriage returns and blank lines.
-tr -d '\r' <"$denylist" | grep -v '^[[:space:]]*$' >"$denylist.tmp" || true
+# Drop carriage returns, surrounding whitespace and blank lines.
+tr -d '\r' <"$denylist" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' >"$denylist.tmp" || true
 mv "$denylist.tmp" "$denylist"
 if [[ ! -s "$denylist" ]]; then
   if [[ -n "${CI:-}" ]]; then
@@ -51,8 +58,8 @@ if [[ "${1:-}" == "--text" ]]; then
   exit $fail
 fi
 
-# Every path in the index, unquoted so non-ASCII names are checked as they are.
-files="$(git -c core.quotePath=false ls-files --cached)"
+# Every path in the index, raw (NUL separated, so git never quotes them).
+files="$(git ls-files --cached -z | tr '\0' '\n')"
 
 # 1. Internal files that must never be tracked, at any depth, in any case.
 internal='(^|/)(claude\.md|claude\.local\.md|\.claude/|\.local/|strictgen-spec\.md|\.hygiene-denylist)|\.local\.md$'
@@ -101,7 +108,7 @@ if ! git rev-parse --verify --quiet HEAD >/dev/null; then
   messages=""
 elif [[ -z "$base" ]]; then
   messages="$(git log --format='%H%n%B' HEAD)"
-elif git rev-parse --verify --quiet "$base" >/dev/null; then
+elif git rev-parse --verify --quiet "$base^{commit}" >/dev/null; then
   messages="$(git log --format='%H%n%B' "$base..HEAD")"
 else
   report "commit range base $base not found"
