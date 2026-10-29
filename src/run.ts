@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -8,7 +8,7 @@ import { ConfigError, configFolders, loadConfig } from "./config.js";
 import { formatFiles, FormatterFailedError, FormatterMissingError } from "./format.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import type { OutputFile } from "./main.js";
-import { generateProject, writeError, writeOutput } from "./main.js";
+import { generateProject, writeOutput } from "./main.js";
 import { CodegenError } from "./schema.js";
 import { mainOptions } from "./targets.js";
 
@@ -39,11 +39,12 @@ const HELP_OPTION = "  -h, --help       Show this help";
 
 const COMMANDS: Readonly<Record<string, Command>> = {
   generate: {
-    summary: "Write every target, then run the formatters (the default command)",
+    summary: "Write every target, formatted (the default command)",
     usage: "strictgen [generate] [--config <path>]",
     details: [
-      "Writes every target the config lists, then runs each language's formatter (format.rust,",
-      "format.go) on what it wrote. A formatter that isn't installed is skipped with a notice.",
+      "Generates every target the config lists, runs each language's formatter (format.rust,",
+      "format.go) on it in memory, then writes it. A formatter that isn't installed is skipped with",
+      "a notice. When a formatter fails, nothing is written.",
     ],
     options: [CONFIG_OPTION, HELP_OPTION],
   },
@@ -210,10 +211,11 @@ function report(error: unknown, io: Io): number {
 
 function generate(config: Config, io: Io): number {
   const options = mainOptions(config);
-  const files = generateProject(options);
-  writeOutput(config.root, options.targets, files, config.header, [config.schemas, config.file]);
-  const formatted = formatFiles(files, config.format, {
+  // Formats in memory, the way check does, and writes only when every file formatted cleanly,
+  // so a failing formatter leaves the previous output as it was.
+  const files = formatFiles(generateProject(options), config.format, {
     env: io.env,
+    header: config.header,
     onMissing: ({ formatter: f }) => {
       io.err(
         `notice: ${f.command} is not installed, so the ${f.language} output is left unformatted. ` +
@@ -221,15 +223,7 @@ function generate(config: Config, io: Io): number {
       );
     },
   });
-  try {
-    formatted.forEach((file, i) => {
-      if (file.contents !== files[i]?.contents) {
-        writeFileSync(join(config.root, file.path), file.contents);
-      }
-    });
-  } catch (error) {
-    throw writeError(config.root, error);
-  }
+  writeOutput(config.root, options.targets, files, config.header, [config.schemas, config.file]);
   const names = options.targets.map((t) => t.name).join(", ");
   io.out(`Generated ${String(files.length)} files for ${names}.`);
   return EXIT_OK;
@@ -239,6 +233,7 @@ function check(config: Config, io: Io): number {
   const options = mainOptions(config);
   const files: OutputFile[] = formatFiles(generateProject(options), config.format, {
     env: io.env,
+    header: config.header,
     requireFormatters: true,
   });
   const found = differences(config.root, options.targets, files, config.header);

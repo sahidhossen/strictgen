@@ -28,7 +28,7 @@ Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `
 
 ```bash
 strictgen                 # same as strictgen generate
-strictgen generate        # write every target, then run the formatters
+strictgen generate        # write every target, formatted
 strictgen check           # exit 1 if the generated files on disk are out of date, for CI
 strictgen dirs [--json]   # print the folders the targets write to
 ```
@@ -39,7 +39,7 @@ Exit codes: `0` success, `1` generation failed or `check` found a difference, `2
 
 ### Formatters
 
-After writing, `generate` runs `rustfmt` on the Rust output and `gofmt` on the Go output. Turn either off with `"format": { "rust": "none", "go": "none" }`. TypeScript output is not formatted. A formatter that isn't installed is skipped with a notice, and one that fails stops with exit code 1 and its output.
+`generate` runs `rustfmt` on the Rust output and `gofmt` on the Go output, in memory, and writes only when every file formatted cleanly. Turn either off with `"format": { "rust": "none", "go": "none" }`. TypeScript output is not formatted. A formatter that isn't installed, or a `rustfmt` whose `--version` fails (a rustup proxy without the component), is skipped with a notice. One that fails, prints nothing, prints something that doesn't start with the generated header, or runs longer than 60 seconds stops with exit code 1 and its output, and nothing is written.
 
 `check` formats in memory the same way before comparing, so it needs every configured formatter installed and fails without one. To give the same result on every machine, `rustfmt` runs with its defaults and edition 2024 and ignores any `rustfmt.toml`, and both formatters read the file on stdin.
 

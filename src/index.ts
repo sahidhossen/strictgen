@@ -26,7 +26,13 @@ export { emitRustSchemas } from "./emit-schemas.js";
 export type { TypeScriptOptions } from "./emit-ts.js";
 export { emitTypeScript } from "./emit-ts.js";
 export type { FormatOptions, Formatter } from "./format.js";
-export { formatFiles, formatterFor, FormatterFailedError, FormatterMissingError } from "./format.js";
+export {
+  FORMAT_TIMEOUT,
+  formatFiles,
+  formatterFor,
+  FormatterFailedError,
+  FormatterMissingError,
+} from "./format.js";
 export type { Log, MainOptions, OutputFile, Target } from "./main.js";
 export {
   generate,
