@@ -90,7 +90,10 @@ impl<'de> Deserialize<'de> for PaymentMethod {
             "card" => variant(value, "type", "card").map(Self::Card),
             "bank_account" => variant(value, "type", "bank_account").map(Self::BankAccount),
             "wallet" => variant(value, "type", "wallet").map(Self::Wallet),
-            other => Err(serde::de::Error::unknown_variant(other, &["card", "bank_account", "wallet"])),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["card", "bank_account", "wallet"],
+            )),
         }
     }
 }
@@ -106,7 +109,11 @@ pub struct Wallet {
     /// The wallet provider.
     pub provider: WalletProvider,
     /// The wallet's email address, when the provider shares it.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub email: Option<String>,
 }
 

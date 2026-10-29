@@ -3,18 +3,27 @@
 //! Types for every schema in the set.
 //!
 //! One module per schema file. Every type is re-exported here.
-#![allow(clippy::doc_markdown, reason = "descriptions come from the schemas, which name keys without backticks")]
-#![allow(clippy::enum_variant_names, reason = "variant names come from schema values, which often share a prefix")]
-#![allow(clippy::large_enum_variant, reason = "variants follow the schemas, only recursive ones are boxed")]
+#![allow(
+    clippy::doc_markdown,
+    reason = "descriptions come from the schemas, which name keys without backticks"
+)]
+#![allow(
+    clippy::enum_variant_names,
+    reason = "variant names come from schema values, which often share a prefix"
+)]
+#![allow(
+    clippy::large_enum_variant,
+    reason = "variants follow the schemas, only recursive ones are boxed"
+)]
 
-mod helpers;
 mod common;
 mod event;
+mod helpers;
 mod payment_method;
 mod user;
 
 pub use common::*;
 pub use event::*;
+pub use helpers::NonNullJson;
 pub use payment_method::*;
 pub use user::*;
-pub use helpers::{NonNullJson};

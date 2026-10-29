@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
+import { fsReason, isFsError } from "./fs-error.js";
+
 /** A parsed JSON value. */
 export type Json = null | boolean | number | string | readonly Json[] | JsonObject;
 
@@ -71,11 +73,24 @@ export interface SchemaOptions {
 /** Reads every `*.json` schema in `dir`, sorted by file name. */
 export function loadSchemas(dir: string, options: SchemaOptions = {}): SchemaSet {
   const files: Record<string, JsonObject> = {};
-  const names = readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .sort();
+  let names: string[];
+  try {
+    names = readdirSync(dir)
+      .filter((f) => f.endsWith(".json"))
+      .sort();
+  } catch (error) {
+    if (!isFsError(error)) throw error;
+    throw new CodegenError(dir, `can't read the schemas folder: ${fsReason(error)}`);
+  }
   for (const file of names) {
-    const parsed = JSON.parse(readFileSync(join(dir, file), "utf8")) as Json;
+    let parsed: Json;
+    try {
+      parsed = JSON.parse(readFileSync(join(dir, file), "utf8")) as Json;
+    } catch (error) {
+      if (isFsError(error)) throw new CodegenError(file, `can't read it: ${fsReason(error)}`);
+      const reason = error instanceof Error ? error.message : String(error);
+      throw new CodegenError(file, `not valid JSON: ${reason}`);
+    }
     if (!isObject(parsed))
       fail({ file: file.slice(0, -5), pointer: "" }, "schema is not an object");
     files[file.slice(0, -5)] = parsed;

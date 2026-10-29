@@ -1,9 +1,18 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { dirname, join, relative, sep } from "node:path";
 
 import type { BuildOptions } from "./build.js";
 import { buildModel } from "./build.js";
 import { commentHeader, DEFAULT_HEADER } from "./common.js";
+import { fsReason, isFsError } from "./fs-error.js";
 import { within } from "./paths.js";
 import type { Model } from "./model.js";
 import type { SchemaOptions, SchemaSet } from "./schema.js";
@@ -86,6 +95,12 @@ function checkWrite(
   for (const file of files) {
     const path = join(rootDir, file.path);
     if (!shared.some((dir) => dirname(path) === dir) || !existsSync(path)) continue;
+    if (!statSync(path).isFile()) {
+      throw new CodegenError(
+        file.path,
+        "a folder is in the way of a generated file. Fix: move what it holds elsewhere and remove it",
+      );
+    }
     if (!isGenerated(readFileSync(path, "utf8"), header)) {
       throw new CodegenError(
         file.path,
@@ -100,7 +115,9 @@ function checkWrite(
  * Writes `files` under `rootDir`, after clearing every folder the targets own and the
  * generated files in their shared folders, the ones that start with `header`. Throws a
  * {@link CodegenError}, before touching anything, when an owned folder holds `rootDir` or a
- * `protect`ed path, like the schemas, or when a file would replace a hand written one.
+ * `protect`ed path, like the schemas, or when a file would replace a hand written one. A file
+ * system error, like a folder where a generated file should go, is thrown as a
+ * {@link CodegenError} too, naming the path.
  */
 export function writeOutput(
   rootDir: string,
@@ -109,16 +126,30 @@ export function writeOutput(
   header: string = DEFAULT_HEADER,
   protect: readonly string[] = [],
 ): void {
-  checkWrite(rootDir, targets, files, header, protect);
-  for (const dir of targets.flatMap((t) => t.dirs))
-    rmSync(join(rootDir, dir), { recursive: true, force: true });
-  for (const dir of targets.flatMap((t) => t.shared ?? []))
-    clearGenerated(join(rootDir, dir), header);
-  for (const file of files) {
-    const path = join(rootDir, file.path);
-    mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, file.contents);
+  try {
+    checkWrite(rootDir, targets, files, header, protect);
+    for (const dir of targets.flatMap((t) => t.dirs))
+      rmSync(join(rootDir, dir), { recursive: true, force: true });
+    for (const dir of targets.flatMap((t) => t.shared ?? []))
+      clearGenerated(join(rootDir, dir), header);
+    for (const file of files) {
+      const path = join(rootDir, file.path);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, file.contents);
+    }
+  } catch (error) {
+    throw writeError(rootDir, error);
   }
+}
+
+/**
+ * A file system error while writing, as a {@link CodegenError} naming the path relative to
+ * `rootDir` and a short reason. Any other error is returned as it is.
+ */
+export function writeError(rootDir: string, error: unknown): unknown {
+  if (!isFsError(error)) return error;
+  const path = error.path === undefined ? "." : relative(rootDir, error.path).split(sep).join("/");
+  return new CodegenError(path === "" ? "." : path, `can't write the output: ${fsReason(error)}`);
 }
 
 /** Receives one line of output, without a trailing newline. */

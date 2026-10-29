@@ -6,6 +6,7 @@ import { DEFAULT_HEADER } from "./common.js";
 import type { LintAllow } from "./emit-rust.js";
 import { DEFAULT_ALLOW } from "./emit-rust.js";
 import { GO_PACKAGE } from "./emit-go.js";
+import { fsReason, isFsError } from "./fs-error.js";
 import { samePath, within } from "./paths.js";
 
 /** The config file strictgen reads from the project root unless another path is given. */
@@ -78,7 +79,7 @@ export interface DocsConfig {
   readonly format: "markdown";
 }
 
-/** Not yet active. */
+/** The formatter each language's output goes through, or `none`. */
 export interface FormatConfig {
   readonly rust: "rustfmt" | "none";
   readonly go: "gofmt" | "none";
@@ -181,9 +182,16 @@ export function loadConfig(path?: string, cwd: string = process.cwd()): Config {
   const file = resolve(cwd, path ?? CONFIG_FILE);
   const shown = path ?? CONFIG_FILE;
   if (!existsSync(file)) throw new ConfigError(shown, "", "config file not found");
+  let text: string;
+  try {
+    text = readFileSync(file, "utf8");
+  } catch (error) {
+    if (!isFsError(error)) throw error;
+    throw new ConfigError(shown, "", `can't read it: ${fsReason(error)}`);
+  }
   let value: unknown;
   try {
-    value = JSON.parse(readFileSync(file, "utf8"));
+    value = JSON.parse(text);
   } catch (error) {
     throw new ConfigError(
       shown,

@@ -13,13 +13,16 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": {
+    "strictgen": "dist/cli.js"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "hygiene": "scripts/hygiene.sh",
-    "examples": "pnpm build && tsc -p scripts/tsconfig.json && node --experimental-strip-types --no-warnings scripts/examples.ts",
-    "examples:check": "pnpm build && tsc -p scripts/tsconfig.json && node --experimental-strip-types --no-warnings scripts/examples.ts --check"
+    "examples": "pnpm build && node dist/cli.js generate --config examples/basic/strictgen.json",
+    "examples:check": "pnpm build && node dist/cli.js check --config examples/basic/strictgen.json"
   },
   "devDependencies": {
     "@types/node": "^22",

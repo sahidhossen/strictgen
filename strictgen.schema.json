@@ -106,7 +106,7 @@
       "additionalProperties": false
     },
     "format": {
-      "description": "Not yet active. The formatter run on each language's output when it is installed.",
+      "description": "The formatter run on each language's output after generating, and by strictgen check before comparing. strictgen generate skips one that isn't installed, with a notice. strictgen check fails instead.",
       "type": "object",
       "properties": {
         "rust": { "enum": ["rustfmt", "none"], "default": "rustfmt" },

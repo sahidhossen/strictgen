@@ -47,8 +47,24 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - name: Regenerate the examples and compare with the committed output
-        run: pnpm examples:check
+      # check compares with formatted output, so both formatters must be installed.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - run: pnpm build
+      - name: Compare the committed output with strictgen check
+        run: node dist/cli.js check --config examples/basic/strictgen.json
+      # check compared the first run with what is committed. A second run must write the
+      # same files again, so generation is deterministic.
+      - name: Generate again and check that nothing changes
+        run: |
+          node dist/cli.js generate --config examples/basic/strictgen.json
+          git diff --exit-code
+          test -z "$(git status --porcelain)"
       - name: Typecheck the TypeScript output
         run: pnpm exec tsc -p examples/basic/ts/tsconfig.json
 

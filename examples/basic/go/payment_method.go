@@ -123,20 +123,22 @@ type PaymentMethod interface {
 }
 
 // DecodePaymentMethod reads the "type" key and decodes only the branch it names.
-func DecodePaymentMethod(data []byte) (PaymentMethod, error) { return decodeRoot(data, unionPaymentMethod) }
+func DecodePaymentMethod(data []byte) (PaymentMethod, error) {
+	return decodeRoot(data, unionPaymentMethod)
+}
 
 // unionPaymentMethod decodes a parsed PaymentMethod by its "type" key.
 func unionPaymentMethod(n *node) (PaymentMethod, *DecodeError) {
 	return decodeTagged(n, "type", map[string]func(*node) (PaymentMethod, *DecodeError){
-		"card": branch[PaymentMethod, Card],
+		"card":         branch[PaymentMethod, Card],
 		"bank_account": branch[PaymentMethod, BankAccount],
-		"wallet": branch[PaymentMethod, Wallet],
+		"wallet":       branch[PaymentMethod, Wallet],
 	})
 }
 
-func (Card) isPaymentMethod() {}
+func (Card) isPaymentMethod()        {}
 func (BankAccount) isPaymentMethod() {}
-func (Wallet) isPaymentMethod() {}
+func (Wallet) isPaymentMethod()      {}
 
 // Wallet is generated from payment-method.json#/$defs/wallet.
 //
