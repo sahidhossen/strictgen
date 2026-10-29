@@ -13,7 +13,9 @@ impl<'de> Deserialize<'de> for NonNullJson {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = serde_json::Value::deserialize(deserializer)?;
         if value.is_null() {
-            return Err(serde::de::Error::custom("expected a JSON value other than null"));
+            return Err(serde::de::Error::custom(
+                "expected a JSON value other than null",
+            ));
         }
         Ok(Self(value))
     }
@@ -29,7 +31,10 @@ where
 }
 
 /// Reads the tag of a tagged union.
-pub(super) fn tag<E: serde::de::Error>(value: &serde_json::Value, key: &'static str) -> Result<String, E> {
+pub(super) fn tag<E: serde::de::Error>(
+    value: &serde_json::Value,
+    key: &'static str,
+) -> Result<String, E> {
     let serde_json::Value::Object(object) = value else {
         return Err(E::custom("expected an object"));
     };
@@ -48,5 +53,3 @@ where
 {
     serde_json::from_value(value).map_err(|error| E::custom(format_args!("{key} `{tag}`: {error}")))
 }
-
-

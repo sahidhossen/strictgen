@@ -8,17 +8,17 @@ import "encoding/json"
 // to a function that decodes JSON as the type generated for it.
 func fixtureDecoders() map[string]func([]byte) (any, error) {
 	return map[string]func([]byte) (any, error){
-		"common/eventId": asAny(decodeType[EventId]),
-		"common/timestamp": asAny(decodeString),
-		"common/userId": asAny(decodeType[UserId]),
-		"event": asAny(decodeType[Event]),
-		"event/eventType": asAny(decodeType[EventType]),
-		"payment-method": asAny(unionPaymentMethod),
+		"common/eventId":             asAny(decodeType[EventId]),
+		"common/timestamp":           asAny(decodeString),
+		"common/userId":              asAny(decodeType[UserId]),
+		"event":                      asAny(decodeType[Event]),
+		"event/eventType":            asAny(decodeType[EventType]),
+		"payment-method":             asAny(unionPaymentMethod),
 		"payment-method/bankAccount": asAny(decodeType[BankAccount]),
-		"payment-method/card": asAny(decodeType[Card]),
-		"payment-method/wallet": asAny(decodeType[Wallet]),
-		"user": asAny(decodeType[User]),
-		"user/role": asAny(decodeType[Role]),
+		"payment-method/card":        asAny(decodeType[Card]),
+		"payment-method/wallet":      asAny(decodeType[Wallet]),
+		"user":                       asAny(decodeType[User]),
+		"user/role":                  asAny(decodeType[Role]),
 	}
 }
 

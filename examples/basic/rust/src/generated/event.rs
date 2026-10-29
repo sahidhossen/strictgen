@@ -3,9 +3,9 @@
 //! Types for `event.json`.
 
 use super::common::{EventId, Timestamp};
+use super::helpers::present;
 use super::payment_method::PaymentMethod;
 use super::user::User;
-use super::helpers::present;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -26,10 +26,18 @@ pub struct Event {
     /// The `user` key.
     pub user: User,
     /// The `paymentMethod` key.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub payment_method: Option<PaymentMethod>,
     /// Key and value pairs the sender attached, by key.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub metadata: Option<BTreeMap<String, String>>,
 }
 

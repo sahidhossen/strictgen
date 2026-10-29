@@ -1,5 +1,7 @@
 export type { BuildOptions, IdRule } from "./build.js";
 export { buildModel, isIdDef } from "./build.js";
+export type { Difference, DifferenceKind } from "./check.js";
+export { differences } from "./check.js";
 export type { EmittedFile } from "./common.js";
 export { commentHeader, DEFAULT_HEADER, HEADER } from "./common.js";
 export type {
@@ -23,9 +25,27 @@ export { DEFAULT_ALLOW, emitRust, emitRustFixtures } from "./emit-rust.js";
 export { emitRustSchemas } from "./emit-schemas.js";
 export type { TypeScriptOptions } from "./emit-ts.js";
 export { emitTypeScript } from "./emit-ts.js";
+export type { FormatOptions, Formatter } from "./format.js";
+export {
+  FORMAT_TIMEOUT,
+  formatFiles,
+  formatterFor,
+  FormatterFailedError,
+  FormatterMissingError,
+} from "./format.js";
 export type { Log, MainOptions, OutputFile, Target } from "./main.js";
-export { generate, generateProject, isGenerated, main, targetDirs, writeOutput } from "./main.js";
+export {
+  generate,
+  generateProject,
+  isGenerated,
+  main,
+  targetDirs,
+  writeError,
+  writeOutput,
+} from "./main.js";
 export type * from "./model.js";
 export type { Json, JsonObject, SchemaFile, SchemaOptions, SchemaSet } from "./schema.js";
 export { CodegenError, idBaseOf, loadSchemas, schemaSet } from "./schema.js";
+export type { Io } from "./run.js";
+export { EXIT_FAILED, EXIT_OK, EXIT_USAGE, run, version } from "./run.js";
 export { configTargets, mainOptions, RUST_FIXTURES } from "./targets.js";

@@ -34,7 +34,11 @@ pub struct User {
     /// The address the user signs in with.
     pub email: String,
     /// The name shown to other users, when the user set one.
-    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub display_name: Option<String>,
     /// The `role` key.
     pub role: Role,

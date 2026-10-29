@@ -24,9 +24,11 @@ cd examples/basic/go && go test ./...
 
 ## Regenerating
 
-From the repository root:
+From the repository root, after `pnpm build`:
 
 ```bash
-pnpm examples         # regenerate the output
-pnpm examples:check   # fail if the committed output is out of date
+node dist/cli.js generate --config examples/basic/strictgen.json   # regenerate the output
+node dist/cli.js check --config examples/basic/strictgen.json      # fail if it is out of date
 ```
+
+`pnpm examples` and `pnpm examples:check` build and run the same commands. The output goes through `rustfmt` and `gofmt`, so install both before regenerating.
