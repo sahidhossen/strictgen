@@ -34,6 +34,53 @@ jobs:
       - run: pnpm test
       - run: pnpm build
 
+  examples:
+    name: Examples are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Regenerate the examples and compare with the committed output
+        run: pnpm examples:check
+      - name: Typecheck the TypeScript output
+        run: pnpm exec tsc -p examples/basic/ts/tsconfig.json
+
+  examples-rust:
+    name: Rust example
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/basic/rust
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --locked --all-targets
+      - name: Round trip the fixtures
+        run: cargo test --locked
+
+  examples-go:
+    name: Go example
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: examples/basic/go
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+      - run: go vet ./...
+      - name: Round trip the fixtures
+        run: go test -count=1 ./...
+
   hygiene:
     name: Public hygiene
     runs-on: ubuntu-latest

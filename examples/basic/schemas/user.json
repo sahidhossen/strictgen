@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/user.json",
+  "title": "User",
+  "description": "A user account.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/userId" },
+    "email": { "description": "The address the user signs in with.", "type": "string" },
+    "displayName": {
+      "description": "The name shown to other users, when the user set one.",
+      "type": "string"
+    },
+    "role": { "$ref": "#/$defs/role" },
+    "labels": {
+      "description": "Free-form labels, by name.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "createdAt": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/timestamp" }
+  },
+  "required": ["id", "email", "role", "labels", "createdAt"],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "role": {
+      "description": "What the user may do.",
+      "enum": ["owner", "admin", "member"]
+    }
+  }
+}

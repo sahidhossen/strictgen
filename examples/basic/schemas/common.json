@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/common.json",
+  "title": "Common",
+  "description": "Definitions the other schemas share.",
+  "$defs": {
+    "eventId": {
+      "description": "The ID of a webhook event, like `evt_31xq`.",
+      "type": "string"
+    },
+    "timestamp": {
+      "description": "An RFC 3339 date and time in UTC.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "userId": {
+      "description": "The ID of a user, like `usr_8f2k`.",
+      "type": "string"
+    }
+  }
+}

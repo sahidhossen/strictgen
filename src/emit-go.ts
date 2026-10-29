@@ -22,8 +22,11 @@ export const GO_FIXTURES = "registry_test.go";
 /** Name of the built in type for any JSON value except `null`. */
 export const GO_NON_NULL = "NonNullJson";
 
+/** The error code constants the helpers file declares, for JSON that fails to parse. */
+const CODES = ["CodeInvalidJSON", "CodeDuplicateKey", "CodeTooDeep"];
+
 /** Exported names the helpers file declares, besides the literal types. */
-const RESERVED = new Set([GO_NON_NULL, "DecodeError"]);
+const RESERVED = new Set([GO_NON_NULL, "DecodeError", ...CODES]);
 
 /** File name suffixes that put a Go file behind a build constraint or make it a test. */
 const CONSTRAINED = new Set(
@@ -128,7 +131,8 @@ function goFile(doc: string, packages: readonly string[], parts: readonly string
 
 /** Every package-level name must be unique, since all schemas share one package. */
 function checkNames(model: Model): void {
-  const owners = new Map<string, string>();
+  // An enum constant like CodeTooDeep, from an enum named code, would clash with the helpers.
+  const owners = new Map<string, string>(CODES.map((name) => [name, GO_HELPERS]));
   const claim = (name: string, path: string): void => {
     const other = owners.get(name);
     if (other !== undefined)
@@ -569,9 +573,20 @@ const HELPERS = `// maxDepth is serde_json's recursion limit: a value nested in 
 // fails, so Go and Rust accept the same documents and decoding stays bounded.
 const maxDepth = 128
 
+// Error codes of input that isn't JSON the decoders read, in DecodeError.Code.
+const (
+	// CodeInvalidJSON is a syntax error, invalid UTF-8, a lone surrogate, trailing data or a
+	// number out of range.
+	CodeInvalidJSON = "invalid_json"
+	// CodeDuplicateKey is an object that gives the same key twice.
+	CodeDuplicateKey = "duplicate_key"
+	// CodeTooDeep is a value nested in maxDepth or more arrays and objects.
+	CodeTooDeep = "too_deep"
+)
+
 // DecodeError is a value that doesn't fit its generated type. Path is a JSON Pointer to the
 // value, empty for the whole input. Code is the error code of a JSON decoding failure, like
-// CodeSchemaDuplicateKey, and empty for a value that doesn't fit its type.
+// CodeDuplicateKey, and empty for a value that doesn't fit its type.
 type DecodeError struct {
 	Path   string
 	Reason string
@@ -644,7 +659,7 @@ type parser struct {
 // parse parses a whole JSON document. Every failure carries its error code.
 func parse(data []byte) (*node, *DecodeError) {
 	if !utf8.Valid(data) {
-		return nil, failAt(CodeSchemaInvalidUtf8, invalidUTF8At(data), "not valid UTF-8")
+		return nil, failAt(CodeInvalidJSON, invalidUTF8At(data), "not valid UTF-8")
 	}
 	p := &parser{data: data}
 	n, err := p.value(0)
@@ -653,7 +668,7 @@ func parse(data []byte) (*node, *DecodeError) {
 	}
 	p.space()
 	if p.pos != len(p.data) {
-		return nil, failAt(CodeSchemaTrailingData, p.pos, "trailing characters")
+		return nil, failAt(CodeInvalidJSON, p.pos, "trailing characters")
 	}
 	return n, nil
 }
@@ -677,7 +692,7 @@ func failAt(code string, offset int, reason string) *DecodeError {
 }
 
 func (p *parser) fail(reason string) *DecodeError {
-	return failAt(CodeSchemaInvalidJson, p.pos, reason)
+	return failAt(CodeInvalidJSON, p.pos, reason)
 }
 
 func (p *parser) space() {
@@ -705,7 +720,7 @@ func (p *parser) value(depth int) (*node, *DecodeError) {
 	switch c := p.data[p.pos]; c {
 	case '{', '[':
 		if depth+1 >= maxDepth {
-			return nil, failAt(CodeSchemaTooDeep, p.pos, fmt.Sprintf("recursion limit exceeded, more than %d nested arrays and objects", maxDepth-1))
+			return nil, failAt(CodeTooDeep, p.pos, fmt.Sprintf("recursion limit exceeded, more than %d nested arrays and objects", maxDepth-1))
 		}
 		if c == '{' {
 			return p.object(start, depth+1)
@@ -758,7 +773,7 @@ func (p *parser) object(start, depth int) (*node, *DecodeError) {
 			return nil, err
 		}
 		if _, seen := n.fields[key]; seen {
-			return nil, failAt(CodeSchemaDuplicateKey, keyAt, fmt.Sprintf("key %q given twice", key))
+			return nil, failAt(CodeDuplicateKey, keyAt, fmt.Sprintf("key %q given twice", key))
 		}
 		p.space()
 		if !p.accept(':') {
@@ -839,11 +854,9 @@ func (p *parser) str() (string, *DecodeError) {
 	}
 }
 
-// escape reads one escape sequence. A \\u escape of a high surrogate must be followed by one
-// of a low surrogate, and a low surrogate can't stand alone.
-// escape reads an escape at the backslash, failing where the Rust side's check does:
-// a bad escape or hex digit is invalid JSON at that byte, and a surrogate that isn't half of a
-// pair is an invalid string at the escape's backslash.
+// escape reads one escape sequence at the backslash. A \\u escape of a high surrogate must be
+// followed by one of a low surrogate, and a low surrogate can't stand alone. A bad escape or hex
+// digit fails at that byte, and a surrogate that isn't half of a pair fails at the backslash.
 func (p *parser) escape() *DecodeError {
 	start := p.pos
 	p.pos++
@@ -860,11 +873,11 @@ func (p *parser) escape() *DecodeError {
 		return err
 	}
 	if unit >= 0xDC00 && unit <= 0xDFFF {
-		return failAt(CodeSchemaInvalidString, start, "lone surrogate")
+		return failAt(CodeInvalidJSON, start, "lone surrogate")
 	}
 	if unit >= 0xD800 && unit <= 0xDBFF {
 		if p.pos+1 >= len(p.data) || p.data[p.pos] != '\\\\' || p.data[p.pos+1] != 'u' {
-			return failAt(CodeSchemaInvalidString, start, "lone surrogate")
+			return failAt(CodeInvalidJSON, start, "lone surrogate")
 		}
 		p.pos += 2
 		low, err := p.hex4()
@@ -872,7 +885,7 @@ func (p *parser) escape() *DecodeError {
 			return err
 		}
 		if low < 0xDC00 || low > 0xDFFF {
-			return failAt(CodeSchemaInvalidString, start, "lone surrogate")
+			return failAt(CodeInvalidJSON, start, "lone surrogate")
 		}
 	}
 	return nil
@@ -930,7 +943,7 @@ func (p *parser) number(start int) (*node, *DecodeError) {
 	}
 	raw := p.data[start:p.pos]
 	if _, err := strconv.ParseFloat(string(raw), 64); err != nil {
-		return nil, failAt(CodeSchemaInvalidNumber, start, "number out of range")
+		return nil, failAt(CodeInvalidJSON, start, "number out of range")
 	}
 	return &node{kind: '0', raw: raw}, nil
 }

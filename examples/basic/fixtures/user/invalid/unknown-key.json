@@ -1,0 +1,12 @@
+{
+  "id": "usr_8f2k",
+  "email": "ada@example.com",
+  "displayName": "Ada",
+  "role": "admin",
+  "labels": {
+    "team": "billing",
+    "region": "eu"
+  },
+  "createdAt": "2026-01-15T09:30:00Z",
+  "nickname": "ada"
+}
