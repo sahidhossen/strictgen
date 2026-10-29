@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Never cancel runs on main, so every pushed commit gets checked.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -51,3 +52,10 @@ jobs:
         env:
           HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
           HYGIENE_BASE: ${{ steps.range.outputs.base }}
+      - name: Check the PR title and body
+        if: github.event_name == 'pull_request'
+        run: printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | scripts/hygiene.sh --text
+        env:
+          HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
