@@ -43,7 +43,7 @@ jobs:
             conformance/driver/rust/target
           key: conformance-rust-${{ runner.os }}-1.97.0-${{ hashFiles('conformance/driver/rust/Cargo.lock') }}
           restore-keys: conformance-rust-${{ runner.os }}-1.97.0-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: true
