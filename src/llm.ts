@@ -4,8 +4,8 @@
  */
 import { basename } from "node:path";
 
-import { buildModel } from "./build.js";
 import type { Config, LlmConfig } from "./config.js";
+import { configModel } from "./examples.js";
 import type { Profile } from "./llm-profile.js";
 import { configProfiles, namedProfile } from "./llm-profile.js";
 import type { Projection } from "./llm-project.js";
@@ -13,7 +13,7 @@ import { projectedTypes, projectType, schemaText } from "./llm-project.js";
 import type { EmittedFile } from "./common.js";
 import type { Model } from "./model.js";
 import type { SchemaSet } from "./schema.js";
-import { CodegenError, loadSchemas } from "./schema.js";
+import { CodegenError } from "./schema.js";
 
 /**
  * A request `strictgen llm` can't answer: a type the schemas don't define. The CLI exits 2 for
@@ -59,16 +59,6 @@ export function emitLlm(model: Model, profiles: readonly Profile[], schemas: Sch
 /** The profiles `llm` lists, loaded and checked. */
 export function llmProfiles(config: Config, llm: LlmConfig): Profile[] {
   return configProfiles(llm.profiles, basename(config.file));
-}
-
-/** The schemas of a config and their model, as every target sees it. */
-export function configModel(config: Config): { schemas: SchemaSet; model: Model } {
-  const schemas = loadSchemas(config.schemas, config.idBase === undefined ? {} : { idBase: config.idBase });
-  const model = buildModel(schemas, {
-    ...(config.ids === undefined ? {} : { ids: config.ids }),
-    validation: config.validation,
-  });
-  return { schemas, model };
 }
 
 /**

@@ -10,6 +10,7 @@ import { writeOutput } from "./main.js";
 import type { Model } from "./model.js";
 import type { Payload } from "./payloads.js";
 import { GenerateError, PayloadGenerator, Random } from "./payloads.js";
+import type { SchemaSet } from "./schema.js";
 import { loadSchemas } from "./schema.js";
 
 /** A type `examples` doesn't know. The CLI exits 2 for it. */
@@ -32,13 +33,17 @@ export interface ExamplesOptions {
   readonly array: boolean;
 }
 
-/** The model of a config's schemas, as `generate` builds it. Throws a CodegenError. */
-export function configModel(config: Config): Model {
+/**
+ * The schemas of a config and their model, as `generate` builds it. The schemas let errors point
+ * into them. Throws a CodegenError.
+ */
+export function configModel(config: Config): { schemas: SchemaSet; model: Model } {
   const schemas = loadSchemas(config.schemas, config.idBase === undefined ? {} : { idBase: config.idBase });
-  return buildModel(schemas, {
+  const model = buildModel(schemas, {
     ...(config.ids === undefined ? {} : { ids: config.ids }),
     validation: config.validation,
   });
+  return { schemas, model };
 }
 
 function checkType(model: Model, type: string): void {
@@ -58,7 +63,7 @@ const ROUNDS_WITHOUT_NEW = 20;
  * generator is sure of, or no near miss at all.
  */
 export function examples(config: Config, options: ExamplesOptions): { lines: string[]; notice?: string } {
-  const model = configModel(config);
+  const { model } = configModel(config);
   checkType(model, options.type);
   const generator = new PayloadGenerator(model, { seed: options.seed, read: readModes(config) });
   const items: unknown[] = [];
@@ -97,7 +102,7 @@ export function examples(config: Config, options: ExamplesOptions): { lines: str
 export function writeDocs(config: Config, format?: DocsFormat): { count: number; dir: string } {
   const docs = config.docs;
   if (docs === undefined) throw new Error("writeDocs needs a docs config");
-  const files = docsFiles(config, configModel(config), format ?? docs.format);
+  const files = docsFiles(config, configModel(config).model, format ?? docs.format);
   writeOutput(config.root, [docsTarget(config)], files, config.header, [config.schemas, config.file]);
   return { count: files.length, dir: docs.out };
 }
