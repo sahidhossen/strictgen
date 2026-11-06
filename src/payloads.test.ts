@@ -13,7 +13,8 @@ import type { Model } from "./model.js";
 import type { NearMiss, Payload } from "./payloads.js";
 import { canonical, GenerateError, inFormat, PayloadGenerator, Random } from "./payloads.js";
 import type { JsonObject } from "./schema.js";
-import { loadSchemas, schemaSet } from "./schema.js";
+import { schemaSet } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 
 const BASE = "https://example.com/schemas/v1/";
 

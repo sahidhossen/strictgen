@@ -58,14 +58,8 @@ export {
 } from "./format.js";
 export { emitLlm, LlmError, llmProjection } from "./llm.js";
 export type { BoundedKeyword, Profile, ProfileKeyword, ProfileLimits, ProfileSource } from "./llm-profile.js";
-export {
-  BUILTIN_PROFILES,
-  builtinProfile,
-  configProfiles,
-  loadProfile,
-  parseProfile,
-  PROFILE_KEYWORDS,
-} from "./llm-profile.js";
+export { BUILTIN_PROFILES, parseProfile, PROFILE_KEYWORDS } from "./llm-profile.js";
+export { builtinProfile, configProfiles, loadProfile } from "./profile-files.js";
 export type { LlmChange, LlmChangeKind, Projection } from "./llm-project.js";
 export { projectedTypes, projectType, schemaText, WRAP_KEY } from "./llm-project.js";
 export type { Log, MainOptions, OutputFile, Target } from "./main.js";
@@ -82,7 +76,8 @@ export type * from "./model.js";
 export type { GeneratorOptions, NearMiss, Payload } from "./payloads.js";
 export { canonical, GenerateError, inFormat, PayloadGenerator, pointer, Random } from "./payloads.js";
 export type { Json, JsonObject, SchemaFile, SchemaOptions, SchemaSet } from "./schema.js";
-export { CodegenError, idBaseOf, loadSchemas, schemaSet } from "./schema.js";
+export { CodegenError, idBaseOf, schemaSet } from "./schema.js";
+export { loadSchemas } from "./schema-files.js";
 export type { RuleId } from "./rules.js";
 export { isRuleId, RULE_IDS, RULES } from "./rules.js";
 export type { Io } from "./run.js";

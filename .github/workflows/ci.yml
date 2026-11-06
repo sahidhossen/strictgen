@@ -33,6 +33,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      # The playground page, bundled as Pages would serve it. Its tests above build it too.
+      - run: pnpm playground:build
 
   examples:
     name: Examples are up to date

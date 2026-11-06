@@ -16,7 +16,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
 import { llmTypes } from "../llm-decoders.js";
-import { builtinProfile } from "../llm-profile.js";
+import { builtinProfile } from "../profile-files.js";
 import { projectType } from "../llm-project.js";
 import type { Model } from "../model.js";
 import type { Case, Manifest, Mark } from "./cases.js";

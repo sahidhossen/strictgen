@@ -13,7 +13,8 @@ import { emitTypeScript, stringFamily } from "./emit-ts.js";
 import { ERROR_CODES } from "./errors.js";
 import type { Model } from "./model.js";
 import type { JsonObject } from "./schema.js";
-import { loadSchemas, schemaSet } from "./schema.js";
+import { schemaSet } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 
 const BASE = "https://example.com/schemas/v1/";
 

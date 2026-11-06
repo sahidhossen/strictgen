@@ -17,7 +17,7 @@ import { configModel } from "./examples.js";
 import { llmProfiles } from "./llm.js";
 import type { LlmMaps } from "./llm-decoders.js";
 import { goLlmName, llmMaps, rustLlmName, snake, tsLlmName } from "./llm-decoders.js";
-import { builtinProfile } from "./llm-profile.js";
+import { builtinProfile } from "./profile-files.js";
 import { projectType } from "./llm-project.js";
 import type { Model } from "./model.js";
 import type { JsonObject } from "./schema.js";

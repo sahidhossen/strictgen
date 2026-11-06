@@ -10,47 +10,17 @@ import {
 import { dirname, join, relative, sep } from "node:path";
 
 import type { BuildOptions } from "./build.js";
-import { buildModel } from "./build.js";
 import { commentHeader, DEFAULT_HEADER, markupHeader } from "./common.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import { within } from "./paths.js";
-import type { Model } from "./model.js";
-import type { SchemaOptions, SchemaSet } from "./schema.js";
-import { CodegenError, loadSchemas } from "./schema.js";
+import type { OutputFile, Target } from "./generate.js";
+import { generate } from "./generate.js";
+import type { SchemaOptions } from "./schema.js";
+import { CodegenError } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 
-/** One generated file, with a path relative to the output root. */
-export interface OutputFile {
-  readonly path: string;
-  readonly contents: string;
-}
-
-/**
- * A language the generator writes. Each target owns its `dirs`, which are
- * cleared before writing, so a removed schema leaves no stale file behind.
- * In `shared` folders, which also hold hand written files like tests, only the
- * files that start with the generated header are removed.
- */
-export interface Target {
-  readonly name: string;
-  readonly dirs: readonly string[];
-  readonly shared?: readonly string[];
-  readonly emit: (model: Model, schemas: SchemaSet) => readonly OutputFile[];
-}
-
-/** The folders the targets write to, owned and shared, for scripts and CI. */
-export function targetDirs(targets: readonly Target[]): string[] {
-  return targets.flatMap((t) => [...t.dirs, ...(t.shared ?? [])]);
-}
-
-/** Builds the model from a schema set and emits every target, without writing. */
-export function generate(
-  schemas: SchemaSet,
-  targets: readonly Target[],
-  options: BuildOptions = {},
-): OutputFile[] {
-  const model = buildModel(schemas, options);
-  return targets.flatMap((t) => t.emit(model, schemas));
-}
+export type { OutputFile, Target } from "./generate.js";
+export { generate, targetDirs } from "./generate.js";
 
 /**
  * True when `contents` is a generated file: its first line is the header text as a `//`

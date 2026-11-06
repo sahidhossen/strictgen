@@ -12,12 +12,12 @@ import {
   at,
   CodegenError,
   idBaseOf,
-  loadSchemas,
   resolveRef,
   schemaAt,
   schemaSet,
   where,
 } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 
 const BASE = "https://example.com/schemas/v1/";
 

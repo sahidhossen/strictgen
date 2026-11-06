@@ -11,7 +11,7 @@ import type { Model } from "./model.js";
 import type { Payload } from "./payloads.js";
 import { GenerateError, PayloadGenerator, Random } from "./payloads.js";
 import type { SchemaSet } from "./schema.js";
-import { loadSchemas } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 
 /** A type `examples` doesn't know. The CLI exits 2 for it. */
 export class UnknownTypeError extends Error {
