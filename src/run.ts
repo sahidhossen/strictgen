@@ -181,6 +181,7 @@ const OPTIONS = {
 
 /** Options only one command takes, by option. */
 const COMMAND_OPTIONS: Readonly<Record<string, string>> = {
+  base: "breaking",
   count: "examples",
   seed: "examples",
   invalid: "examples",
@@ -285,9 +286,6 @@ function dispatch(argv: readonly string[], io: Io): number {
   }
   if (values.json === true && name !== "dirs" && name !== "explain" && name !== "breaking") {
     throw new UsageError("--json only applies to strictgen dirs, explain and breaking");
-  }
-  if (values.base !== undefined && name !== "breaking") {
-    throw new UsageError("--base only applies to strictgen breaking");
   }
   if (name === "breaking" && (values.base === undefined || values.base === "")) {
     throw new UsageError("breaking needs --base <git ref or folder>, like --base main");
