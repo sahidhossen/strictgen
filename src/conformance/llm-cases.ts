@@ -15,7 +15,7 @@
  *   member read from entries, `/labels/0/key` when the member's key itself breaks the key type.
  *   Cases the projection changes the meaning of are left out, each for a stated reason
  *   ({@link SKIPS}): text the tree can't hold (not JSON, a key given twice), `null` for an
- *   optional key at or under the error, which means absent in the LLM form, and a value whose nesting crosses the
+ *   optional key that causes the error, which means absent in the LLM form, and a value whose nesting crosses the
  *   depth limit only in one of the two forms.
  * - Near misses of what only the LLM form has come from each valid case: the object around a
  *   wrapped type, the entries of maps, a payload cut short, a key given twice, and, for code that
@@ -38,7 +38,7 @@ import { MAX_DEPTH } from "../errors.js";
 /** Why an invalid case doesn't run through the LLM decoders, by reason. */
 export const SKIPS = {
   text: "its text is not one JSON value the projection can read, like a key given twice",
-  null: "null for an optional key, at or under the error, means absent in the LLM form",
+  null: "null for an optional key, which causes the error, means absent in the LLM form",
   depth: "the LLM form nests deeper or less deep across the depth limit",
   entries: "an array where a map goes is the map's entries in the LLM form, for code that reads entries",
 } as const;
@@ -59,6 +59,11 @@ export interface Projected {
   readonly keys: ReadonlyMap<string, string>;
   /** The case paths of the optional keys that were null, which the LLM form reads as absent. */
   readonly nulls: ReadonlySet<string>;
+  /**
+   * The case paths of the untagged unions no variant takes, but one does once their optional
+   * keys that are null are left out, as the LLM form reads them.
+   */
+  readonly unionNulls: ReadonlySet<string>;
   /** The case path of each map, with its payload path, in the order the projection met them. */
   readonly maps: readonly { readonly from: string; readonly to: string; readonly inUnion: boolean }[];
   readonly entries: readonly EntriesAt[];
@@ -70,6 +75,7 @@ class Projector {
   readonly paths = new Map<string, string>();
   readonly keys = new Map<string, string>();
   readonly nulls = new Set<string>();
+  readonly unionNulls = new Set<string>();
   readonly maps: { from: string; to: string; inUnion: boolean }[] = [];
   readonly entries: EntriesAt[] = [];
   readonly arrayMaps = new Set<string>();
@@ -159,6 +165,7 @@ class Projector {
             const nulls = this.optionalNulls(v.type, json);
             if (nulls.length > 0 && this.walk.fits(v.type, withoutKeys(json, nulls))) {
               for (const k of nulls) this.nulls.add(`${from}${segment(k)}`);
+              this.unionNulls.add(from);
             }
           }
           return json;
@@ -189,7 +196,7 @@ export function project(walk: ModelWalk, name: string, json: Json, shape: Shape)
   const wrapped = isWrapped(walk.decl(name));
   const inner = p.value({ kind: "ref", name }, json, "", wrapped ? `/${WRAP_KEY}` : "");
   const payload = wrapped ? new Map<string, Json>([[WRAP_KEY, inner]]) : inner;
-  return { payload, paths: p.paths, keys: p.keys, nulls: p.nulls, maps: p.maps, entries: p.entries, arrayMaps: p.arrayMaps };
+  return { payload, paths: p.paths, keys: p.keys, nulls: p.nulls, unionNulls: p.unionNulls, maps: p.maps, entries: p.entries, arrayMaps: p.arrayMaps };
 }
 
 /** The payload path of a case path: the longest prefix the projection mapped, then the rest as it is. */
@@ -376,9 +383,9 @@ export function llmCases(
     }
     const want = c.strict;
     if (want.accepted) throw new Error(`${c.id}: an invalid case without an error`);
-    // A null at or under the error, like one that makes an untagged union fail, is absent in the
-    // LLM form, which may then hold.
-    if ([...p.nulls].some((n) => n === want.path || n.startsWith(`${want.path}/`))) {
+    // Only the nulls that cause the error: the null itself, or the optional keys that keep an
+    // untagged union from taking its value. The LLM form reads them as absent, so it may hold.
+    if ((want.code === "null_not_allowed" && p.nulls.has(want.path)) || p.unionNulls.has(want.path)) {
       skipped.set(c.id, SKIPS.null);
       continue;
     }

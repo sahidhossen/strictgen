@@ -55,8 +55,8 @@ export interface Case {
   readonly cleaned?: string;
   /**
    * The read modes the case has no expectation in, so only the languages are compared with each
-   * other there: for a fuzz payload whose error is known in strict mode only, and for the
-   * payloads the fuzzer shrinks, whose error nobody knows. LLM decoders read as strict mode.
+   * other there: for the payloads the fuzzer shrinks, whose error nobody knows. LLM decoders
+   * read as strict mode.
    */
   readonly unlabelled?: readonly Mode[];
 }

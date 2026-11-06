@@ -77,14 +77,19 @@ jobs:
             what="The nightly fuzz run could not run to the end (exit $CODE)."
             details="$(tail -n 40 fuzz-run.txt)"
           fi
+          # No payload may ping anyone: every @ becomes its HTML entity.
+          details="$(printf '%s\n' "$details" | sed 's/@/\&#64;/g')"
+          # A payload may hold backticks: the fence is longer than the longest run of them.
+          longest="$(printf '%s\n' "$details" | { grep -o '`\+' || true; } | awk '{ if (length($0) > n) n = length($0) } END { print n + 0 }')"
+          fence="$(printf '%*s' "$(( longest < 3 ? 3 : longest + 1 ))" '' | tr ' ' '`')"
           {
             echo "$what"
             echo
             echo "Seed: ${seed:-unknown}. Run: $RUN_URL"
             echo
-            echo '```text'
+            echo "${fence}text"
             printf '%s\n' "$details"
-            echo '```'
+            echo "$fence"
           } > issue.md
       # The issue is public text: it must pass the hygiene check like any other. When it doesn't,
       # the issue says only where to look. The denylist stays in this step.
@@ -112,26 +117,39 @@ jobs:
         if: steps.fuzz.outputs.failed == 'true'
         run: exit 1
 
+  # Runs whenever the fuzz job didn't pass: a disagreement, and also a timeout, a failed install
+  # or toolchain, or a hygiene step that errored, which leave no checked report behind.
   report:
     name: Open an issue
     needs: fuzz
-    if: always() && needs.fuzz.outputs.failed == 'true'
+    if: always() && needs.fuzz.result != 'success'
     runs-on: ubuntu-latest
     # Only this job writes, and only issues. It doesn't check out the code.
     permissions:
       issues: write
     steps:
       - uses: actions/download-artifact@v4
+        id: download
+        continue-on-error: true
         with:
           name: fuzz-issue
+      - name: Fall back to a report that only links the run
+        if: steps.download.outcome != 'success' || hashFiles('issue.md') == ''
+        env:
+          RESULT: ${{ needs.fuzz.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          echo "Nightly fuzz: the run failed" > title.txt
+          echo "The nightly fuzz job ended with $RESULT before it wrote a checked report. See the run: $RUN_URL" > issue.md
       - name: Open an issue, or comment on the open one
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          open="$(gh issue list --state open --search 'in:title "Nightly fuzz:"' --json number --jq '.[0].number // empty')"
+          gh label create nightly-fuzz --color d73a4a --description "Found by the nightly fuzz run" --force
+          open="$(gh issue list --label nightly-fuzz --state open --json number --jq '.[0].number // empty')"
           if [[ -n "$open" ]]; then
             gh issue comment "$open" --body-file issue.md
           else
-            gh issue create --title "$(head -n 1 title.txt)" --body-file issue.md --label bug
+            gh issue create --title "$(head -n 1 title.txt)" --body-file issue.md --label nightly-fuzz
           fi

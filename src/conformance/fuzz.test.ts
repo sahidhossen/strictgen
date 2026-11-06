@@ -115,14 +115,16 @@ describe("shrinking", () => {
     expect(treeCandidates(new JsonNumber("7") as Json).every((v) => v instanceof JsonNumber)).toBe(true);
   });
 
-  it("keeps a failure only by the fields the languages disagree on", () => {
+  it("keeps a failure by the fields the languages disagree on, and how they split on each", () => {
     const v = { mode: "strict", decoder: "normal", entry: "public" } as const;
     expect(
       signature([
-        { case: "c", variant: v, field: "result", values: { rust: "accepted", go: "rejected", expected: "rejected" } },
+        { case: "c", variant: v, field: "result", values: { rust: "accepted", go: "rejected", ts: "rejected", expected: "rejected" } },
         { case: "c", variant: v, field: "code", values: { rust: "too_long", go: "too_long", expected: "too_short" } },
       ]),
-    ).toEqual(["result"]);
+    ).toEqual(["result: go,ts | rust"]);
+    // Another language going wrong on the same field is another failure.
+    expect(signature([{ case: "c", variant: v, field: "result", values: { rust: "rejected", go: "accepted", ts: "rejected" } }])).toEqual(["result: go | rust,ts"]);
   });
 });
 
@@ -146,7 +148,7 @@ describe("shrinking a failure", () => {
     const shrunk = shrink([fake("rust"), fake("go")], job, space);
     expect(shrunk?.text).toBe('{"":[{"":"!"}]}');
     expect(shrunk?.steps).toBeGreaterThan(5);
-    expect(signature(shrunk?.rows ?? [])).toEqual(["result"]);
+    expect(signature(shrunk?.rows ?? [])).toEqual(["result: go | rust"]);
     expect(shrink([fake("rust"), fake("go")], job, space)?.text).toBe(shrunk?.text);
   });
 
@@ -288,6 +290,9 @@ describe("the fuzzer against a deliberately broken emitter", () => {
     expect(variantName(failure.variant)).toBe("strict/llm/objects");
     const saved = failure.saved;
     if (saved === undefined) throw new Error(`not saved: ${lines.join("; ")} ${failure.shrunk.payload} ${failure.shrunk.text}`);
+    // The saved answer is printed beside the other language's.
+    expect(lines.some((l) => l.startsWith("  rust (saved): strict "))).toBe(true);
+    expect(lines.some((l) => l.startsWith("  ts: strict "))).toBe(true);
     // The case holds the payload in normal JSON; the suite projects it to the LLM form itself.
     expect(readFileSync(join(conformance, "cases", saved), "utf8")).toBe(`${failure.shrunk.payload}\n`);
   });

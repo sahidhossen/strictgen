@@ -10,7 +10,7 @@
  *   own canonical bytes.
  * - A near miss of the generator's both-mode list must fail with the generator's label (path and
  *   code) in every language and read mode; one of its strict-only list, an unknown key, with the
- *   label in strict mode, while report mode is held to agreement between the languages only.
+ *   label in strict mode, and accepted with that key reported in report mode.
  * - All of them run through every variant of the suite (`suiteJobs`): both read modes, both entry
  *   points, code generated with and without `llm`, and the LLM decoders of every map shape, in the
  *   LLM form `llm-cases.ts` projects them to, with the near misses only that form has.
@@ -43,7 +43,7 @@ import { compareRun, table } from "./compare.js";
 import type { Driver, Package } from "./drivers.js";
 import { buildGo, buildRust, caseTypes, conformanceModel, generateAll, probeToolchain, typeScriptDriver } from "./drivers.js";
 import { project } from "./llm-cases.js";
-import type { Language, Mode, Result, Variant } from "./protocol.js";
+import type { Language, Result, Variant } from "./protocol.js";
 import { DriverError, LANGUAGES, MODES, packageName, variantName } from "./protocol.js";
 import type { Job } from "./suite.js";
 import { jobRequests, loadSuite, suiteJobs, vectorMarks, withScratch } from "./suite.js";
@@ -168,19 +168,20 @@ export function fuzzRun(model: Model, types: readonly string[], seed: number, in
   const id = (what: string): string => `fuzz/${String(index)}/${type}/${what}`;
   const cases: Case[] = [{ id: id("valid"), type, valid: true, bytes: bytes(text), strict: ACCEPTED, report: ACCEPTED }];
   const changes = new Map<string, string>([[id("valid"), "a valid payload"]]);
-  const add = (name: string, miss: { payload: Payload; path: string; code: string; change: string }, unlabelled?: readonly Mode[]): void => {
+  const add = (name: string, miss: { payload: Payload; path: string; code: string; change: string }, report?: Outcome): void => {
     const outcome: Outcome = { accepted: false, path: miss.path, code: miss.code };
-    const c: Case = { id: id(name), type, valid: false, bytes: bytes(payloadText(miss.payload)), strict: outcome, report: outcome };
-    cases.push(unlabelled === undefined ? c : { ...c, unlabelled });
-    changes.set(c.id, miss.change);
+    cases.push({ id: id(name), type, valid: false, bytes: bytes(payloadText(miss.payload)), strict: outcome, report: report ?? outcome });
+    changes.set(id(name), miss.change);
   };
   const misses = both.nearMisses(type, valid);
   random.shuffle(misses).slice(0, MISSES).forEach((m, k) => add(`miss-${String(k)}`, m));
-  // Unknown keys fail in strict mode only, so they come from a strict generator, and report mode
-  // is held to agreement between the languages.
+  // Unknown keys fail in strict mode only, so they come from a strict generator. Its label is
+  // unknown_key only outside every untagged union (inside one the union fails), so report mode
+  // accepts the payload with that one unknown key.
   const seen = new Set(misses.map((m) => `${m.path} ${m.code} ${payloadText(m.payload)}`));
   const unknown = strict.nearMisses(type, valid).filter((m) => m.code === "unknown_key" && !seen.has(`${m.path} ${m.code} ${payloadText(m.payload)}`));
-  if (unknown.length > 0) add("unknown", random.pick(unknown), ["report"]);
+  const extra = unknown.length > 0 ? random.pick(unknown) : undefined;
+  if (extra !== undefined) add("unknown", extra, { accepted: true, unknown: [extra.path] });
   const cleanup: Case = {
     id: id("cleanup"),
     type: "",
@@ -290,10 +291,23 @@ function jobRows(job: Job, results: Readonly<Partial<Record<Language, Result>>>)
   return compareRun(run, job.marks);
 }
 
-/** The fields the languages disagree on, among themselves: what a shrunk payload must keep. */
+/**
+ * What a shrunk payload must keep: each field the languages disagree on among themselves, with
+ * how they split on it, like `result: go | rust,ts`, so a step where another language goes
+ * wrong instead doesn't count as the same failure.
+ */
 export function signature(rows: readonly Disagreement[]): string[] {
-  const fields = rows.filter((r) => Object.keys(r.values).some((k) => k !== "expected") && new Set(Object.entries(r.values).filter(([k]) => k !== "expected").map(([, v]) => v)).size > 1);
-  return [...new Set(fields.map((r) => r.field))].sort();
+  const out = new Set<string>();
+  for (const r of rows) {
+    const groups = new Map<string, string[]>();
+    for (const l of LANGUAGES) {
+      const v = r.values[l];
+      if (v !== undefined) groups.set(v, [...(groups.get(v) ?? []), l]);
+    }
+    if (groups.size < 2) continue;
+    out.add(`${r.field}: ${[...groups.values()].map((ls) => ls.join(",")).sort().join(" | ")}`);
+  }
+  return [...out].sort();
 }
 
 /** How a candidate of the shrinker becomes the input of the failing variant. */
@@ -592,6 +606,13 @@ function unsavable(shrunk: Shrunk, trusted: Language, marks: readonly Mark[], st
   return undefined;
 }
 
+/** One language's answer for a case, in one line. */
+function answer(r: Result | undefined): string {
+  if (r === undefined) return "no result";
+  if (r.accepted) return `accepted, unknown ${JSON.stringify(r.unknown ?? [])}`;
+  return `rejected ${r.error?.code ?? ""} at ${r.error?.path === "" ? "the root" : (r.error?.path ?? "")}`;
+}
+
 /** The expect file of an invalid case, from the trusted language's results. */
 function expectFile(strict: Result, report: Result): string {
   const e = strict.error;
@@ -622,14 +643,18 @@ export function bumpManifest(text: string, type: string, kind: "valid" | "invali
 function saveCase(options: FuzzOptions, drivers: readonly Driver[], packages: readonly Package[], shrunk: Shrunk, log: (line: string) => void): string | undefined {
   const trusted = options.save;
   if (trusted === undefined) return undefined;
-  const driver = drivers.find((d) => d.language === trusted);
   const type = shrunk.job.case.type;
   const payload = shrunk.payload ?? shrunk.text;
   const c: Case = { id: shrunk.job.case.id, type, valid: true, bytes: bytes(payload), strict: ACCEPTED, report: ACCEPTED };
   const marks = fuzzMarks(c);
   const jobs: Job[] = (["strict", "report"] as const).map((mode) => ({ case: c, variant: { mode, decoder: "normal", entry: "public" }, marks: [] }));
-  const results = driver === undefined ? [] : driver.run(jobRequests(jobs));
-  const [strict, report] = results;
+  // Every language's answer, so the saved one can be read beside the others.
+  const answers = new Map(drivers.map((d) => [d.language, d.run(jobRequests(jobs))] as const));
+  const [strict, report] = answers.get(trusted) ?? [];
+  for (const l of LANGUAGES) {
+    const a = answers.get(l);
+    if (a !== undefined) log(`  ${l}${l === trusted ? " (saved)" : ""}: strict ${answer(a[0])}, report ${answer(a[1])}`);
+  }
   const why = unsavable(shrunk, trusted, marks, strict, report);
   const fail = (reason: string): undefined => {
     log(`not saved: ${reason}`);

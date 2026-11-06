@@ -1281,9 +1281,18 @@ export class PayloadGenerator {
       }
     }
     if (type.kind === "integer" && type.multipleOf !== undefined && type.multipleOf > 1) {
+      const m = type.multipleOf;
       const [lo, hi] = this.#integerRange(type);
-      const next = [value + 1, value - 1].find((v) => v >= lo && v <= hi && Number.isSafeInteger(v));
-      if (next !== undefined) note(next, "not_multiple_of", `${String(next)}, not a multiple of ${String(type.multipleOf)}`);
+      // Next to the value, then on both sides of zero, where a remainder changes sign: each one
+      // the range takes, since a check can go wrong for negative values only.
+      const near = [value + 1, value - 1].find((v) => v >= lo && v <= hi && Number.isSafeInteger(v));
+      const signs = [-1, 1, -m + 1, -m - 1];
+      const seen = new Set<number>();
+      for (const next of [...(near === undefined ? [] : [near]), ...signs]) {
+        if (seen.has(next) || next < lo || next > hi || !Number.isSafeInteger(next) || next % m === 0) continue;
+        seen.add(next);
+        note(next, "not_multiple_of", `${String(next)}, not a multiple of ${String(m)}`);
+      }
     }
   }
 
