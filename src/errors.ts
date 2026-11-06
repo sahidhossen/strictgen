@@ -60,7 +60,7 @@ export const ERROR_CODES: readonly ErrorCodeInfo[] = [
     doc: "text that isn't JSON: a syntax error, invalid UTF-8, a lone surrogate, data after the value or a number out of range",
   },
   { code: "duplicate_key", title: "duplicate key", doc: "an object that gives the same key twice, at the key's path" },
-  { code: "too_deep", title: "too deep", doc: "a value inside 128 or more arrays and objects" },
+  { code: "too_deep", title: "too deep", doc: "a value inside more than 127 nested arrays and objects" },
 ];
 
 /** Strings in `found` are cut to this many code points, followed by `...`. */

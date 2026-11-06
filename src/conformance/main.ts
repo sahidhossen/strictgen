@@ -41,9 +41,11 @@ async function main(args: readonly string[]): Promise<number> {
     const llm = result.jobs.filter((j) => j.variant.decoder === "llm" && j.variant.vectors !== true).length;
     const vectors = result.jobs.filter((j) => j.variant.vectors === true).length;
     out(`  ${String(llm)} runs through the LLM decoders, ${String(vectors)} of the shared vectors of examples/llm`);
-    const reasons = new Map<string, number>();
-    for (const why of result.skipped.values()) reasons.set(why, (reasons.get(why) ?? 0) + 1);
-    for (const [why, n] of [...reasons].sort(([a], [b]) => (a < b ? -1 : 1))) out(`  ${String(n)} invalid cases not in the LLM form: ${why}`);
+    for (const [variant, skipped] of result.skipped) {
+      const reasons = new Map<string, number>();
+      for (const why of skipped.values()) reasons.set(why, (reasons.get(why) ?? 0) + 1);
+      for (const [why, n] of [...reasons].sort(([a], [b]) => (a < b ? -1 : 1))) out(`  ${variant}: ${String(n)} invalid cases not in the LLM form: ${why}`);
+    }
     if (parsed.languages.length < LANGUAGES.length || parsed.modes.length < 2) {
       out("not every language and mode ran, so marks were not checked for being needed");
     }

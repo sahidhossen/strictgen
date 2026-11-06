@@ -193,7 +193,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-/// serde_json's recursion limit: a value nested in ${String(MAX_DEPTH)} or more arrays and objects fails, so
+/// serde_json's recursion limit: more than ${String(MAX_DEPTH - 1)} nested arrays and objects fail, so
 /// Rust, Go and TypeScript accept the same documents and decoding stays bounded.
 const MAX_DEPTH: usize = ${String(MAX_DEPTH)};
 

@@ -40,7 +40,7 @@ import {
 import type { Skipped } from "./llm-cases.js";
 import { llmCases } from "./llm-cases.js";
 import type { Decoder, Entry, Language, Mode, Request, Result, Shape, Variant } from "./protocol.js";
-import { ENTRIES, LANGUAGES, MODES, packageName } from "./protocol.js";
+import { ENTRIES, LANGUAGES, MODES, packageName, variantName } from "./protocol.js";
 import { loadCleanupVectors, loadLlmVectors } from "./vectors.js";
 
 /** Every combination of the given modes, decoders and entry points, for code generated without `llm`. */
@@ -172,8 +172,8 @@ export interface JobOptions {
   readonly modes: readonly Mode[];
   /** The `examples/llm` folder, for its shared vectors. */
   readonly vectors: string;
-  /** Collects why a case doesn't run through the LLM decoders. */
-  readonly skipped?: Skipped;
+  /** Collects why a case doesn't run through the LLM decoders, by variant name, since each variant leaves out its own. */
+  readonly skipped?: Map<string, Skipped>;
 }
 
 /**
@@ -218,7 +218,9 @@ export function suiteJobs(options: JobOptions): Job[] {
   const llm = (variant: Variant & { shape: Shape }, otherShape: boolean): void => {
     const p = pkg(variant);
     const readsEntries = variant.maps !== "objects";
-    for (const j of llmCases(p.model, cases, marks, new Set(p.types.keys()), { shape: variant.shape, readsEntries, otherShape }, options.skipped)) {
+    const skipped: Skipped = new Map();
+    options.skipped?.set(variantName(variant), skipped);
+    for (const j of llmCases(p.model, cases, marks, new Set(p.types.keys()), { shape: variant.shape, readsEntries, otherShape }, skipped)) {
       jobs.push({ case: j.case, variant, marks: j.marks, origin: j.origin });
     }
   };
@@ -268,8 +270,8 @@ export interface SuiteResult {
   /** The variants that ran, in order. */
   readonly variants: readonly Variant[];
   readonly rows: readonly Disagreement[];
-  /** Why cases don't run through the LLM decoders, by case id. */
-  readonly skipped: ReadonlyMap<string, string>;
+  /** Why cases don't run through the LLM decoders, by variant name, then by case id. */
+  readonly skipped: ReadonlyMap<string, ReadonlyMap<string, string>>;
   readonly coverage: Coverage;
   /** The temporary folder, when it was kept. */
   readonly kept?: string;
@@ -352,7 +354,7 @@ export async function runSuite(options: SuiteOptions): Promise<SuiteResult> {
     const { cases, marks, manifest, coverage: report } = loadSuite(options.conformance, model);
     for (const l of options.languages) if (l !== "ts") log(`${l}: ${probeToolchain(l)}`);
     const packages = generateAll(options.conformance, out, new Set(manifest.llm.keys()));
-    const skipped: Skipped = new Map();
+    const skipped = new Map<string, Skipped>();
     const jobs = suiteJobs({ cases, marks, packages, modes: options.modes, vectors: vectorsFolder(options.conformance), skipped });
     const drivers: Driver[] = [];
     for (const l of options.languages) {

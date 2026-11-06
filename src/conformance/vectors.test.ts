@@ -153,16 +153,16 @@ describe("the schema files the LLM packages leave out", () => {
 
   it("are the ones whose types no provider-ready schema can describe", () => {
     const model = conformanceModel(CONFORMANCE, scratch());
-    expect([...llmExclusions(CONFORMANCE, model).keys()]).toEqual(["bundle.json", "shipment.json", "shop-order.json"]);
+    expect([...llmExclusions(CONFORMANCE, model).keys()]).toEqual(["bundle.json", "promotion.json", "shipment.json", "shop-order.json"]);
   });
 
   it("must all be listed in the manifest with a reason, and only they", () => {
     const dir = scratch();
     cpSync(join(CONFORMANCE, "schemas"), join(dir, "schemas"), { recursive: true });
     const model = conformanceModel(dir, scratch());
-    const all = { "bundle.json": "x", "shipment.json": "x", "shop-order.json": "x" };
+    const all = { "bundle.json": "x", "promotion.json": "x", "shipment.json": "x", "shop-order.json": "x" };
     expect(() => checkLlmExclusions(dir, model, manifest(all))).not.toThrow();
-    expect(() => checkLlmExclusions(dir, model, manifest({ "bundle.json": "x", "shipment.json": "x" }))).toThrow(
+    expect(() => checkLlmExclusions(dir, model, manifest({ "bundle.json": "x", "promotion.json": "x", "shipment.json": "x" }))).toThrow(
       /shop-order\.json: no LLM decoder can be generated \(.*\), so list it under "llm" in manifest\.json with the reason/,
     );
     expect(() => checkLlmExclusions(dir, model, manifest({ ...all, "order.json": "x" }))).toThrow(

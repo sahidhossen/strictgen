@@ -20,7 +20,7 @@
  */
 
 import { ERROR_CODES } from "../errors.js";
-import type { Decl, IntegerType, NumberType, StructDecl, TypeExpr } from "../model.js";
+import type { Decl, IntegerType, NumberType, StructDecl, TypeExpr, UntaggedVariant } from "../model.js";
 import type { Model } from "../model.js";
 import type { Json } from "./canonical.js";
 import { CanonicalError, JsonNumber, parseJson, pointerSegments } from "./canonical.js";
@@ -42,7 +42,9 @@ export const RULES: readonly Rule[] = [
   { id: "object.rest", text: "an object with properties and extra keys that are data, like a map" },
   { id: "object.recursive", text: "a property that closes a containment cycle, boxed in Rust" },
   { id: "tagged", text: "a oneOf whose branches share a string const tag: the tag picks the branch" },
+  { id: "tagged.recursive", text: "a tagged union branch that closes a containment cycle, boxed in Rust" },
   { id: "untagged", text: "a oneOf without a tag: the branches are tried in a fixed order" },
+  { id: "untagged.recursive", text: "an untagged union branch that closes a containment cycle, boxed in Rust" },
   { id: "enum", text: "a string enum: only the listed values" },
   { id: "const.string", text: "a string const, an enum of one value" },
   { id: "const.integer", text: "an integer const" },
@@ -80,6 +82,25 @@ export const RULES: readonly Rule[] = [
   { id: "map.minProperties", text: "minProperties on a map" },
   { id: "map.maxProperties", text: "maxProperties on a map" },
 ];
+
+/*
+ * Every flag and option of a model node an emitter reads has a rule above, or no rule for the
+ * reason given here:
+ *
+ * - Field.required: object.required and object.optional. Field.boxed: object.recursive.
+ *   TaggedVariant.boxed and UntaggedVariant.boxed: tagged.recursive and untagged.recursive
+ * - StructDecl.forbidden: object.exactly-one. StructDecl.rest: object.rest
+ * - StructDecl.closed: no rule. Decoders reject unknown keys unless a struct has `rest`, and
+ *   closed is false only beside `rest`, so object and object.rest cover both. Otherwise it only
+ *   picks the TypeScript type of a struct without fields
+ * - StringType.pattern: no rule. It only gives the TypeScript type text, like `order.${string}`;
+ *   StringType.match is what decoders check (string.pattern), and Pattern.source is the text
+ *   errors show, compared in every case's error
+ * - The constraints of strings, integers, numbers, arrays and maps: one rule each
+ * - TaggedDecl.tag: tagged. The order of UntaggedDecl.variants: untagged
+ * - doc, path, schema and source of a declaration: no rule. They give comments, file names and
+ *   registry names, never what a decoder accepts
+ */
 
 const RULE_IDS: ReadonlySet<string> = new Set(RULES.map((r) => r.id));
 
@@ -224,12 +245,14 @@ class ValidWalk {
         add("tagged");
         const tag = json instanceof Map ? json.get(decl.tag) : undefined;
         const variant = decl.variants.find((v) => v.value === tag);
+        if (variant?.boxed === true) add("tagged.recursive");
         if (variant !== undefined) this.decl(this.walk.decl(variant.type), json);
         return;
       }
       case "untagged": {
         add("untagged");
         const variant = decl.variants.find((v) => this.walk.fits(v.type, json));
+        if (variant?.boxed === true) add("untagged.recursive");
         if (variant !== undefined) this.value(variant.type, json);
         return;
       }
@@ -281,8 +304,11 @@ interface Site {
   readonly via: Set<string>;
 }
 
-/** The declarations and types a value is read through at one place, resolving refs, aliases, ids and unions. */
-function expand(walk: ModelWalk, type: TypeExpr, value: Json | undefined): (TypeExpr | Decl)[] {
+/**
+ * The declarations and types a value is read through at one place, resolving refs, aliases, ids
+ * and unions. A boxed union branch it goes through adds its rule to `via`.
+ */
+function expand(walk: ModelWalk, type: TypeExpr, value: Json | undefined, via: Set<string>): (TypeExpr | Decl)[] {
   const out: (TypeExpr | Decl)[] = [];
   let next: TypeExpr | Decl | undefined = type;
   while (next !== undefined) {
@@ -297,10 +323,13 @@ function expand(walk: ModelWalk, type: TypeExpr, value: Json | undefined): (Type
     else if (t.kind === "tagged") {
       const tag = value instanceof Map ? value.get(t.tag) : undefined;
       const variant = t.variants.find((v) => v.value === tag);
+      if (variant?.boxed === true) via.add("tagged.recursive");
       if (variant !== undefined) next = walk.decl(variant.type);
     } else if (t.kind === "untagged" && value !== undefined) {
       const v = value;
-      next = t.variants.find((x) => walk.fits(x.type, v))?.type;
+      const variant: UntaggedVariant | undefined = t.variants.find((x) => walk.fits(x.type, v));
+      if (variant?.boxed === true) via.add("untagged.recursive");
+      next = variant?.type;
     }
   }
   return out;
@@ -309,7 +338,7 @@ function expand(walk: ModelWalk, type: TypeExpr, value: Json | undefined): (Type
 /** Follows an error's path through a case's value along the model. Undefined when the path leaves the model. */
 function site(walk: ModelWalk, type: string, root: Json, path: string, code: string): Site | undefined {
   const via = new Set<string>();
-  let chain = expand(walk, { kind: "ref", name: type }, root);
+  let chain = expand(walk, { kind: "ref", name: type }, root, via);
   let value: Json | undefined = root;
   const segments = pointerSegments(path);
   for (let i = 0; i < segments.length; i++) {
@@ -329,7 +358,7 @@ function site(walk: ModelWalk, type: string, root: Json, path: string, code: str
       if (field !== undefined) {
         if (field.boxed) via.add("object.recursive");
         if (last && (nextValue === undefined || (nextValue === null && code === "null_not_allowed"))) {
-          return { chain: field.type.kind === "ref" ? expand(walk, field.type, nextValue) : [field.type], value: nextValue, parent: here, key: false, via };
+          return { chain: field.type.kind === "ref" ? expand(walk, field.type, nextValue, via) : [field.type], value: nextValue, parent: here, key: false, via };
         }
         next = field.type;
       } else if (here.rest !== undefined && !(last && code === "unknown_key")) {
@@ -337,7 +366,7 @@ function site(walk: ModelWalk, type: string, root: Json, path: string, code: str
         next = here.rest.value;
         if (last && walk.stringViolation(here.rest.key, s) === code) {
           via.add("map.key");
-          return { chain: expand(walk, here.rest.key, s), value: s, parent: undefined, key: true, via };
+          return { chain: expand(walk, here.rest.key, s, via), value: s, parent: undefined, key: true, via };
         }
       } else {
         return last ? { chain: [], value: nextValue, parent: here, key: false, via } : undefined;
@@ -351,13 +380,13 @@ function site(walk: ModelWalk, type: string, root: Json, path: string, code: str
       nextValue = value instanceof Map ? value.get(s) : undefined;
       if (last && walk.stringViolation(here.key, s) === code) {
         via.add("map.key");
-        return { chain: expand(walk, here.key, s), value: s, parent: undefined, key: true, via };
+        return { chain: expand(walk, here.key, s, via), value: s, parent: undefined, key: true, via };
       }
     } else {
       return undefined;
     }
     value = nextValue;
-    chain = expand(walk, next, value);
+    chain = expand(walk, next, value, via);
   }
   return { chain, value, parent: undefined, key: false, via };
 }
@@ -417,12 +446,16 @@ function invalidRules(walk: ModelWalk, c: Case, root: Json): Set<string> {
       if (union !== undefined) out.add(union.kind);
       else if (leaf !== undefined) out.add(kindRule(leaf, walk) ?? "");
       // An object with the keys of two branches of an exactly-one union fits no branch, so the
-      // union fails: the keys a branch forbids are what failed.
+      // union fails: the keys a branch forbids are what failed. Only when the object fits that
+      // branch without them, so an object that fails for another reason, like `null` for a
+      // branch's key, isn't counted.
       if (union?.kind === "untagged" && at.value instanceof Map) {
         const value = at.value;
         const forbids = union.variants.some((v) => {
           const d = v.type.kind === "ref" ? walk.decl(v.type.name) : undefined;
-          return d?.kind === "struct" && d.forbidden.some((k) => value.has(k));
+          if (d?.kind !== "struct" || !d.forbidden.some((k) => value.has(k))) return false;
+          const without: Json = new Map([...value].filter(([k]) => !d.forbidden.includes(k)));
+          return walk.fits(v.type, without);
         });
         if (forbids) out.add("object.exactly-one");
       }

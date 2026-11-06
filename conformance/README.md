@@ -57,7 +57,7 @@ Every mapping rule needs a valid case and an invalid one, and every error code a
 | Ids | What they are |
 | --- | ------------- |
 | `object`, `object.required`, `object.optional`, `object.exactly-one`, `object.rest`, `object.recursive` | Closed objects, their keys, the keys an exactly-one `oneOf` forbids, data keys beside the named ones, and a field that closes a cycle |
-| `tagged`, `untagged` | Unions with and without a tag |
+| `tagged`, `tagged.recursive`, `untagged`, `untagged.recursive` | Unions with and without a tag, and a branch of each that closes a cycle |
 | `enum`, `const.string`, `const.integer`, `const.boolean` | Enums and consts |
 | `id`, `alias` | Ids and defs that are another type |
 | `string`, `integer`, `integer.int64`, `number`, `boolean`, `any`, `non-null` | Scalars, an integer past 2^53 - 1, and any JSON value with or without null |
@@ -85,12 +85,13 @@ Every case also runs through the LLM decoders (`decodeXFromLlm`, `DecodeXFromLlm
 
 - A valid case must decode, and its value must encode to the same canonical bytes as the case itself: the LLM value equals the normal value
 - An invalid case must fail with its strict error, since LLM decoders are strict in every read mode, at the path in the payload: `/value/...` under the wrapper, `/labels/0/value` for a member of a map read from entries, `/labels/0/key` when the member's key breaks the key's type. A mark's path moves the same way
-- Invalid cases whose meaning the LLM form changes are left out, and the run says how many and why: text the projection can't read as one JSON value (a key given twice, bytes that aren't UTF-8), `null` for an optional key, which means absent there, an array where a map goes, which is that map's entries for code that reads entries, and nesting that crosses the depth limit in one form only
+- Invalid cases whose meaning the LLM form changes are left out, and the run says how many and why, for each variant: text the projection can't read as one JSON value (a key given twice, bytes that aren't UTF-8), `null` for an optional key, which means absent there, an array where a map goes, which is that map's entries for code that reads entries, and nesting that crosses the depth limit in one form only
 - Each valid case adds near misses only the LLM form has, each with its own expectation: no `value` key, a key beside it, the value without the object around it, entries that are a string, repeat a key, lack a key or a value, have a third key, a number for a key or an array for an entry, a payload cut short, a key given twice, and, for code that reads one shape, a case's one map in the other shape
+- Each invalid case that fails a constraint adds the same payload with a third key in its first entry, which must fail first with `unknown_key` there, since the structure of the whole value is checked before any constraint
 
 The schema files whose types no provider-ready schema can describe, like a value of any JSON type or a recursive type, are left out of the code generated with `llm`, each listed in the `llm` section of `manifest.json` with the reason. Every other file must project under every profile, and every listed one must fail to.
 
-The shared vectors of [`examples/llm`](../examples/llm) run too, in code generated from its config in report mode, since the example's own tests run them in strict mode: each LLM vector through the LLM decoder, compared with its error's compact form or with the normal JSON of its value, which the normal decoder must take too, and each cleanup vector through the cleanup step, whose output must be exactly the vector's. Go's encoder escapes `<`, `>`, `&`, U+2028 and U+2029, so a vector whose value holds one carries the mark for it, worked out from its text.
+The shared vectors of [`examples/llm`](../examples/llm) run too, in report mode only, in code generated from its config. LLM decoders are strict in both modes, so strict mode would run the same checks again, and the example's own tests run the vectors in strict mode already: each LLM vector through the LLM decoder, compared with its error's compact form or with the normal JSON of its value, which the normal decoder must take too, and each cleanup vector through the cleanup step, whose output must be exactly the vector's. Go's encoder escapes `<`, `>`, `&`, U+2028 and U+2029, so a vector whose value holds one carries the mark for it, worked out from its text.
 
 ## Known differences
 

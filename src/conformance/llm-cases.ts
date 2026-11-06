@@ -20,6 +20,9 @@
  * - Near misses of what only the LLM form has come from each valid case: the object around a
  *   wrapped type, the entries of maps, a payload cut short, a key given twice, and, for code that
  *   reads one map shape only, a payload that gives its one map in the other shape.
+ * - Each invalid case that fails a constraint also gets a third key in its first entry, which
+ *   must fail first with unknown_key there: the structure of the whole value is checked before
+ *   any constraint, in entries as in objects.
  */
 
 import type { Model, TypeExpr } from "../model.js";
@@ -366,8 +369,32 @@ export function llmCases(
     }
     const outcome = { accepted: false as const, path, code: want.code };
     out.push({ case: { ...c, bytes: bytes(text), strict: outcome, report: outcome }, marks: movedMarks, origin });
+    if (CONSTRAINTS.has(want.code) && own.length === 0) {
+      const miss = structureFirst(c, p);
+      if (miss !== undefined) out.push({ case: miss, marks: [], origin: new Map() });
+    }
   }
   return out;
+}
+
+/** The codes of constraints, which decoders check once the structure of the whole value holds. */
+const CONSTRAINTS: ReadonlySet<string> = new Set(["too_short", "too_long", "too_small", "too_large", "not_multiple_of", "pattern_mismatch", "bad_format", "not_unique"]);
+
+/**
+ * An invalid case that fails a constraint, with a third key in the first entry of its first map
+ * read from entries, outside any untagged union: the unknown key is a problem of the structure,
+ * so it is the first error wherever the constraint is.
+ */
+function structureFirst(c: Case, p: Projected): Case | undefined {
+  for (const e of p.entries) {
+    if (e.inUnion) continue;
+    const list = get(p.payload, e.path);
+    if (!Array.isArray(list) || !(list[0] instanceof Map)) continue;
+    const entry = `${e.path}/0`;
+    const third = changed(p.payload, entry, (v) => (v instanceof Map ? new Map([...v, ["note", "x"]]) : v));
+    return llmMiss(c, `a third key in the entry at ${entry}, which fails before the ${c.strict.accepted ? "" : c.strict.code}`, writeJson(third), `${entry}/note`, "unknown_key");
+  }
+  return undefined;
 }
 
 /** A near miss of a case's LLM form, with the error it must give. */

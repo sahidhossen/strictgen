@@ -28,7 +28,7 @@ With `"read": "report"`, unknown keys are accepted instead and go to the hook se
 - no key given twice in one object, compared after unescaping
 - no lone surrogate, in a `\u` escape or in the text itself
 - finite numbers: `1e400` fails
-- at most 127 nested arrays and objects: a value inside 128 or more fails, the limit of `serde_json` and of the Go decoders, so reading and decoding stay bounded however deep the input
+- at most 127 nested arrays and objects: more than 127 fail, the limit of `serde_json` and of the Go decoders, so reading and decoding stay bounded however deep the input
 - for an `integer`, an integer spelling: `12.0`, `1e2` and `-0` fail, as in Rust and Go. A `number` takes any spelling
 
 A failure is a `DecodeError` with the code `invalid_json`, `duplicate_key` or `too_deep`, whose `path` is the JSON Pointer of the value being read and whose `found` ends with the offset in UTF-8 bytes, the same as Go:

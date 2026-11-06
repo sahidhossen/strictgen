@@ -119,6 +119,30 @@ describe("cases in the LLM form", () => {
     ]);
   });
 
+  it("give an invalid case that fails a constraint a third key in its first entry, which fails first", () => {
+    const strict = (c: Case): [string, string, unknown] => [c.id, text(c.bytes), c.strict];
+    // The constraint is on the root's first key, which the checks read before the map.
+    const first = run([invalid("Order", '{"id":"a","labels":{"x":"y"}}', "/id", "too_short")], "entries").map((c) => strict(c.case));
+    expect(first).toEqual([
+      ["Order/invalid/b", '{"id":"a","note":null,"count":null,"labels":[{"key":"x","value":"y"}],"contact":null}', { accepted: false, path: "/id", code: "too_short" }],
+      [
+        "Order/invalid/b (llm: a third key in the entry at /labels/0, which fails before the too_short)",
+        '{"id":"a","note":null,"count":null,"labels":[{"key":"x","value":"y","note":"x"}],"contact":null}',
+        { accepted: false, path: "/labels/0/note", code: "unknown_key" },
+      ],
+    ]);
+    // The constraint is in the same entry, whose value is read before its keys are closed.
+    const same = run([invalid("Order", '{"id":"ab","labels":{"x":"long"}}', "/labels/x", "too_long")], "entries");
+    expect(same.map((c) => c.case.strict)).toEqual([
+      { accepted: false, path: "/labels/0/value", code: "too_long" },
+      { accepted: false, path: "/labels/0/note", code: "unknown_key" },
+    ]);
+    // None for objects, an error of the structure, or a map inside a union.
+    expect(run([invalid("Order", '{"id":"a","labels":{"x":"y"}}', "/id", "too_short")], "objects")).toHaveLength(1);
+    expect(run([invalid("Order", '{"id":"ab","labels":{"x":1}}', "/labels/x", "wrong_type")], "entries")).toHaveLength(1);
+    expect(run([invalid("Order", '{"id":"a","contact":{"x":1}}', "/id", "too_short")], "entries")).toHaveLength(1);
+  });
+
   it("give a decoder that reads one shape a case's one map in the other shape too", () => {
     const one = run([valid("Order", '{"id":"ab","labels":{"x":"y"}}')], "entries", [], true);
     const other = one.find((c) => c.case.id.endsWith("(llm: the map at /labels as an object)"));

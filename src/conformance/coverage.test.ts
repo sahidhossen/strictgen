@@ -176,6 +176,11 @@ describe("the mapping rules an invalid case covers", () => {
     ['{"id":"abc","payment":{"kind":"wire"}}', "/payment/iban", "missing_key", ["object.required"]],
     ['{"id":"abc","size":true}', "/size", "wrong_type", ["untagged"]],
     ['{"id":"abc","contact":{"email":"a","phone":"b"}}', "/contact", "wrong_type", ["object.exactly-one", "untagged"]],
+    // Fails for null or a missing key, not for the keys of the other branch, unless the phone
+    // branch would take the object but for the email key it forbids.
+    ['{"id":"abc","contact":{"email":null}}', "/contact", "wrong_type", ["untagged"]],
+    ['{"id":"abc","contact":{"email":null,"phone":"b"}}', "/contact", "wrong_type", ["object.exactly-one", "untagged"]],
+    ['{"id":"abc","contact":{}}', "/contact", "wrong_type", ["untagged"]],
     ['{"id":"abc","next":{}}', "/next/id", "missing_key", ["object.recursive", "object.required"]],
     ['{"id":"abc"', "", "invalid_json", []],
   ])("%s at %s with %s", (text, path, code, want) => {
@@ -186,6 +191,49 @@ describe("the mapping rules an invalid case covers", () => {
     const extra = (text: string, path: string, code: string): string[] => [...(caseRules(M, [invalid("Extra", text, path, code)]).values().next().value ?? [])].sort();
     expect(extra('{"x":"abc"}', "/x", "too_long")).toEqual(["object.rest", "string.maxLength"]);
     expect(rules(invalid("One", '"two"', "", "not_const"))).toEqual(["const.string"]);
+  });
+});
+
+/** A reward that may cap another reward, and a condition that may negate another, each closing its cycle at a union branch. */
+const R = model({
+  promotion: {
+    title: "Promotion",
+    type: "object",
+    properties: { reward: { $ref: "#/$defs/reward" }, when: { $ref: "#/$defs/when" } },
+    required: ["reward"],
+    additionalProperties: false,
+    $defs: {
+      reward: { oneOf: [{ $ref: "#/$defs/capped" }, { $ref: "#/$defs/percent" }] },
+      capped: { type: "object", properties: { kind: { const: "capped" }, reward: { $ref: "#/$defs/reward" } }, required: ["kind", "reward"], additionalProperties: false },
+      percent: { type: "object", properties: { kind: { const: "percent" }, n: { type: "integer", minimum: 1 } }, required: ["kind", "n"], additionalProperties: false },
+      when: { oneOf: [{ type: "integer", minimum: 0 }, { $ref: "#/$defs/negation" }] },
+      negation: { type: "object", properties: { unless: { $ref: "#/$defs/when" } }, required: ["unless"], additionalProperties: false },
+    },
+  },
+});
+
+describe("the mapping rules of a union branch that closes a cycle", () => {
+  const of = (c: Case): string[] => [...(caseRules(R, [c]).get(c.id) ?? [])].sort();
+
+  it("are boxed branches in the model", () => {
+    const boxed = R.decls.flatMap((d) => (d.kind === "tagged" || d.kind === "untagged" ? d.variants.filter((v) => v.boxed).map(() => d.name) : []));
+    expect(boxed).toEqual(["Reward", "When"]);
+  });
+
+  it("count for a value read through the branch", () => {
+    expect(of(valid("Promotion", '{"reward":{"kind":"capped","reward":{"kind":"percent","n":1}}}'))).toContain("tagged.recursive");
+    expect(of(valid("Promotion", '{"reward":{"kind":"percent","n":1}}'))).not.toContain("tagged.recursive");
+    expect(of(valid("Promotion", '{"reward":{"kind":"percent","n":1},"when":{"unless":3}}'))).toContain("untagged.recursive");
+    expect(of(valid("Promotion", '{"reward":{"kind":"percent","n":1},"when":3}'))).not.toContain("untagged.recursive");
+  });
+
+  it("count for an error read through the branch", () => {
+    expect(of(invalid("Promotion", '{"reward":{"kind":"capped","reward":{"kind":"percent","n":0}}}', "/reward/reward/n", "too_small"))).toEqual(["integer.minimum", "tagged.recursive"]);
+    expect(of(invalid("Promotion", '{"reward":{"kind":"percent","n":1},"when":{"unless":-1}}', "/when/unless", "too_small"))).toEqual([
+      "integer.minimum",
+      "untagged.recursive",
+    ]);
+    expect(of(invalid("Promotion", '{"reward":{"kind":"percent","n":0}}', "/reward/n", "too_small"))).toEqual(["integer.minimum"]);
   });
 });
 

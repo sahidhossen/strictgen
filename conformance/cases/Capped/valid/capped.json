@@ -1,0 +1,1 @@
+{"kind": "capped", "cap": 100, "reward": {"kind": "capped", "cap": 50, "reward": {"kind": "percent", "percent": 1}}}
