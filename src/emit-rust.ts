@@ -17,10 +17,21 @@ import {
   RUST_NOT_RAW as NOT_RAW,
   variantName,
 } from "./naming.js";
+import {
+  RUST_HELPERS_CONST_BOOL,
+  RUST_HELPERS_CONST_INT,
+  RUST_HELPERS_CORE,
+  RUST_HELPERS_ENUM,
+  RUST_HELPERS_OBJECT,
+  RUST_HELPERS_ONE_OF,
+  RUST_HELPERS_REST,
+  RUST_HELPERS_TAGGED,
+  RUST_NON_NULL,
+} from "./rust-helpers.js";
 import { CodegenError } from "./schema.js";
 
 /** Name of the built in type for any JSON value except `null`. */
-export const NON_NULL_JSON = "NonNullJson";
+export const NON_NULL_JSON = RUST_NON_NULL;
 
 /** Names the generated module uses itself. A schema type with one of these names fails. */
 const RESERVED = new Set([
@@ -39,11 +50,23 @@ const RESERVED = new Set([
   NON_NULL_JSON,
   "ConstInt",
   "ConstBool",
+  "Decode",
+  "DecodeError",
 ]);
 
-const DERIVE_DATA = "#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]";
-const DERIVE_ENUM =
-  "#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]";
+const DERIVE_DATA = "#[derive(Debug, Clone, PartialEq, Eq, Serialize)]";
+/** Enums order by their JSON value, so they implement `Ord` and `PartialOrd` by hand. */
+const DERIVE_ENUM = "#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]";
+const DERIVE_ID = "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]";
+
+/** The first line of every generated `Decode` impl's method. */
+const DECODE_FN =
+  "    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {\n";
+
+/** An impl of `Decode` for `name` whose method body is `body`, indented by eight spaces. */
+function decodeImpl(name: string, body: string): string {
+  return `impl ${HELPERS}::Decode for ${name} {\n${DECODE_FN}${body}    }\n}\n`;
+}
 
 /** A lint the generated `mod.rs` allows for every module, and why. */
 export interface LintAllow {
@@ -82,9 +105,20 @@ export interface RustOptions {
   readonly publicModules?: readonly string[];
 }
 
-/** A Rust string literal: `text` with backslashes and quotes escaped. */
-function rustString(text: string): string {
-  return `"${text.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+/**
+ * A Rust string literal: `text` with backslashes and quotes escaped, and control characters,
+ * U+2028 and U+2029 as `\u{...}` escapes, so any JSON key or value can be written.
+ */
+export function rustString(text: string): string {
+  let out = '"';
+  for (const c of text) {
+    const code = c.codePointAt(0) ?? 0;
+    if (c === "\\" || c === '"') out += `\\${c}`;
+    else if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029)
+      out += `\\u{${code.toString(16)}}`;
+    else out += c;
+  }
+  return `${out}"`;
 }
 
 /** Name of the module that holds the built in types and decoding functions. */
@@ -127,25 +161,32 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
       );
     }
   }
-  const usesPresent = model.decls.some(
-    (d) => d.kind === "struct" && d.fields.some((f) => !f.required),
-  );
+  const usesStruct = model.decls.some((d) => d.kind === "struct");
+  const usesEnum = model.decls.some((d) => d.kind === "enum");
+  const usesRest = model.decls.some((d) => d.kind === "struct" && d.rest !== undefined);
   const usesTagged = model.decls.some((d) => d.kind === "tagged");
   const literals = new Set(model.decls.flatMap(literalKinds));
   const exported = [
     ...(literals.has("boolean") ? ["ConstBool"] : []),
     ...(literals.has("number") ? ["ConstInt"] : []),
+    "Decode",
+    "DecodeError",
     NON_NULL_JSON,
   ];
+  // Only the parts some declaration uses, so the module has no dead code.
   const helpers = [
     `${header}\n\n//! Built in types and decoding functions the generated modules share.\n`,
-    "use serde::{Deserialize, Deserializer, Serialize};\n",
-    NON_NULL,
-    usesPresent ? PRESENT : "",
-    usesTagged ? TAGGED : "",
-    literals.has("number") ? CONST_INT : "",
-    literals.has("boolean") ? CONST_BOOL : "",
-  ].join("\n");
+    RUST_HELPERS_CORE,
+    usesStruct ? RUST_HELPERS_OBJECT : "",
+    usesRest ? RUST_HELPERS_REST : "",
+    usesEnum || usesTagged ? RUST_HELPERS_ONE_OF : "",
+    usesEnum ? RUST_HELPERS_ENUM : "",
+    usesTagged ? RUST_HELPERS_TAGGED : "",
+    literals.has("number") ? RUST_HELPERS_CONST_INT : "",
+    literals.has("boolean") ? RUST_HELPERS_CONST_BOOL : "",
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
   const root = [
     `${header}\n\n//! Types for every schema in the set.\n//!\n//! One module per schema file. Every type is re-exported here.\n`,
     (options.allow ?? DEFAULT_ALLOW)
@@ -211,28 +252,23 @@ function rustModule(
       if (kind === "boolean-literal") helpers.add("ConstBool");
     }
   }
-  if (decls.some((d) => d.kind === "struct" && d.fields.some((f) => !f.required)))
-    helpers.add("present");
-  const tagged = decls.some((d) => d.kind === "tagged");
-  const untaggedUnions = decls.some((d) => d.kind === "untagged");
-  if (tagged) {
-    helpers.add("tag");
-    helpers.add("variant");
-  }
+  // Every declaration but an alias implements Decode through the helpers module.
+  const decodes = decls.some((d) => d.kind !== "alias");
   const usesMap =
     types.some((t) => kindsOf(t).has("map")) ||
     decls.some((d) => d.kind === "struct" && d.rest !== undefined);
   const uses = [...imports(model, decls)].map(
     ([other, names]) => `use super::${modules.get(other) ?? other}::${importList(names)};\n`,
   );
-  if (helpers.size > 0)
-    uses.push(`use super::${HELPERS}::${importList([...helpers].sort(compare))};\n`);
-  const deserializer = tagged || untaggedUnions ? "Deserializer, " : "";
-  uses.push(`use serde::{Deserialize, ${deserializer}Serialize};\n`);
+  const fromHelpers = [...(decodes ? ["self"] : []), ...[...helpers].sort(compare)];
+  if (fromHelpers.length === 1 && fromHelpers[0] === "self") uses.push(`use super::${HELPERS};\n`);
+  else if (fromHelpers.length > 0)
+    uses.push(`use super::${HELPERS}::${importList(fromHelpers)};\n`);
+  if (decodes) uses.push("use serde::Serialize;\n");
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
     `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
-    ...decls.map((decl) => declaration(model, decl)),
+    ...decls.map((decl) => declaration(decl)),
   ];
   return parts.join("\n");
 }
@@ -256,98 +292,6 @@ function kindsOf(type: TypeExpr): Set<string> {
   return out;
 }
 
-const NON_NULL = `/// Any JSON value except \`null\` at the top, like \`jsonValue\`. Nested values may be anything.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(transparent)]
-pub struct ${NON_NULL_JSON}(pub serde_json::Value);
-
-impl<'de> Deserialize<'de> for ${NON_NULL_JSON} {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        if value.is_null() {
-            return Err(serde::de::Error::custom("expected a JSON value other than null"));
-        }
-        Ok(Self(value))
-    }
-}
-`;
-
-const PRESENT = `/// Decodes an optional key that is present, so an explicit \`null\` fails instead of reading as absent.
-pub(super) fn present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: Deserializer<'de>,
-    T: Deserialize<'de>,
-{
-    T::deserialize(deserializer).map(Some)
-}
-`;
-
-const TAGGED = `/// Reads the tag of a tagged union.
-pub(super) fn tag<E: serde::de::Error>(value: &serde_json::Value, key: &'static str) -> Result<String, E> {
-    let serde_json::Value::Object(object) = value else {
-        return Err(E::custom("expected an object"));
-    };
-    match object.get(key) {
-        Some(serde_json::Value::String(tag)) => Ok(tag.clone()),
-        Some(_) => Err(E::custom(format_args!("\`{key}\` must be a string"))),
-        None => Err(E::missing_field(key)),
-    }
-}
-
-/// Decodes the branch a tag picked, naming it in errors.
-pub(super) fn variant<T, E>(value: serde_json::Value, key: &str, tag: &str) -> Result<T, E>
-where
-    T: serde::de::DeserializeOwned,
-    E: serde::de::Error,
-{
-    serde_json::from_value(value).map_err(|error| E::custom(format_args!("{key} \`{tag}\`: {error}")))
-}
-`;
-
-const CONST_INT = `/// An integer \`const\`, like \`schemaVersion\`. Decoding any other value fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct ConstInt<const N: i64>;
-
-impl<const N: i64> Serialize for ConstInt<N> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_i64(N)
-    }
-}
-
-impl<'de, const N: i64> Deserialize<'de> for ConstInt<N> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = i64::deserialize(deserializer)?;
-        if value == N {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(format_args!("expected {N}, found {value}")))
-        }
-    }
-}
-`;
-
-const CONST_BOOL = `/// A boolean \`const\`. Decoding the other value fails.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
-pub struct ConstBool<const B: bool>;
-
-impl<const B: bool> Serialize for ConstBool<B> {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_bool(B)
-    }
-}
-
-impl<'de, const B: bool> Deserialize<'de> for ConstBool<B> {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = bool::deserialize(deserializer)?;
-        if value == B {
-            Ok(Self)
-        } else {
-            Err(serde::de::Error::custom(format_args!("expected {B}, found {value}")))
-        }
-    }
-}
-`;
-
 /** The kinds of literal (`number` or `boolean`) a declaration uses. */
 function literalKinds(decl: Decl): string[] {
   const of = (type: TypeExpr): string[] => {
@@ -365,7 +309,7 @@ function literalKinds(decl: Decl): string[] {
   return declTypes(decl).flatMap(of);
 }
 
-function declaration(model: Model, decl: Decl): string {
+function declaration(decl: Decl): string {
   const head = docs(decl.doc === "" ? [] : decl.doc.split("\n"), "", [`Schema: \`${decl.path}\`.`]);
   switch (decl.kind) {
     case "struct":
@@ -375,21 +319,31 @@ function declaration(model: Model, decl: Decl): string {
     case "tagged":
       return head + tagged(decl);
     case "untagged":
-      return head + untagged(model, decl);
+      return head + untagged(decl);
     case "alias":
       return `${head}pub type ${decl.name} = ${typeText(decl.type)};\n`;
     case "id":
-      return `${head}${DERIVE_ENUM.replace("Copy, ", "")}\n#[serde(transparent)]\npub struct ${decl.name}(pub String);\n`;
+      return (
+        `${head}${DERIVE_ID}\n#[serde(transparent)]\npub struct ${decl.name}(pub String);\n\n` +
+        decodeImpl(decl.name, `        <String as ${HELPERS}::Decode>::decode_node(node).map(Self)\n`)
+      );
   }
 }
 
+/**
+ * A struct, and its `Decode` impl, which reads the keys in schema order, then the keys of the
+ * rest map, and fails on the first key it didn't read. A struct with a rest map serializes by
+ * hand, so its fields carry no serde attributes.
+ */
 function struct(decl: StructDecl): string {
-  const serde =
-    decl.closed && decl.rest === undefined
-      ? 'rename_all = "camelCase", deny_unknown_fields'
-      : 'rename_all = "camelCase"';
+  const derived = decl.rest === undefined;
   const seen = new Set<string>();
-  const fields = decl.fields.map((f) => field(f, decl, seen));
+  const fields = decl.fields.map((f) => field(f, decl, seen, derived));
+  const idents = [...seen];
+  const reads = decl.fields.map(
+    (f, i) =>
+      `            ${idents[i] ?? ""}: object.${f.required ? "required" : "optional"}(${rustString(f.name)})?,\n`,
+  );
   if (decl.rest !== undefined) {
     const rest = "rest";
     if (seen.has(rest))
@@ -400,15 +354,22 @@ function struct(decl: StructDecl): string {
         "rename the rest key",
       );
     fields.push(
-      `    /// Keys other than the named fields.\n    #[serde(flatten)]\n    pub ${rest}: BTreeMap<${typeText(decl.rest.key)}, ${typeText(decl.rest.value)}>,\n`,
+      `    /// Keys other than the named fields.\n    pub ${rest}: BTreeMap<${typeText(decl.rest.key)}, ${typeText(decl.rest.value)}>,\n`,
     );
+    reads.push(`            ${rest}: object.rest()?,\n`);
   }
   const body = fields.length === 0 ? "{}" : `{\n${fields.join("")}}`;
-  if (decl.rest === undefined) {
-    return `${DERIVE_DATA}\n#[serde(${serde})]\npub struct ${decl.name} ${body}\n`;
+  const decode = decodeImpl(
+    decl.name,
+    reads.length === 0
+      ? `        let object = ${HELPERS}::Object::new(node)?;\n        object.finish()?;\n        Ok(Self {})\n`
+      : `        let mut object = ${HELPERS}::Object::new(node)?;\n        let value = Self {\n${reads.join("")}        };\n        object.finish()?;\n        Ok(value)\n`,
+  );
+  if (derived) {
+    return `${DERIVE_DATA}\n#[serde(rename_all = "camelCase")]\npub struct ${decl.name} ${body}\n\n${decode}`;
   }
-  const derive = DERIVE_DATA.replace("Serialize, ", "");
-  return `${derive}\n#[serde(${serde})]\npub struct ${decl.name} ${body}\n\n${restSerialize(decl, seen)}`;
+  const derive = DERIVE_DATA.replace(", Serialize", "");
+  return `${derive}\npub struct ${decl.name} ${body}\n\n${restSerialize(decl, seen)}\n${decode}`;
 }
 
 /**
@@ -419,12 +380,12 @@ function restSerialize(decl: StructDecl, idents: ReadonlySet<string>): string {
   const names = [...idents];
   const entries = decl.fields.map((f, i) => {
     const ident = names[i] ?? "";
-    const key = JSON.stringify(f.name);
+    const key = rustString(f.name);
     return f.required
       ? `        map.serialize_entry(${key}, &self.${ident})?;\n`
       : `        if let Some(value) = &self.${ident} {\n            map.serialize_entry(${key}, value)?;\n        }\n`;
   });
-  const named = decl.fields.map((f) => JSON.stringify(f.name)).join(", ");
+  const named = decl.fields.map((f) => rustString(f.name)).join(", ");
   return (
     `impl Serialize for ${decl.name} {\n` +
     `    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {\n` +
@@ -442,7 +403,8 @@ function restSerialize(decl: StructDecl, idents: ReadonlySet<string>): string {
   );
 }
 
-function field(f: Field, decl: StructDecl, seen: Set<string>): string {
+/** One field. `serde` is false for a struct that serializes by hand, which takes no serde attributes. */
+function field(f: Field, decl: StructDecl, seen: Set<string>, serde: boolean): string {
   const ident = fieldIdent(f.name, decl.path);
   if (seen.has(ident))
     throw new CodegenError(
@@ -453,126 +415,108 @@ function field(f: Field, decl: StructDecl, seen: Set<string>): string {
     );
   seen.add(ident);
   const attrs: string[] = [];
-  if (serdeCamel(ident) !== f.name) attrs.push(`rename = ${JSON.stringify(f.name)}`);
+  if (serdeCamel(ident) !== f.name) attrs.push(`rename = ${rustString(f.name)}`);
   let type = typeText(f.type);
   if (f.boxed) type = `Box<${type}>`;
   if (!f.required) {
-    attrs.push('default, deserialize_with = "present", skip_serializing_if = "Option::is_none"');
+    attrs.push('skip_serializing_if = "Option::is_none"');
     type = `Option<${type}>`;
   }
-  const attr = attrs.length === 0 ? "" : `    #[serde(${attrs.join(", ")})]\n`;
+  const attr = !serde || attrs.length === 0 ? "" : `    #[serde(${attrs.join(", ")})]\n`;
   const text = f.doc === "" ? [`The \`${f.name}\` key.`] : f.doc.split("\n");
   return `${docs(text, "    ", [])}${attr}    pub ${ident}: ${type},\n`;
 }
 
+/**
+ * An enum of strings, ordered by its JSON value rather than by variant, so a map keyed by it
+ * encodes its keys in code point order, as Go and TypeScript do.
+ */
 function enumeration(decl: EnumDecl): string {
   const seen = new Set<string>();
-  const variants = decl.values.map((value) => {
-    const name = unique(variantName(value), seen, decl.path);
-    return `    /// \`${value}\`\n    #[serde(rename = ${JSON.stringify(value)})]\n    ${name},\n`;
-  });
-  return `${DERIVE_ENUM}\npub enum ${decl.name} {\n${variants.join("")}}\n`;
+  const variants = decl.values.map((value) => ({
+    value,
+    name: unique(variantName(value), seen, decl.path),
+  }));
+  const lines = variants.map(
+    (v) => `    /// \`${v.value}\`\n    #[serde(rename = ${rustString(v.value)})]\n    ${v.name},\n`,
+  );
+  const texts = variants.map((v) => `            Self::${v.name} => ${rustString(v.value)},\n`);
+  const arms = variants.map((v) => `            ${rustString(v.value)} => Ok(Self::${v.name}),\n`);
+  const values = variants.map((v) => rustString(v.value)).join(", ");
+  return (
+    `${DERIVE_ENUM}\npub enum ${decl.name} {\n${lines.join("")}}\n\n` +
+    `impl ${decl.name} {\n` +
+    `    /// The value as it is in JSON.\n` +
+    `    #[must_use]\n` +
+    `    pub const fn as_str(self) -> &'static str {\n` +
+    `        match self {\n${texts.join("")}        }\n    }\n}\n\n` +
+    `/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in\n` +
+    `/// the order Go and TypeScript write them.\n` +
+    `impl Ord for ${decl.name} {\n` +
+    `    fn cmp(&self, other: &Self) -> std::cmp::Ordering {\n` +
+    `        self.as_str().cmp(other.as_str())\n    }\n}\n\n` +
+    `impl PartialOrd for ${decl.name} {\n` +
+    `    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {\n` +
+    `        Some(self.cmp(other))\n    }\n}\n\n` +
+    decodeImpl(
+      decl.name,
+      `        match ${HELPERS}::string(node)? {\n${arms.join("")}` +
+        `            other => Err(${HELPERS}::not_in_enum(other, &[${values}])),\n        }\n`,
+    )
+  );
 }
 
+/** A tagged union, which reads the tag and decodes only the branch it names. */
 function tagged(decl: TaggedDecl): string {
   const seen = new Set<string>();
   const variants = decl.variants.map((v) => ({
     ...v,
     name: unique(variantName(v.value), seen, decl.path),
+    text: v.boxed ? `Box<${v.type}>` : v.type,
   }));
   const lines = variants.map(
-    (v) =>
-      `    /// The \`${v.value}\` branch.\n    ${v.name}(${v.boxed ? `Box<${v.type}>` : v.type}),\n`,
+    (v) => `    /// The \`${v.value}\` branch.\n    ${v.name}(${v.text}),\n`,
   );
-  const tag = JSON.stringify(decl.tag);
+  const tag = rustString(decl.tag);
   const arms = variants.map(
     (v) =>
-      `            ${JSON.stringify(v.value)} => variant(value, ${tag}, ${JSON.stringify(v.value)}).map(Self::${v.name}),\n`,
+      `            ${rustString(v.value)} => <${v.text} as ${HELPERS}::Decode>::decode_node(node).map(Self::${v.name}),\n`,
   );
-  const names = variants.map((v) => JSON.stringify(v.value)).join(", ");
+  const tags = variants.map((v) => rustString(v.value)).join(", ");
   return (
-    `#[derive(Debug, Clone, PartialEq, Eq, Serialize)]\n#[serde(untagged)]\npub enum ${decl.name} {\n${lines.join("")}}\n\n` +
-    `impl<'de> Deserialize<'de> for ${decl.name} {\n` +
-    `    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n` +
-    `        let value = serde_json::Value::deserialize(deserializer)?;\n` +
-    `        match tag::<D::Error>(&value, ${tag})?.as_str() {\n${arms.join("")}` +
-    `            other => Err(serde::de::Error::unknown_variant(other, &[${names}])),\n` +
-    `        }\n    }\n}\n`
+    `${DERIVE_DATA}\n#[serde(untagged)]\npub enum ${decl.name} {\n${lines.join("")}}\n\n` +
+    decodeImpl(
+      decl.name,
+      `        match ${HELPERS}::tag(node, ${tag})? {\n${arms.join("")}` +
+        `            other => Err(${HELPERS}::bad_tag(${tag}, other, &[${tags}])),\n        }\n`,
+    )
   );
 }
 
 /**
- * An untagged union decodes by the JSON kind of the value first, then tries the variants that
- * take that kind, in order. serde's own untagged decoding would let a struct variant read a JSON
- * array as its fields in order, so a one entry list like `["id_…"]` would decode as a struct.
+ * An untagged union, which tries the variants in order and keeps the first that decodes, like
+ * Go and TypeScript. When none does, it fails naming the union.
  */
-function untagged(model: Model, decl: UntaggedDecl): string {
+function untagged(decl: UntaggedDecl): string {
   const seen = new Set<string>();
   const variants = decl.variants.map((v) => {
     const name = unique(v.name, seen, decl.path);
     const type = v.boxed ? `Box<${typeText(v.type)}>` : typeText(v.type);
-    return { name, type, text: typeText(v.type), kinds: jsonKinds(model, v.type) };
+    return { name, type, text: typeText(v.type) };
   });
   const lines = variants.map((v) => `    /// A \`${v.text}\`.\n    ${v.name}(${v.type}),\n`);
-  const tries = variants.map((v) => {
-    const checks = [...v.kinds].sort(compare).map((kind) => `value.is_${kind}()`);
-    const decode = `let Ok(inner) = <${v.type}>::deserialize(&value)`;
-    const condition = v.kinds.has("any")
-      ? decode
-      : `${checks.length === 1 ? (checks[0] ?? "") : `(${checks.join(" || ")})`}\n            && ${decode}\n       `;
-    return `        if ${condition} {\n            return Ok(Self::${v.name}(inner));\n        }\n`;
-  });
-  return (
-    `${DERIVE_DATA.replace(", Deserialize", "")}\n#[serde(untagged)]\npub enum ${decl.name} {\n${lines.join("")}}\n\n` +
-    `impl<'de> Deserialize<'de> for ${decl.name} {\n` +
-    `    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n` +
-    `        let value = serde_json::Value::deserialize(deserializer)?;\n${tries.join("")}` +
-    `        Err(serde::de::Error::custom(\n            "data did not match any variant of untagged enum ${decl.name}",\n        ))\n` +
-    `    }\n}\n`
+  const tries = variants.map(
+    (v) =>
+      `        if let Ok(value) = <${v.type} as ${HELPERS}::Decode>::decode_node(node) {\n` +
+      `            return Ok(Self::${v.name}(value));\n        }\n`,
   );
-}
-
-/** The JSON kinds a type decodes from, as `serde_json::Value`'s `is_` names, or `any`. */
-function jsonKinds(model: Model, type: TypeExpr, depth = 0): Set<string> {
-  switch (type.kind) {
-    case "string":
-      return new Set(["string"]);
-    case "integer":
-    case "number":
-      return new Set(["number"]);
-    case "boolean":
-      return new Set(["boolean"]);
-    case "literal":
-      return new Set([typeof type.value === "boolean" ? "boolean" : "number"]);
-    case "array":
-      return new Set(["array"]);
-    case "map":
-      return new Set(["object"]);
-    case "any":
-    case "nonNull":
-      return new Set(["any"]);
-    case "ref": {
-      // The builder resolves every ref and rejects alias cycles, so neither throw is reachable
-      // from schemas; failing beats dropping the kind check for a variant.
-      const decl = model.decls.find((d) => d.name === type.name);
-      if (decl === undefined)
-        throw new CodegenError(type.name, "internal", "a union variant names no type");
-      if (depth > model.decls.length)
-        throw new CodegenError(type.name, "internal", "a union variant's kinds don't resolve");
-      switch (decl.kind) {
-        case "struct":
-        case "tagged":
-          return new Set(["object"]);
-        case "enum":
-        case "id":
-          return new Set(["string"]);
-        case "alias":
-          return jsonKinds(model, decl.type, depth + 1);
-        case "untagged":
-          return new Set(decl.variants.flatMap((v) => [...jsonKinds(model, v.type, depth + 1)]));
-      }
-    }
-  }
+  return (
+    `${DERIVE_DATA}\n#[serde(untagged)]\npub enum ${decl.name} {\n${lines.join("")}}\n\n` +
+    decodeImpl(
+      decl.name,
+      `${tries.join("")}        Err(${HELPERS}::mismatch(${rustString(decl.name)}, node))\n`,
+    )
+  );
 }
 
 function unique(name: string, seen: Set<string>, path: string): string {
@@ -671,24 +615,31 @@ export function emitRustFixtures(
 
 //! Maps each fixture folder to the type generated for it, for the fixture tests.
 
+use ${crate}::{Decode, DecodeError};
 use serde_json::Value;
+
+/// Why a fixture didn't round trip.
+#[derive(Debug)]
+pub enum Failure {
+    /// It didn't decode.
+    Decode(DecodeError),
+    /// It decoded, then didn't encode.
+    Encode(String),
+}
 
 /// Decodes \`json\` as the type generated for \`schema\` and \`def\` (\`None\` for the root), then
 /// encodes it again. Returns \`None\` when no type is generated for that pair.
 #[allow(clippy::too_many_lines, reason = "one arm per generated def")]
-pub fn round_trip(schema: &str, def: Option<&str>, json: &str) -> Option<Result<Value, String>> {
+pub fn round_trip(schema: &str, def: Option<&str>, json: &[u8]) -> Option<Result<Value, Failure>> {
     let result = match (schema, def) {
 ${arms.join("")}        _ => return None,
     };
     Some(result)
 }
 
-fn run<T>(json: &str) -> Result<Value, String>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let decoded: T = serde_json::from_str(json).map_err(|error| error.to_string())?;
-    serde_json::to_value(decoded).map_err(|error| error.to_string())
+fn run<T: Decode + serde::Serialize>(json: &[u8]) -> Result<Value, Failure> {
+    let decoded = T::from_json(json).map_err(Failure::Decode)?;
+    serde_json::to_value(decoded).map_err(|error| Failure::Encode(error.to_string()))
 }
 `;
 }

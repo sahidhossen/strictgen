@@ -2,12 +2,22 @@
 
 //! Maps each fixture folder to the type generated for it, for the fixture tests.
 
+use example_basic::{Decode, DecodeError};
 use serde_json::Value;
+
+/// Why a fixture didn't round trip.
+#[derive(Debug)]
+pub enum Failure {
+    /// It didn't decode.
+    Decode(DecodeError),
+    /// It decoded, then didn't encode.
+    Encode(String),
+}
 
 /// Decodes `json` as the type generated for `schema` and `def` (`None` for the root), then
 /// encodes it again. Returns `None` when no type is generated for that pair.
 #[allow(clippy::too_many_lines, reason = "one arm per generated def")]
-pub fn round_trip(schema: &str, def: Option<&str>, json: &str) -> Option<Result<Value, String>> {
+pub fn round_trip(schema: &str, def: Option<&str>, json: &[u8]) -> Option<Result<Value, Failure>> {
     let result = match (schema, def) {
         ("common", Some("eventId")) => run::<example_basic::EventId>(json),
         ("common", Some("timestamp")) => run::<example_basic::Timestamp>(json),
@@ -27,10 +37,7 @@ pub fn round_trip(schema: &str, def: Option<&str>, json: &str) -> Option<Result<
     Some(result)
 }
 
-fn run<T>(json: &str) -> Result<Value, String>
-where
-    T: serde::de::DeserializeOwned + serde::Serialize,
-{
-    let decoded: T = serde_json::from_str(json).map_err(|error| error.to_string())?;
-    serde_json::to_value(decoded).map_err(|error| error.to_string())
+fn run<T: Decode + serde::Serialize>(json: &[u8]) -> Result<Value, Failure> {
+    let decoded = T::from_json(json).map_err(Failure::Decode)?;
+    serde_json::to_value(decoded).map_err(|error| Failure::Encode(error.to_string()))
 }

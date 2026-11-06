@@ -2,14 +2,14 @@
 
 //! Types for `payment-method.json`.
 
-use super::helpers::{present, tag, variant};
-use serde::{Deserialize, Deserializer, Serialize};
+use super::helpers;
+use serde::Serialize;
 
 /// A bank account, debited directly.
 ///
 /// Schema: `payment-method.json#/$defs/bankAccount`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BankAccount {
     /// The `type` key.
     pub r#type: BankAccountType,
@@ -19,19 +19,65 @@ pub struct BankAccount {
     pub iban: String,
 }
 
+impl helpers::Decode for BankAccount {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            r#type: object.required("type")?,
+            holder_name: object.required("holderName")?,
+            iban: object.required("iban")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
+}
+
 /// Schema: `payment-method.json#/$defs/bankAccount/properties/type`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum BankAccountType {
     /// `bank_account`
     #[serde(rename = "bank_account")]
     BankAccount,
 }
 
+impl BankAccountType {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::BankAccount => "bank_account",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for BankAccountType {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for BankAccountType {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for BankAccountType {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "bank_account" => Ok(Self::BankAccount),
+            other => Err(helpers::not_in_enum(other, &["bank_account"])),
+        }
+    }
+}
+
 /// A payment card.
 ///
 /// Schema: `payment-method.json#/$defs/card`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Card {
     /// The `type` key.
     pub r#type: CardType,
@@ -45,10 +91,25 @@ pub struct Card {
     pub exp_year: i64,
 }
 
+impl helpers::Decode for Card {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            r#type: object.required("type")?,
+            brand: object.required("brand")?,
+            last4: object.required("last4")?,
+            exp_month: object.required("expMonth")?,
+            exp_year: object.required("expYear")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
+}
+
 /// The card network.
 ///
 /// Schema: `payment-method.json#/$defs/card/properties/brand`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum CardBrand {
     /// `visa`
     #[serde(rename = "visa")]
@@ -61,12 +122,82 @@ pub enum CardBrand {
     Amex,
 }
 
+impl CardBrand {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Visa => "visa",
+            Self::Mastercard => "mastercard",
+            Self::Amex => "amex",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for CardBrand {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for CardBrand {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for CardBrand {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "visa" => Ok(Self::Visa),
+            "mastercard" => Ok(Self::Mastercard),
+            "amex" => Ok(Self::Amex),
+            other => Err(helpers::not_in_enum(other, &["visa", "mastercard", "amex"])),
+        }
+    }
+}
+
 /// Schema: `payment-method.json#/$defs/card/properties/type`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum CardType {
     /// `card`
     #[serde(rename = "card")]
     Card,
+}
+
+impl CardType {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Card => "card",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for CardType {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for CardType {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for CardType {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "card" => Ok(Self::Card),
+            other => Err(helpers::not_in_enum(other, &["card"])),
+        }
+    }
 }
 
 /// A way to pay, picked by its `type` key.
@@ -83,14 +214,16 @@ pub enum PaymentMethod {
     Wallet(Wallet),
 }
 
-impl<'de> Deserialize<'de> for PaymentMethod {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        match tag::<D::Error>(&value, "type")?.as_str() {
-            "card" => variant(value, "type", "card").map(Self::Card),
-            "bank_account" => variant(value, "type", "bank_account").map(Self::BankAccount),
-            "wallet" => variant(value, "type", "wallet").map(Self::Wallet),
-            other => Err(serde::de::Error::unknown_variant(
+impl helpers::Decode for PaymentMethod {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::tag(node, "type")? {
+            "card" => <Card as helpers::Decode>::decode_node(node).map(Self::Card),
+            "bank_account" => {
+                <BankAccount as helpers::Decode>::decode_node(node).map(Self::BankAccount)
+            }
+            "wallet" => <Wallet as helpers::Decode>::decode_node(node).map(Self::Wallet),
+            other => Err(helpers::bad_tag(
+                "type",
                 other,
                 &["card", "bank_account", "wallet"],
             )),
@@ -101,26 +234,35 @@ impl<'de> Deserialize<'de> for PaymentMethod {
 /// A digital wallet.
 ///
 /// Schema: `payment-method.json#/$defs/wallet`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Wallet {
     /// The `type` key.
     pub r#type: WalletType,
     /// The wallet provider.
     pub provider: WalletProvider,
     /// The wallet's email address, when the provider shares it.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub email: Option<String>,
+}
+
+impl helpers::Decode for Wallet {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            r#type: object.required("type")?,
+            provider: object.required("provider")?,
+            email: object.optional("email")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
 }
 
 /// The wallet provider.
 ///
 /// Schema: `payment-method.json#/$defs/wallet/properties/provider`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum WalletProvider {
     /// `apple_pay`
     #[serde(rename = "apple_pay")]
@@ -130,10 +272,78 @@ pub enum WalletProvider {
     GooglePay,
 }
 
+impl WalletProvider {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::ApplePay => "apple_pay",
+            Self::GooglePay => "google_pay",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for WalletProvider {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for WalletProvider {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for WalletProvider {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "apple_pay" => Ok(Self::ApplePay),
+            "google_pay" => Ok(Self::GooglePay),
+            other => Err(helpers::not_in_enum(other, &["apple_pay", "google_pay"])),
+        }
+    }
+}
+
 /// Schema: `payment-method.json#/$defs/wallet/properties/type`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum WalletType {
     /// `wallet`
     #[serde(rename = "wallet")]
     Wallet,
+}
+
+impl WalletType {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Wallet => "wallet",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for WalletType {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for WalletType {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for WalletType {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "wallet" => Ok(Self::Wallet),
+            other => Err(helpers::not_in_enum(other, &["wallet"])),
+        }
+    }
 }

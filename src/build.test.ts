@@ -110,12 +110,13 @@ describe("closed objects", () => {
 
   it("reject unknown keys in Rust and mark optional keys in both languages", () => {
     const rust = rustOf(model);
-    expect(rust).toContain(
-      '#[serde(rename_all = "camelCase", deny_unknown_fields)]\npub struct Point {',
-    );
+    expect(rust).toContain('#[serde(rename_all = "camelCase")]\npub struct Point {');
     expect(rust).toContain("    pub x: i64,\n");
     expect(rust).toContain(
-      '    #[serde(default, deserialize_with = "present", skip_serializing_if = "Option::is_none")]\n    pub y: Option<i64>,\n',
+      '    #[serde(skip_serializing_if = "Option::is_none")]\n    pub y: Option<i64>,\n',
+    );
+    expect(rust).toContain(
+      '            x: object.required("x")?,\n            y: object.optional("y")?,\n        };\n        object.finish()?;\n',
     );
     const ts = tsOf(model);
     expect(ts).toContain(
@@ -230,12 +231,12 @@ describe("const-tagged oneOf", () => {
 
   it("decodes in Rust by reading the tag first", () => {
     const rust = rustOf(model);
-    expect(rust).toContain("impl<'de> Deserialize<'de> for Payment {");
-    expect(rust).toContain('match tag::<D::Error>(&value, "type")?.as_str() {');
-    expect(rust).toContain('"card" => variant(value, "type", "card").map(Self::Card),');
+    expect(rust).toContain("impl helpers::Decode for Payment {");
+    expect(rust).toContain('match helpers::tag(node, "type")? {');
     expect(rust).toContain(
-      'other => Err(serde::de::Error::unknown_variant(other, &["card", "wire"])),',
+      '"card" => <CardPayment as helpers::Decode>::decode_node(node).map(Self::Card),',
     );
+    expect(rust).toContain('other => Err(helpers::bad_tag("type", other, &["card", "wire"])),');
   });
 
   it("is a discriminated union in TypeScript", () => {
@@ -439,8 +440,8 @@ describe("maps", () => {
       rest: { key: { kind: "ref", name: "CurrencyCode" }, value: { kind: "string" } },
     });
     const rust = rustOf(priced);
-    expect(rust).toContain("    #[serde(flatten)]\n    pub rest: BTreeMap<CurrencyCode, String>,");
-    expect(rust).not.toContain("deny_unknown_fields");
+    expect(rust).toContain("    pub rest: BTreeMap<CurrencyCode, String>,");
+    expect(rust).toContain("            rest: object.rest()?,\n");
     expect(tsOf(priced)).toContain("  default: string;\n  [key: string]: string;\n");
   });
 });
@@ -870,7 +871,7 @@ describe("ids", () => {
     expect(find(model, "Label")).toMatchObject({ kind: "alias" });
     expect(rustOf(model)).toContain("#[serde(transparent)]\npub struct OrderId(pub String);");
     expect(rustOf(model)).toContain(
-      "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]\n#[serde(transparent)]",
+      "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]\n#[serde(transparent)]",
     );
     expect(tsOf(model)).toContain(
       'export type OrderId = string & { readonly __brand: "OrderId" };',
@@ -992,7 +993,7 @@ describe("named keys beside a map of the other keys", () => {
     expect(rust).toContain('        map.serialize_entry("default", &self.default)?;\n');
     expect(rust).toContain("        if let Some(value) = &self.size {\n");
     expect(rust).toContain('                && ["default", "size"].contains(&name.as_str())\n');
-    expect(rust).toContain("#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]\n");
+    expect(rust).toContain("#[derive(Debug, Clone, PartialEq, Eq)]\npub struct Prices {");
   });
 });
 
@@ -1021,12 +1022,10 @@ describe("one file per schema", () => {
     const itemList = out[3]?.contents ?? "";
     expect(itemList).toContain("//! Types for `item-list.json`.\n");
     expect(itemList).toContain(
-      "use super::common::{AnyValue, OrderId};\nuse super::helpers::present;\nuse serde::{Deserialize, Serialize};\nuse std::collections::BTreeMap;\n",
+      "use super::common::{AnyValue, OrderId};\nuse super::helpers;\nuse serde::Serialize;\nuse std::collections::BTreeMap;\n",
     );
     const common = out[2]?.contents ?? "";
-    expect(common).toContain(
-      "use super::helpers::ConstBool;\nuse serde::{Deserialize, Serialize};\n\n",
-    );
+    expect(common).toContain("use super::helpers::{self, ConstBool};\nuse serde::Serialize;\n\n");
   });
 
   it("declares the modules in mod.rs with the clippy allows and re-exports every type", () => {
@@ -1034,17 +1033,21 @@ describe("one file per schema", () => {
     expect(root).toContain("#![allow(clippy::doc_markdown");
     expect(root).toContain("mod helpers;\nmod common;\nmod item_list;\n");
     expect(root).toContain(
-      "pub use common::*;\npub use item_list::*;\npub use helpers::{ConstBool, NonNullJson};\n",
+      "pub use common::*;\npub use item_list::*;\npub use helpers::{ConstBool, Decode, DecodeError, NonNullJson};\n",
     );
   });
 
   it("keeps the shared Rust helpers in one module, visible to the others", () => {
     const helpers = emitRust(model)[1]?.contents ?? "";
     expect(helpers).toContain("pub struct NonNullJson(pub serde_json::Value);");
-    expect(helpers).toContain("pub(super) fn present<'de, D, T>");
+    expect(helpers).toContain("pub(super) struct Object<'n, 'a> {");
     expect(helpers).toContain("pub struct ConstBool<const B: bool>;");
+    expect(helpers).toContain("pub trait Decode: Sized {");
+    // Only the parts some declaration uses, so the module has no dead code.
     expect(helpers).not.toContain("ConstInt");
     expect(helpers).not.toContain("fn tag");
+    expect(helpers).not.toContain("fn rest");
+    expect(helpers).not.toContain("fn not_in_enum");
   });
 
   it("refuses a schema without a Rust module name", () => {
