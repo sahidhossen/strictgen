@@ -35,11 +35,12 @@ strictgen explain user.json#/$defs/address   # show how one type maps in each la
 strictgen fix [--write]   # rewrite the schemas into the supported subset, as a diff or in place
 strictgen examples Order --count 3 [--invalid] [--seed 7] [--array]   # print sample payloads
 strictgen docs [--format markdown|html]   # write a page per type into docs.out
+strictgen breaking --base main   # list changes since main and who each one breaks
 ```
 
 Every command takes `--config <path>` to read a config other than `strictgen.json` in the current folder, and `--help`. `strictgen --version` prints the version.
 
-Exit codes: `0` success, `1` generation failed or `check` found a difference, `2` bad usage or a config error. Errors name the file, and the option or JSON pointer, with one line per problem.
+Exit codes: `0` success, `1` generation failed, `check` found a difference or `breaking` found a breaking change, `2` bad usage or a config error. Errors name the file, and the option or JSON pointer, with one line per problem.
 
 A schema the generator can't map fails with its location, a stable rule id, the reason and, when there is an obvious fix, a hint:
 
@@ -54,6 +55,10 @@ The rule ids, like `open-object`, `unsupported-keyword`, `unsupported-format`, `
 `generate` runs `rustfmt` on the Rust output and `gofmt` on the Go output, in memory, and writes only when every file formatted cleanly. Turn either off with `"format": { "rust": "none", "go": "none" }`. TypeScript output is not formatted. A formatter that isn't installed, or a `rustfmt` whose `--version` fails (a rustup proxy without the component), is skipped with a notice. One that fails, prints nothing, prints something that doesn't start with the generated header, or runs longer than 60 seconds stops with exit code 1 and its output, and nothing is written.
 
 `check` formats in memory the same way before comparing, so it needs every configured formatter installed and fails without one. To give the same result on every machine, `rustfmt` runs with its defaults and edition 2024 and ignores any `rustfmt.toml`, and both formatters read the file on stdin.
+
+### `breaking`
+
+`strictgen breaking --base <ref or folder>` compares the schemas with an older version and lists every change by who it breaks: all consumers, strict consumers only (an added optional field, which `report` mode accepts), producers, or nobody. The comparison runs on the generated model, so renaming a def or an internal name doesn't show, and each change has its JSON pointer in both versions. A ref is read from the repository without a checkout. It exits 1 when anything breaks; `--json` prints a stable form for CI. [`docs/breaking-changes.md`](docs/breaking-changes.md) has the full rule table.
 
 ### `dirs`
 

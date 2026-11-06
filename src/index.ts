@@ -75,3 +75,5 @@ export { isRuleId, RULE_IDS, RULES } from "./rules.js";
 export type { Io } from "./run.js";
 export { EXIT_FAILED, EXIT_OK, EXIT_USAGE, run, version } from "./run.js";
 export { configTargets, mainOptions, RUST_FIXTURES } from "./targets.js";
+export type { Breaking, Change, ChangeKind, Impact } from "./breaking.js";
+export { breaking, BreakingError, breakingJson, breakingLines, classify, diffModels } from "./breaking.js";

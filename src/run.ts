@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { parseArgs } from "node:util";
 
+import { BreakingError, breaking, breakingJson, breakingLines, breaksAnything } from "./breaking.js";
 import { differences } from "./check.js";
 import type { Config } from "./config.js";
 import { ConfigError, configFolders, DOCS_FORMATS, loadConfig } from "./config.js";
@@ -113,6 +114,23 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       HELP_OPTION,
     ],
   },
+  breaking: {
+    summary: "Compare the schemas with an older version and say who each change breaks",
+    usage: "strictgen breaking --base <git ref or folder> [--json] [--config <path>]",
+    details: [
+      "Compares the schemas with the ones in a folder, or at a git ref of the repository that",
+      "holds the config (read with git, nothing is checked out), and lists every change by who it",
+      "breaks: all consumers, strict consumers, producers, or nobody. A folder wins over a ref of",
+      "the same name. Exits 1 when anything breaks, 0 otherwise, and 2 for a base that can't be",
+      "found. docs/breaking-changes.md has the rules.",
+    ],
+    options: [
+      "  --base <ref|dir> The older version: a git ref, or a project or schemas folder",
+      "  --json           Print the changes as JSON",
+      CONFIG_OPTION,
+      HELP_OPTION,
+    ],
+  },
   dirs: {
     summary: "Print the folders the targets write to",
     usage: "strictgen dirs [--json] [--config <path>]",
@@ -149,6 +167,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
 
 const OPTIONS = {
   config: { type: "string" },
+  base: { type: "string" },
   json: { type: "boolean" },
   write: { type: "boolean" },
   help: { type: "boolean", short: "h" },
@@ -192,7 +211,8 @@ function mainHelp(): string[] {
     "  --version        Print the version",
     "",
     "Run strictgen <command> --help for a command's options.",
-    "Exit codes: 0 success, 1 generation failed or check found a difference, 2 bad usage or config.",
+    "Exit codes: 0 success, 1 generation failed, check found a difference or breaking found a",
+    "breaking change, 2 bad usage or config.",
   ];
 }
 
@@ -263,8 +283,14 @@ function dispatch(argv: readonly string[], io: Io): number {
     for (const line of lines) io.out(line);
     return EXIT_OK;
   }
-  if (values.json === true && name !== "dirs" && name !== "explain") {
-    throw new UsageError("--json only applies to strictgen dirs and strictgen explain");
+  if (values.json === true && name !== "dirs" && name !== "explain" && name !== "breaking") {
+    throw new UsageError("--json only applies to strictgen dirs, explain and breaking");
+  }
+  if (values.base !== undefined && name !== "breaking") {
+    throw new UsageError("--base only applies to strictgen breaking");
+  }
+  if (name === "breaking" && (values.base === undefined || values.base === "")) {
+    throw new UsageError("breaking needs --base <git ref or folder>, like --base main");
   }
   if (values.write === true && name !== "fix") {
     throw new UsageError("--write only applies to strictgen fix");
@@ -309,6 +335,8 @@ function dispatch(argv: readonly string[], io: Io): number {
       return check(config, io);
     case "fix":
       return fixCommand(config, io, values.write === true);
+    case "breaking":
+      return breakingCommand(config, io, values.base ?? "", values.json === true);
     case "dirs":
       return dirs(config, io, values.json === true);
     default:
@@ -322,6 +350,10 @@ function report(error: unknown, io: Io): number {
     io.err(`error: ${error.message}`);
     io.err("Run strictgen --help for usage.");
     return EXIT_USAGE;
+  }
+  if (error instanceof BreakingError) {
+    io.err(`error: ${error.message}`);
+    return error.exit;
   }
   if (error instanceof ConfigError || error instanceof ExplainError || error instanceof UnknownTypeError) {
     io.err(`error: ${error.message}`);
@@ -405,6 +437,13 @@ function docs(config: Config, io: Io, format: DocsFormat | undefined): number {
   const what = written.count === 1 ? "1 docs file" : `${String(written.count)} docs files`;
   io.out(`Wrote ${what} to ${shown(io.cwd, written.dir)}.`);
   return EXIT_OK;
+}
+
+function breakingCommand(config: Config, io: Io, base: string, json: boolean): number {
+  const result = breaking(config, base, io.cwd, io.env);
+  if (json) io.out(JSON.stringify(breakingJson(result), null, 2));
+  else for (const line of breakingLines(result)) io.out(line);
+  return breaksAnything(result) ? EXIT_FAILED : EXIT_OK;
 }
 
 function dirs(config: Config, io: Io, json: boolean): number {

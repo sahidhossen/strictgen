@@ -151,11 +151,11 @@ describe("help, version and usage", () => {
   });
 
   it.each([
-    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, examples, docs, dirs, fix'],
+    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, examples, docs, breaking, dirs, fix'],
     [["--bogus"], "error: Unknown option '--bogus'"],
     [["generate", "extra"], 'error: unexpected argument "extra"'],
-    [["--json"], "error: --json only applies to strictgen dirs and strictgen explain"],
-    [["check", "--json"], "error: --json only applies to strictgen dirs and strictgen explain"],
+    [["--json"], "error: --json only applies to strictgen dirs, explain and breaking"],
+    [["check", "--json"], "error: --json only applies to strictgen dirs, explain and breaking"],
     [["explain"], "error: explain needs a schema location, like user.json#/$defs/address"],
     [["explain", "order.json", "extra"], 'error: unexpected argument "extra"'],
     [["--config"], "error: Option '--config <value>' argument missing"],
