@@ -150,7 +150,8 @@ function isDigit(c: string | undefined): boolean {
  * invalid JSON at offset 12: key "id" given twice.
  *
  * Text is already decoded, so invalid UTF-8 can only show as a lone surrogate. Decode bytes
- * with new TextDecoder("utf-8", { fatal: true }) to reject the rest.
+ * with new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }) to reject the rest. Without
+ * ignoreBOM, the decoder drops a leading byte order mark, which Rust and Go reject.
  */
 class Reader {
   /** Numbers that are not spelled as integers, by JSON Pointer. */

@@ -34,7 +34,7 @@ A failure is a `DecodeError` whose `path` is the JSON Pointer of the value being
 /items/0: invalid JSON at offset 31: key "sku" given twice
 ```
 
-The text is a JavaScript string, so bytes are already decoded. Decode them with `new TextDecoder("utf-8", { fatal: true })`, which fails on invalid UTF-8, as Rust and Go do; a non-fatal decoder turns it into U+FFFD, which can't be told apart afterwards.
+The text is a JavaScript string, so bytes are already decoded. Decode them with `new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })`, which fails on invalid UTF-8 and keeps a leading byte order mark, so the reader rejects it, as Rust and Go do. A non-fatal decoder turns it into U+FFFD, which can't be told apart afterwards.
 
 ## IDs
 

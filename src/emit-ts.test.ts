@@ -1295,6 +1295,14 @@ describe("TypeScript strict JSON reader", () => {
     expect(m.fn("tryDecodeCountFromJson")("[")).toMatchObject({ ok: false });
   });
 
+  it("reject a leading byte order mark kept by the documented TextDecoder, as Rust and Go do", () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x37]);
+    const kept = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    expect(failureFromJson(m, "Count", kept)).toBe("invalid JSON at offset 0: invalid value");
+    // Without ignoreBOM the decoder drops the mark, and the text reads as 7.
+    expect(read("Count", new TextDecoder("utf-8", { fatal: true }).decode(bytes))).toBe(7);
+  });
+
   it("fail on input that is not text", () => {
     expect(failureFromJson(m, "Count", 12 as unknown as string)).toBe("expected JSON text, found a number");
   });
@@ -1343,7 +1351,7 @@ describe("TypeScript example fixtures", () => {
       const bytes = readFileSync(join(root, ...parts));
       count++;
       if (kind === "valid") {
-        const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
         const value = m.fn(`decode${type}FromJson`)(text);
         const encoded = JSON.stringify(m.fn(`encode${type}`)(value));
         expect(JSON.parse(encoded), name).toEqual(JSON.parse(text));
@@ -1351,7 +1359,7 @@ describe("TypeScript example fixtures", () => {
       }
       let text: string;
       try {
-        text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
       } catch {
         // Not UTF-8, which Rust and Go reject too.
         continue;
