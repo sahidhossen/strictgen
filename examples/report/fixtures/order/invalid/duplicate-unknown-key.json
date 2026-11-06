@@ -1,0 +1,8 @@
+{
+  "id": "ord_7d2k",
+  "source": "web",
+  "source": "app",
+  "customer": { "name": "Ada", "email": "ada@example.com" },
+  "lines": [],
+  "payment": { "type": "card", "last4": "4242" }
+}

@@ -17,13 +17,163 @@ const CODE_CONSTANTS = ERROR_CODES.map(
 /** The match arms that give each code's title in messages. */
 const CODE_TITLES = ERROR_CODES.map((c) => `        "${c.code}" => "${c.title}",\n`).join("");
 
+/** The text-reading methods of the Decode trait in strict mode. */
+const FROM_JSON_STRICT = String.raw`    /// Decodes JSON text, given as a str or as bytes.
+    ///
+    /// # Errors
+    ///
+    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
+    fn from_json(json: impl AsRef<[u8]>) -> Result<Self, DecodeError> {
+        Self::decode_node(&parse(json.as_ref())?)
+    }`;
+
+/** The text-reading methods of the Decode trait in report mode. */
+const FROM_JSON_REPORT = String.raw`    /// Decodes JSON text, given as a str or as bytes. Unknown keys are accepted, and their paths
+    /// go to the hook set with [set_unknown_key_hook].
+    ///
+    /// # Errors
+    ///
+    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
+    fn from_json(json: impl AsRef<[u8]>) -> Result<Self, DecodeError> {
+        reported(json.as_ref()).map(|decoded| decoded.value)
+    }
+
+    /// Decodes JSON text like [Decode::from_json], and returns the value with the paths of its
+    /// unknown keys, in input order.
+    ///
+    /// # Errors
+    ///
+    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
+    fn report_from_json(json: impl AsRef<[u8]>) -> Result<Reported<Self>, DecodeError> {
+        reported(json.as_ref())
+    }`;
+
+/** What report mode adds to the core: Reported, the hook, the collector and input order. */
+const REPORT_CORE = String.raw`
+/// A decoded value and the paths of the unknown keys its input had.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Reported<T> {
+    /// The decoded value, which leaves the unknown keys out.
+    pub value: T,
+    /// The JSON Pointer of each unknown key, like /customer/nickname, in the order the keys
+    /// appear in the input. Empty when there are none.
+    pub unknown: Vec<String>,
+}
+
+/// A hook set_unknown_key_hook sets.
+type Hook = std::sync::Arc<dyn Fn(&[String]) + Send + Sync>;
+
+/// The hook every decode calls with the paths of its unknown keys.
+static HOOK: std::sync::RwLock<Option<Hook>> = std::sync::RwLock::new(None);
+
+/// Sets the one hook every decode calls with the paths of the unknown keys it accepted, for
+/// logging or counting them in one place. A decode calls it after the value decoded, only when
+/// there is at least one unknown key, and before it returns. It replaces the hook set before.
+pub fn set_unknown_key_hook(hook: impl Fn(&[String]) + Send + Sync + 'static) {
+    *HOOK.write().unwrap_or_else(std::sync::PoisonError::into_inner) = Some(std::sync::Arc::new(hook));
+}
+
+/// Removes the hook [set_unknown_key_hook] set.
+pub fn clear_unknown_key_hook() {
+    *HOOK.write().unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+}
+
+thread_local! {
+    /// While a decode runs on this thread: the byte offsets of the values of the unknown keys it
+    /// accepted so far, in decode order.
+    static UNKNOWN: std::cell::RefCell<Option<Vec<usize>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The collector of one decode on this thread. Dropping it restores the collector of the decode
+/// that was running before, even when decoding panics, so nothing notes into a stale one.
+struct Collecting {
+    saved: Option<Vec<usize>>,
+}
+
+impl Collecting {
+    /// Starts an empty collector, keeping the one before.
+    fn start() -> Self {
+        Self { saved: UNKNOWN.with(|cell| cell.replace(Some(Vec::new()))) }
+    }
+
+    /// Ends the collector, restores the one before, and returns the offsets it noted.
+    fn finish(self) -> Vec<usize> {
+        let offsets = UNKNOWN.with(|cell| cell.borrow_mut().take()).unwrap_or_default();
+        drop(self);
+        offsets
+    }
+}
+
+impl Drop for Collecting {
+    fn drop(&mut self) {
+        let saved = self.saved.take();
+        // The thread's storage may be gone when the thread exits; then there is nothing to restore.
+        let _ = UNKNOWN.try_with(|cell| cell.replace(saved));
+    }
+}
+
+/// Parses data once, decodes it as T, calls the hook and returns the value with the paths of
+/// its unknown keys.
+fn reported<T: Decode>(data: &[u8]) -> Result<Reported<T>, DecodeError> {
+    let root = parse(data)?;
+    let collecting = Collecting::start();
+    let result = T::decode_node(&root);
+    let mut offsets = collecting.finish();
+    let value = result?;
+    // Offsets sort the keys into input order.
+    offsets.sort_unstable();
+    let unknown: Vec<String> = offsets.into_iter().map(|at| path_to(&root, at)).collect();
+    if !unknown.is_empty() {
+        let hook = HOOK.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
+        if let Some(hook) = hook {
+            hook(&unknown);
+        }
+    }
+    Ok(Reported { value, unknown })
+}
+
+/// The JSON Pointer, under node, of the value that starts at the byte offset at. The children of
+/// a node are in input order, so the last one that starts at or before the offset holds it.
+fn path_to(mut node: &Node<'_>, at: usize) -> String {
+    let mut path = String::new();
+    while node.at != at {
+        match &node.kind {
+            Kind::Array(items) => {
+                let Some(i) = items.partition_point(|item| item.at <= at).checked_sub(1) else {
+                    break;
+                };
+                let Some(item) = items.get(i) else {
+                    break;
+                };
+                path.push_str(&pointer(&i.to_string()));
+                node = item;
+            }
+            Kind::Object(members) => {
+                let entries = &members.entries;
+                let Some(i) = entries.partition_point(|(_, item)| item.at <= at).checked_sub(1) else {
+                    break;
+                };
+                let Some((name, item)) = entries.get(i) else {
+                    break;
+                };
+                path.push_str(&pointer(name));
+                node = item;
+            }
+            _ => break,
+        }
+    }
+    path
+}
+`;
+
 /**
  * The part of the generated `helpers.rs` every output has: the error, the parser, the `Decode`
  * trait and its impls for the standard types. It is a raw template, so backslashes stand for
  * themselves. Go's helpers.go and TypeScript's helpers.ts follow the same rules, so the three
- * report the same errors.
+ * report the same errors. `report` adds what report mode needs.
  */
-export const RUST_HELPERS_CORE = String.raw`use std::borrow::Cow;
+export function rustHelpersCore(report: boolean): string {
+  return String.raw`use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 
@@ -508,18 +658,11 @@ impl<'a> Parser<'a> {
     }
 }
 
-/// A type strictgen generates, which decodes itself from JSON strictly: unknown keys, missing
+${report ? `${REPORT_CORE.trimStart()}\n` : ""}/// A type strictgen generates, which decodes itself from JSON strictly: ${report ? "missing" : "unknown keys, missing"}
 /// required keys, explicit nulls for optional keys, a key given twice and values of the wrong
-/// type fail with a [DecodeError], the same one Go and TypeScript report.
+/// type fail with a [DecodeError], the same one Go and TypeScript report.${report ? "\n/// Unknown keys are accepted and reported." : ""}
 pub trait Decode: Sized {
-    /// Decodes JSON text, given as a str or as bytes.
-    ///
-    /// # Errors
-    ///
-    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
-    fn from_json(json: impl AsRef<[u8]>) -> Result<Self, DecodeError> {
-        Self::decode_node(&parse(json.as_ref())?)
-    }
+${report ? FROM_JSON_REPORT : FROM_JSON_STRICT}
 
     /// Decodes a parsed value.
     ///
@@ -682,9 +825,53 @@ impl Decode for ${RUST_NON_NULL} {
     }
 }
 `;
+}
 
-/** The object decoder, for outputs with a struct. */
-export const RUST_HELPERS_OBJECT = String.raw`/// Reads the keys of a JSON object into a struct and tracks the keys it read.
+/** Object::finish in strict mode: a key that wasn't read fails. */
+const FINISH_STRICT = String.raw`    /// Fails on the first key, in input order, that wasn't read, at its own path.
+    pub(super) fn finish(self) -> Result<(), DecodeError> {
+        for ((name, _), used) in self.members.entries.iter().zip(&self.used) {
+            if !used {
+                return Err(DecodeError::new(DecodeError::UNKNOWN_KEY, None, None).at(name));
+            }
+        }
+        Ok(())
+    }`;
+
+/** Object::finish in report mode: a key that wasn't read is noted, unless forbidden names it. */
+const FINISH_REPORT = String.raw`    /// Notes each key, in input order, that wasn't read as unknown, for the decode that runs. A
+    /// key in forbidden, which a sibling branch of an exactly-one union names, still fails with
+    /// unknown_key at its own path.
+    pub(super) fn finish(self, forbidden: &[&str]) -> Result<(), DecodeError> {
+        for ((name, node), used) in self.members.entries.iter().zip(&self.used) {
+            if *used {
+                continue;
+            }
+            if forbidden.contains(&name.as_ref()) || !note_unknown(node.at) {
+                return Err(DecodeError::new(DecodeError::UNKNOWN_KEY, None, None).at(name));
+            }
+        }
+        Ok(())
+    }`;
+
+/** Report mode's note of one unknown key, which finish uses. */
+const NOTE_UNKNOWN = String.raw`
+/// Notes the unknown key whose value starts at the byte offset at, for the decode running on
+/// this thread. False when none runs, so the key fails instead of being dropped.
+fn note_unknown(at: usize) -> bool {
+    UNKNOWN.with(|cell| match cell.borrow_mut().as_mut() {
+        Some(offsets) => {
+            offsets.push(at);
+            true
+        }
+        None => false,
+    })
+}
+`;
+
+/** The object decoder, for outputs with a struct. `report` notes unknown keys instead of failing. */
+export function rustHelpersObject(report: boolean): string {
+  return String.raw`/// Reads the keys of a JSON object into a struct and tracks the keys it read.
 pub(super) struct Object<'n, 'a> {
     members: &'n Members<'a>,
     used: Vec<bool>,
@@ -720,17 +907,10 @@ impl<'n, 'a> Object<'n, 'a> {
         T::decode_node(node).map(Some).map_err(|error| error.at(key))
     }
 
-    /// Fails on the first key, in input order, that wasn't read, at its own path.
-    pub(super) fn finish(self) -> Result<(), DecodeError> {
-        for ((name, _), used) in self.members.entries.iter().zip(&self.used) {
-            if !used {
-                return Err(DecodeError::new(DecodeError::UNKNOWN_KEY, None, None).at(name));
-            }
-        }
-        Ok(())
-    }
+${report ? FINISH_REPORT : FINISH_STRICT}
 }
-`;
+${report ? NOTE_UNKNOWN : ""}`;
+}
 
 /** The rest map reader, for outputs with a struct that has named keys and a map of the others. */
 export const RUST_HELPERS_REST = String.raw`impl Object<'_, '_> {
@@ -828,5 +1008,22 @@ impl<const B: bool> Decode for ConstBool<B> {
         }
         Err(DecodeError::new(DecodeError::NOT_CONST, Some(B.to_string()), Some(value.to_string())))
     }
+}
+`;
+
+/** The untagged variant runner, for outputs in report mode with an untagged union. */
+export const RUST_HELPERS_ATTEMPT = String.raw`/// Runs one variant of an untagged union. When it fails, the unknown keys it noted are dropped,
+/// so only the variant used reports its own.
+pub(super) fn attempt<T>(decode: impl FnOnce() -> Result<T, DecodeError>) -> Result<T, DecodeError> {
+    let mark = UNKNOWN.with(|cell| cell.borrow().as_ref().map_or(0, Vec::len));
+    let result = decode();
+    if result.is_err() {
+        UNKNOWN.with(|cell| {
+            if let Some(offsets) = cell.borrow_mut().as_mut() {
+                offsets.truncate(mark);
+            }
+        });
+    }
+    result
 }
 `;

@@ -645,6 +645,74 @@ describe("Go error codes", () => {
   });
 });
 
+describe("Go report mode", () => {
+  const unions = {
+    ...paymentDefs,
+    payment: { oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }] },
+  };
+  const model = lib({
+    ...unions,
+    contact: {
+      type: "object",
+      properties: { name: { type: "string" }, email: { type: "string" }, phone: { type: "string" } },
+      required: ["name"],
+      oneOf: [{ required: ["email"] }, { required: ["phone"] }],
+      unevaluatedProperties: false,
+    },
+  });
+  const report = (name: string): string => {
+    const found = emitGo(model, { read: "report" }).find((f) => f.name === name);
+    if (found === undefined) throw new Error(`no file ${name}`);
+    return found.contents;
+  };
+
+  it("leave strict output as it was when read is left out or strict", () => {
+    expect(emitGo(model, { read: "strict" })).toEqual(emitGo(model));
+    expect(emitGoFixtures(model, { read: "strict" })).toBe(emitGoFixtures(model));
+    expect(file(model, "helpers.go")).not.toContain("SetUnknownKeyHook");
+  });
+
+  it("note unknown keys instead of failing, and give them to one hook", () => {
+    const helpers = report("helpers.go");
+    expect(helpers).toContain('\t"sync/atomic"\n');
+    expect(helpers).toContain("func SetUnknownKeyHook(hook func(paths []string)) {\n");
+    expect(helpers).toContain("func Report[T any, PT interface {\n");
+    expect(helpers).toContain(
+      "func decodeObject(n *node, fill func(*objectDecoder), commit func(), forbidden ...string) *DecodeError {\n",
+    );
+    expect(helpers).toContain("\t\tn.doc.unknown = append(n.doc.unknown, n.fields[key].at)\n");
+    // A variant that failed drops what it noted.
+    expect(helpers).toContain("\t\t\tn.doc.unknown = n.doc.unknown[:mark]\n");
+  });
+
+  it("pass the keys a sibling branch names, which still fail", () => {
+    const out = report("lib.go");
+    expect(out).toContain('\t}, func() { *v = out }, "phone")\n');
+    expect(out).toContain('\t}, func() { *v = out }, "email")\n');
+  });
+
+  it("add a Report function per tagged union", () => {
+    expect(report("lib.go")).toContain(
+      "func ReportPayment(data []byte) (Reported[Payment], error) {\n\treturn decodeReport(data, unionPayment)\n}\n",
+    );
+  });
+
+  it("return the unknown paths from the fixture registry", () => {
+    const out = emitGoFixtures(model, { read: "report" });
+    expect(out).toContain("func fixtureDecoders() map[string]func([]byte) (any, []string, error) {\n");
+    expect(out).toContain("\t\tr, err := decodeReport(data, decode)\n\t\treturn r.Value, r.Unknown, err\n");
+  });
+
+  it("reserve the report mode names in both modes", () => {
+    for (const name of ["report", "reported", "setUnknownKeyHook"]) {
+      expect(() => go(lib({ [name]: { type: "string" } }))).toThrow("is reserved in Go");
+    }
+    expect(() => go(lib({ ...unions, reportPayment: { type: "string" } }))).toThrow(
+      "Go name ReportPayment is also used by",
+    );
+  });
+});
+
 describe("reserved names", () => {
   it("exports a field named like a keyword instead of failing", () => {
     const out = go(

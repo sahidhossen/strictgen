@@ -125,7 +125,7 @@
       "minLength": 1
     },
     "read": {
-      "description": "Not yet active. strict rejects unknown keys, report accepts them and reports their paths.",
+      "description": "How decoders treat unknown keys. strict fails on them with unknown_key. report accepts them, gives their paths to the unknown key hook and returns them from the report functions. Everything else stays strict in both modes, and encoders are always strict.",
       "enum": ["strict", "report"],
       "default": "strict"
     },
@@ -281,7 +281,9 @@
         "read": { "$ref": "#/$defs/read" }
       },
       "required": ["out"],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": { "properties": { "read": { "const": "report" } }, "required": ["read"] },
+      "then": { "properties": { "decoders": { "const": true } } }
     }
   }
 }

@@ -1,0 +1,12 @@
+{
+  "source": "web",
+  "lines": [
+    { "sku": "A-1", "quantity": 2, "giftWrap": true },
+    { "sku": "B-2", "quantity": 1 }
+  ],
+  "id": "ord_7d2k",
+  "customer": { "name": "Ada", "nickname": "ada", "email": "ada@example.com" },
+  "payment": { "type": "card", "last4": "4242", "network": "visa" },
+  "notes": { "support": { "text": "Call before delivery", "pinned": true } },
+  "channelId": 7
+}

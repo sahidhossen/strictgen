@@ -29,7 +29,10 @@ function typescriptTarget(config: Config, ts: TypeScriptConfig): Target {
     name: "typescript",
     dirs: [out],
     emit: (model) =>
-      placed(out, emitTypeScript(model, { header: config.header, decoders: ts.decoders })),
+      placed(
+        out,
+        emitTypeScript(model, { header: config.header, decoders: ts.decoders, read: ts.read }),
+      ),
   };
 }
 
@@ -47,6 +50,7 @@ function rustTarget(config: Config, rust: RustConfig): Target {
         emitRust(model, {
           header,
           allow: rust.allow,
+          read: rust.read,
           publicModules: rust.embedSchemas ? [SCHEMAS_MODULE] : [],
         }),
       ),
@@ -56,7 +60,7 @@ function rustTarget(config: Config, rust: RustConfig): Target {
         : [
             {
               path: `${fixturesOut}/${RUST_FIXTURES}`,
-              contents: emitRustFixtures(model, fixtures.crate, { header }),
+              contents: emitRustFixtures(model, fixtures.crate, { header, read: rust.read }),
             },
           ]),
     ],
@@ -69,7 +73,7 @@ function rustTarget(config: Config, rust: RustConfig): Target {
  */
 function goTarget(config: Config, go: GoConfig): Target {
   const out = under(config.root, go.out);
-  const options = { header: config.header, package: go.package };
+  const options = { header: config.header, package: go.package, read: go.read };
   return {
     name: "go",
     dirs: go.shared ? [] : [out],

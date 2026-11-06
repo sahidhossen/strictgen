@@ -1,0 +1,18 @@
+{
+  "id": "ord_7d2k",
+  "lines": [
+    {
+      "sku": "A-1",
+      "quantity": 2
+    }
+  ],
+  "payment": {
+    "type": "card",
+    "last4": "4242"
+  },
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com",
+    "phone": "+44 20 7946 0000"
+  }
+}

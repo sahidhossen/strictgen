@@ -1,0 +1,15 @@
+[package]
+name = "example-report"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "The Rust types strictgen generates for examples/report/schemas, in report mode"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "example_report"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

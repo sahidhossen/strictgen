@@ -1535,6 +1535,232 @@ const keywordFields: JsonObject = {
   unevaluatedProperties: false,
 };
 
+/** A model with nested objects, arrays and maps of objects, a tagged and an untagged union, and an exactly-one choice. */
+const reportModel = (): Model =>
+  libModel({
+    note: closed({ text: { type: "string" } }, ["text"]),
+    carrier: closed({ name: { type: "string" } }, ["name"]),
+    courier: closed({ carrier: { $ref: "#/$defs/carrier" }, code: { type: "string" } }, ["carrier", "code"]),
+    pickup: closed({ carrier: { $ref: "#/$defs/carrier" }, place: { type: "string" } }, ["carrier", "place"]),
+    delivery: { oneOf: [{ $ref: "#/$defs/courier" }, { $ref: "#/$defs/pickup" }] },
+    payment: {
+      oneOf: [
+        closed({ type: { const: "card" }, last4: { type: "string" } }, ["type", "last4"]),
+        closed({ type: { const: "invoice" }, days: { type: "integer" } }, ["type", "days"]),
+      ],
+    },
+    contact: {
+      type: "object",
+      properties: { name: { type: "string" }, email: { type: "string" }, phone: { type: "string" } },
+      required: ["name"],
+      oneOf: [{ required: ["email"] }, { required: ["phone"] }],
+      unevaluatedProperties: false,
+    },
+    order: closed(
+      {
+        id: { type: "string" },
+        contact: { $ref: "#/$defs/contact" },
+        notes: { type: "array", items: { $ref: "#/$defs/note" } },
+        byTeam: { type: "object", additionalProperties: { $ref: "#/$defs/note" } },
+        payment: { $ref: "#/$defs/payment" },
+        delivery: { $ref: "#/$defs/delivery" },
+      },
+      ["id"],
+    ),
+  });
+
+describe("TypeScript report mode", () => {
+  const model = reportModel();
+  let m: Loaded;
+  let hooked: (readonly string[])[] = [];
+  beforeAll(async () => {
+    m = await load(model, { read: "report" });
+  }, COMPILE_TIMEOUT);
+  const report = (type: string, json: unknown, path?: string): unknown =>
+    m.fn(`report${type}`)(json, ...(path === undefined ? [] : [path]));
+  const reportText = (type: string, text: string): unknown => m.fn(`report${type}FromJson`)(text);
+
+  it("leave strict output as it was when read is left out or strict", () => {
+    expect(emitTypeScript(model, { read: "strict" })).toEqual(emitTypeScript(model));
+    const out = emitTypeScript(model).map((f) => f.contents).join("\n");
+    expect(out).not.toContain("h.report");
+    expect(out).not.toContain("UnknownKeyHook");
+  });
+
+  it("export the hook, Reported and a report function per type", () => {
+    const files = emitTypeScript(model, { read: "report" });
+    const index = files.find((f) => f.name === "index.ts")?.contents ?? "";
+    expect(index).toContain(
+      "export { DecodeError, EncodeError, type DecodeResult, ErrorCode, type Reported, type UnknownKeyHook, setUnknownKeyHook } from \"./helpers.js\";\n",
+    );
+    const out = files[0]?.contents ?? "";
+    expect(out).toContain('export function reportOrder(json: unknown, path = ""): h.Reported<Order> {\n');
+    expect(out).toContain("export function reportOrderFromJson(text: string): h.Reported<Order> {\n");
+  });
+
+  it("accept unknown keys and return their paths, nested ones in input order", () => {
+    const text =
+      '{"z":1,"notes":[{"text":"a","pin":true},{"text":"b"}],"id":"o","contact":{"name":"n","nick":"x","email":"e"},' +
+      '"byTeam":{"ops":{"text":"c","by":"me"}},"payment":{"type":"card","last4":"4242","net":"visa"},"a":2}';
+    expect(reportText("Order", text)).toEqual({
+      value: {
+        id: "o",
+        contact: { name: "n", email: "e" },
+        notes: [{ text: "a" }, { text: "b" }],
+        byTeam: { ops: { text: "c" } },
+        payment: { type: "card", last4: "4242" },
+      },
+      unknown: ["/z", "/notes/0/pin", "/contact/nick", "/byTeam/ops/by", "/payment/net", "/a"],
+    });
+  });
+
+  it("report only the keys of the untagged branch that decoded", () => {
+    // The courier branch reads the carrier, noting its unknown key, then fails on the missing code.
+    const delivery = { carrier: { name: "c", tel: "1" }, place: "p" };
+    expect(report("Delivery", delivery)).toEqual({ value: { carrier: { name: "c" }, place: "p" }, unknown: ["/carrier/tel"] });
+    expect(report("Order", { id: "o", delivery })).toMatchObject({ unknown: ["/delivery/carrier/tel"] });
+  });
+
+  it("treat the keys of another tagged branch as unknown", () => {
+    expect(report("Payment", { type: "invoice", days: 3, last4: "1" })).toEqual({
+      value: { type: "invoice", days: 3 },
+      unknown: ["/last4"],
+    });
+  });
+
+  it("still fail on a key a sibling branch of an exactly-one choice names", () => {
+    expect(failure(m, "Contact", { name: "n", email: "e", phone: "p" })).toBe(
+      "wrong type, expected Contact, found an object",
+    );
+    expect(report("Contact", { name: "n", phone: "p", fax: "f" })).toEqual({
+      value: { name: "n", phone: "p" },
+      unknown: ["/fax"],
+    });
+  });
+
+  it("keep everything else strict", () => {
+    expect(failure(m, "Order", { x: 1 })).toBe("/id: missing key");
+    expect(failure(m, "Order", { id: 1, x: 1 })).toBe("/id: wrong type, expected a string, found 1");
+    expect(failureFromJson(m, "Order", '{"id":"o","x":1,"x":2}')).toBe('/x: duplicate key, found "x" at offset 16');
+    expect(failureFromJson(m, "Order", '{"id":"o","x":[1,]}')).toBe("/x/1: invalid JSON, found an invalid value at offset 17");
+    expect(failure(m, "Payment", { type: "cash", x: 1 })).toBe(
+      '/type: bad tag, expected one of "card", "invoice", found "cash"',
+    );
+  });
+
+  it("put the paths under the path given, and escape them", () => {
+    expect(report("Order", { id: "o", "a/b~c": 1 }, "/orders/0")).toMatchObject({ unknown: ["/orders/0/a~1b~0c"] });
+  });
+
+  it("give every decode's unknown keys to the hook, and only when there are some", () => {
+    m.fn("setUnknownKeyHook")((paths: readonly string[]) => hooked.push(paths));
+    try {
+      hooked = [];
+      expect(m.fn("decodeOrder")({ id: "o", x: 1, notes: [{ text: "t", y: 2 }] })).toEqual({ id: "o", notes: [{ text: "t" }] });
+      expect(m.fn("decodeOrderFromJson")('{"id":"o","w":1}')).toEqual({ id: "o" });
+      expect(m.fn("tryDecodeOrder")({ id: "o", v: 1 })).toEqual({ ok: true, value: { id: "o" } });
+      expect(report("Order", { id: "o", u: 1 })).toMatchObject({ unknown: ["/u"] });
+      m.fn("decodeOrder")({ id: "o" });
+      expect(() => m.fn("decodeOrder")({ x: 1 })).toThrow(m.DecodeError);
+      expect(hooked).toEqual([["/x", "/notes/0/y"], ["/w"], ["/v"], ["/u"]]);
+    } finally {
+      m.fn("setUnknownKeyHook")(undefined);
+    }
+    hooked = [];
+    m.fn("decodeOrder")({ id: "o", x: 1 });
+    expect(hooked).toEqual([]);
+  });
+
+  it("keep encoders strict", () => {
+    expect(() => m.fn("encodeOrder")({ id: "o", x: 1 })).toThrow('unknown key "x"');
+  });
+});
+
+/** The example generated in report mode, whose fixtures every language checks. */
+const REPORT_EXAMPLE = join(import.meta.dirname, "..", "examples", "report");
+
+/** Removes the key a JSON Pointer names from a parsed JSON value. */
+function without(json: unknown, path: string): void {
+  const segments = path
+    .split("/")
+    .slice(1)
+    .map((s) => s.replace(/~1/g, "/").replace(/~0/g, "~"));
+  const key = segments.pop() ?? "";
+  let holder = json as Record<string, unknown>;
+  for (const segment of segments) holder = holder[segment] as Record<string, unknown>;
+  expect(Object.hasOwn(holder, key), path).toBe(true);
+  delete holder[key];
+}
+
+describe("TypeScript report example fixtures", () => {
+  const config = loadConfig(join(REPORT_EXAMPLE, "strictgen.json"));
+  const model = buildModel(loadSchemas(config.schemas), config.ids === undefined ? {} : { ids: config.ids });
+  const root = join(REPORT_EXAMPLE, "fixtures");
+  const fixtures = (function walk(dir: string): string[] {
+    return readdirSync(dir).flatMap((name) => {
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) return walk(path);
+      return path.endsWith(".json") ? [path] : [];
+    });
+  })(root).map((path) => relative(root, path).split(sep));
+  const typeOf = new Map(
+    model.decls.flatMap((d) =>
+      d.source === undefined
+        ? []
+        : [[d.source.def === undefined ? d.source.schema : `${d.source.schema}/${d.source.def}`, d.name]],
+    ),
+  );
+  let m: Loaded;
+  beforeAll(async () => {
+    expect(config.targets.typescript?.read).toBe("report");
+    m = await load(model, { read: "report" });
+  }, COMPILE_TIMEOUT);
+
+  it("decode every valid fixture with the unknown paths it expects, and reject every invalid one", () => {
+    const hooked: (readonly string[])[] = [];
+    m.fn("setUnknownKeyHook")((paths: readonly string[]) => hooked.push(paths));
+    let count = 0;
+    try {
+      for (const parts of fixtures) {
+        const key = parts.slice(0, -2).join("/");
+        const name = parts.join("/");
+        const kind = parts.at(-2);
+        expect(parts.length >= 3 && (kind === "valid" || kind === "invalid"), name).toBe(true);
+        expect(typeOf.has(key), `${name}: no generated type for ${key}`).toBe(true);
+        if (name.endsWith(EXPECT)) {
+          const fixture = join(root, ...parts).slice(0, -EXPECT.length) + ".json";
+          expect(existsSync(fixture), `${name}: no case next to it`).toBe(true);
+          continue;
+        }
+        count++;
+        const type = typeOf.get(key) ?? "";
+        const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(readFileSync(join(root, ...parts)));
+        const file = join(root, ...parts).slice(0, -".json".length) + EXPECT;
+        expect(existsSync(file), `every case needs ${file}`).toBe(true);
+        const want = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+        hooked.length = 0;
+        if (kind === "invalid") {
+          expect(Object.keys(want).sort(), name).toEqual(["code", "path"]);
+          expect(errorFromJson(m, type, text), name).toEqual(want);
+          expect(hooked, name).toEqual([]);
+          continue;
+        }
+        expect(Object.keys(want), name).toEqual(["unknown"]);
+        const { value, unknown } = m.fn(`report${type}FromJson`)(text) as { value: unknown; unknown: string[] };
+        expect(unknown, name).toEqual(want.unknown);
+        expect(hooked, name).toEqual(unknown.length === 0 ? [] : [unknown]);
+        // The value holds everything but the unknown keys.
+        const expected: unknown = JSON.parse(text);
+        for (const path of unknown) without(expected, path);
+        expect(JSON.parse(m.fn(`encode${type}ToJson`)(value) as string), name).toEqual(expected);
+      }
+    } finally {
+      m.fn("setUnknownKeyHook")(undefined);
+    }
+    expect(count).toBeGreaterThan(10);
+  });
+});
+
 describe("reserved names", () => {
   it("keeps a property named like a keyword, which TypeScript allows", async () => {
     const out = lib({ rule: keywordFields });
@@ -1578,7 +1804,7 @@ describe("reserved names", () => {
   });
 
   it("fails on a type named like a helper index.ts re-exports", () => {
-    for (const name of ["decodeError", "encodeError", "decodeResult"]) {
+    for (const name of ["decodeError", "encodeError", "decodeResult", "reported", "unknownKeyHook"]) {
       expect(() => lib({ [name]: { type: "string" } })).toThrow("is reserved in TypeScript");
     }
   });

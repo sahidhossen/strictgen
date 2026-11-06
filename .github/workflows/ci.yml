@@ -57,36 +57,53 @@ jobs:
           cache: false
       - run: pnpm build
       - name: Compare the committed output with strictgen check
-        run: node dist/cli.js check --config examples/basic/strictgen.json
+        run: |
+          node dist/cli.js check --config examples/basic/strictgen.json
+          node dist/cli.js check --config examples/report/strictgen.json
       # check compared the first run with what is committed. A second run must write the
       # same files again, so generation is deterministic.
       - name: Generate again and check that nothing changes
         run: |
           node dist/cli.js generate --config examples/basic/strictgen.json
+          node dist/cli.js generate --config examples/report/strictgen.json
           git diff --exit-code
           test -z "$(git status --porcelain)"
       - name: Typecheck the TypeScript output
-        run: pnpm exec tsc -p examples/basic/ts/tsconfig.json
+        run: |
+          pnpm exec tsc -p examples/basic/ts/tsconfig.json
+          pnpm exec tsc -p examples/report/ts/tsconfig.json
 
   examples-rust:
-    name: Rust example
+    name: Rust example (${{ matrix.example }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [basic, report]
     defaults:
       run:
-        working-directory: examples/basic/rust
+        working-directory: examples/${{ matrix.example }}/rust
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # The generated files are formatted by strictgen; this keeps the hand written tests formatted too.
+      - run: cargo fmt --check
       - run: cargo check --locked --all-targets
       - name: Round trip the fixtures
         run: cargo test --locked
 
   examples-go:
-    name: Go example
+    name: Go example (${{ matrix.example }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [basic, report]
     defaults:
       run:
-        working-directory: examples/basic/go
+        working-directory: examples/${{ matrix.example }}/go
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

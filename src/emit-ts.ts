@@ -1,9 +1,10 @@
 import type { EmittedFile } from "./common.js";
 import { bySchema, commentHeader, compare, DEFAULT_HEADER, declTypes, imports } from "./common.js";
+import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
 import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
 import { RENAME_TYPE, TS_RESERVED } from "./naming.js";
-import { TS_HELPERS_BODY } from "./ts-helpers.js";
+import { tsHelpersBody } from "./ts-helpers.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const WIDTH = 100;
@@ -14,11 +15,18 @@ export const TS_HELPERS = "helpers.ts";
 /** What `index.ts` re-exports from the helpers, besides the generated types and functions. */
 const HELPER_EXPORTS = ["DecodeError", "EncodeError", "DecodeResult", "ErrorCode"];
 
+/** What `index.ts` also re-exports in report mode. The types are reserved in both modes. */
+const REPORT_EXPORTS = ["Reported", "UnknownKeyHook", "setUnknownKeyHook"];
+
+/** Helper exports that are types, re-exported with `type`. */
+const TYPE_EXPORTS = new Set(["DecodeResult", "Reported", "UnknownKeyHook"]);
+
 /**
  * Global types the generated TypeScript names, and the helper names `index.ts` re-exports.
- * A schema type named like one would shadow or clash with it.
+ * A schema type named like one would shadow or clash with it. The report mode names are
+ * reserved in strict mode too, so switching the mode never makes a schema fail.
  */
-const RESERVED = new Set(["Record", "Partial", "NonNullable", ...HELPER_EXPORTS]);
+const RESERVED = new Set(["Record", "Partial", "NonNullable", ...HELPER_EXPORTS, ...REPORT_EXPORTS]);
 
 /** Options for {@link emitTypeScript}. */
 export interface TypeScriptOptions {
@@ -28,10 +36,17 @@ export interface TypeScriptOptions {
   readonly valueModules?: readonly string[];
   /** Emits `decodeX`, `tryDecodeX` and `encodeX` per type, and `helpers.ts`. Defaults to true. */
   readonly decoders?: boolean;
+  /**
+   * How decoders treat unknown keys: `strict` fails on them, `report` accepts them, reports
+   * their paths and adds `reportX` and `reportXFromJson`. Defaults to `strict`.
+   */
+  readonly read?: ReadMode;
 }
 
 interface Ctx {
   readonly decls: ReadonlyMap<string, Decl>;
+  /** True in report mode. */
+  readonly report: boolean;
   /** The generated functions of declarations a file calls, like `decodeUserId`. */
   readonly calls: Set<string>;
 }
@@ -46,6 +61,8 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   const header = commentHeader(options.header ?? DEFAULT_HEADER);
   const valueModules = options.valueModules ?? [];
   const decoders = options.decoders ?? true;
+  const report = options.read === "report";
+  if (report && !decoders) throw new Error("report mode needs the decoders");
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name) || TS_RESERVED.has(decl.name)) {
@@ -65,7 +82,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
         `a schema named ${schema} clashes with ${schema}.ts`,
         "rename the schema file",
       );
-    const ctx: Ctx = { decls, calls: new Set() };
+    const ctx: Ctx = { decls, report, calls: new Set() };
     const body = own.map((decl) => declaration(ctx, decl, decoders)).join("\n");
     const what = decoders ? "Types and decoders" : "Types";
     const head = `${header}\n\n/** ${what} for \`${schema}.json\`. */\n\n`;
@@ -81,12 +98,13 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
     ...valueModules.map((m) => `export * from "./${m}.js";\n`),
   ];
   if (decoders) {
-    const names = HELPER_EXPORTS.map((n) => (n === "DecodeResult" ? `type ${n}` : n));
+    const exported = report ? [...HELPER_EXPORTS, ...REPORT_EXPORTS] : HELPER_EXPORTS;
+    const names = exported.map((n) => (TYPE_EXPORTS.has(n) ? `type ${n}` : n));
     index.push(`export { ${names.join(", ")} } from "./helpers.js";\n`);
   }
   return [
     ...files,
-    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${TS_HELPERS_BODY}` }] : []),
+    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report)}` }] : []),
     { name: "index.ts", contents: `${header}\n\n${index.join("")}` },
   ];
 }
@@ -166,13 +184,30 @@ function castFunction(name: string): string {
   );
 }
 
-/** `decodeX`, `tryDecodeX` and `encodeX` for one declaration. */
+/** `decodeX`, `tryDecodeX` and `encodeX` for one declaration, and in report mode `reportX`. */
 function functions(ctx: Ctx, decl: Decl): string {
   const name = decl.name;
+  const decode = ctx.report
+    ? `/**\n * Decodes parsed JSON as ${name}. Unknown keys are accepted and their paths go to the hook\n` +
+      ` * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON\n` +
+      ` * Pointer of the first problem, under \`path\` when given.\n */\n` +
+      `export function decode${name}(json: unknown, path = ""): ${name} {\n` +
+      `  return h.report(json, path, read${name});\n}\n\n` +
+      `/** Like decode${name}, but returns the value with the paths of its unknown keys, in input order. */\n` +
+      `export function report${name}(json: unknown, path = ""): h.Reported<${name}> {\n` +
+      `  return h.reported(json, path, read${name});\n}\n\n` +
+      `/** Decodes ${name}, the unknown keys going to the decode that runs. */\n` +
+      `function read${name}(json: unknown, path: string): ${name} {\n${decodeBody(ctx, decl)}}\n\n`
+    : `/**\n * Decodes parsed JSON as ${name}, strictly. Throws a DecodeError at the JSON Pointer of\n` +
+      ` * the first problem, under \`path\` when given.\n */\n` +
+      `export function decode${name}(json: unknown, path = ""): ${name} {\n${decodeBody(ctx, decl)}}\n\n`;
+  const fromJsonReport = ctx.report
+    ? `/** Like decode${name}FromJson, but returns the value with the paths of its unknown keys, in input order. */\n` +
+      `export function report${name}FromJson(text: string): h.Reported<${name}> {\n` +
+      `  return h.reportFromJson(text, read${name});\n}\n\n`
+    : "";
   return (
-    `/**\n * Decodes parsed JSON as ${name}, strictly. Throws a DecodeError at the JSON Pointer of\n` +
-    ` * the first problem, under \`path\` when given.\n */\n` +
-    `export function decode${name}(json: unknown, path = ""): ${name} {\n${decodeBody(ctx, decl)}}\n\n` +
+    decode +
     `/** Like decode${name}, but returns the DecodeError instead of throwing it. */\n` +
     `export function tryDecode${name}(json: unknown): h.DecodeResult<${name}> {\n` +
     `  return h.attempt(decode${name}, json);\n}\n\n` +
@@ -184,6 +219,7 @@ function functions(ctx: Ctx, decl: Decl): string {
     `/** Like decode${name}FromJson, but returns the DecodeError instead of throwing it. */\n` +
     `export function tryDecode${name}FromJson(text: string): h.DecodeResult<${name}> {\n` +
     `  return h.attemptJson(decode${name}, text);\n}\n\n` +
+    fromJsonReport +
     `/**\n * Encodes ${name} as a JSON value, ready for JSON.stringify.\n` +
     ` * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.\n */\n` +
     `export function encode${name}(value: ${name}): unknown {\n${encodeBody(ctx, decl)}}\n\n` +
@@ -255,7 +291,11 @@ function decodeStruct(ctx: Ctx, decl: StructDecl): string {
     const value = decoder(ctx, decl.rest.value);
     lines.push(`    ...h.rest(o, path, ${named}, ${key}, ${value}),\n`);
   }
-  const check = decl.rest === undefined ? `  h.closed(o, path, ${named});\n` : "";
+  const forbidden =
+    ctx.report && decl.forbidden.length > 0
+      ? `, [${decl.forbidden.map((k) => JSON.stringify(k)).join(", ")}]`
+      : "";
+  const check = decl.rest === undefined ? `  h.closed(o, path, ${named}${forbidden});\n` : "";
   return (
     `  const o = h.object(json, path);\n` +
     `  const value: ${decl.name} = {\n${lines.join("")}  };\n${check}  return value;\n`

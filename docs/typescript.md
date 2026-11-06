@@ -17,6 +17,8 @@ Decoders read a value that is already parsed, like the result of `JSON.parse`, a
 
 Keys like `__proto__` and `constructor` are read and written as data, never as object internals.
 
+With `"read": "report"`, unknown keys are accepted instead and go to the hook set with `setUnknownKeyHook`, and `reportX(json, path?)` and `reportXFromJson(text)` return the value with their paths. [read-modes.md](read-modes.md) explains the mode.
+
 ## Reading JSON text
 
 `decodeXFromJson` reads the text with a small strict JSON reader in `helpers.ts`, not `JSON.parse`, and then decodes the value. The reader follows the Rust and Go decoders:

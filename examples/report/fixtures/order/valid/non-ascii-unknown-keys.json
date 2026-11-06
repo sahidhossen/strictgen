@@ -1,0 +1,7 @@
+{
+  "id": "ord_7d2k",
+  "é": 1,
+  "customer": { "name": "Zoë", "phone": "+33 1 23 45 67 89", "😀": "smile" },
+  "lines": [],
+  "payment": { "type": "card", "last4": "4242" }
+}

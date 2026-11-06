@@ -10,7 +10,8 @@ import type {
   TypeExpr,
   UntaggedDecl,
 } from "./model.js";
-import { GO_CODES, GO_HELPERS_BODY, GO_NON_NULL } from "./go-helpers.js";
+import type { ReadMode } from "./config.js";
+import { GO_CODES, GO_NON_NULL, goHelpersBody } from "./go-helpers.js";
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
 
@@ -25,8 +26,18 @@ export { GO_NON_NULL };
 /** The error code constants the helpers file declares, like `CodeUnknownKey`. */
 const CODES = GO_CODES;
 
-/** Exported names the helpers file declares, besides the literal types. */
-const RESERVED = new Set([GO_NON_NULL, "DecodeError", ...GO_CODES]);
+/**
+ * Exported names the helpers file declares, besides the literal types. The report mode names
+ * are reserved in strict mode too, so switching the mode never makes a schema fail.
+ */
+const RESERVED = new Set([
+  GO_NON_NULL,
+  "DecodeError",
+  ...GO_CODES,
+  "Report",
+  "Reported",
+  "SetUnknownKeyHook",
+]);
 
 /** File name suffixes that put a Go file behind a build constraint or make it a test. */
 const CONSTRAINED = new Set(
@@ -45,6 +56,8 @@ const METHODS = new Set(["MarshalJSON", "UnmarshalJSON"]);
 
 interface Ctx {
   readonly decls: ReadonlyMap<string, Decl>;
+  /** True in report mode. */
+  readonly report: boolean;
 }
 
 /** Options for the Go emitters. */
@@ -53,6 +66,11 @@ export interface GoOptions {
   readonly header?: string;
   /** The package clause of every file. Defaults to {@link GO_PACKAGE}. */
   readonly package?: string;
+  /**
+   * How decoders treat unknown keys: `strict` fails on them, `report` accepts them, reports
+   * their paths and adds `Report` and a `ReportX` per tagged union. Defaults to `strict`.
+   */
+  readonly read?: ReadMode;
 }
 
 /** The first lines of a generated Go file: header comment, then `doc` and the package clause. */
@@ -68,7 +86,8 @@ function goHead(options: GoOptions, doc: string): string {
  * names are unique across schemas and files need no imports between them.
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
-  const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])) };
+  const report = options.read === "report";
+  const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])), report };
   checkNames(model);
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
@@ -82,8 +101,8 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   return [
     {
       name: GO_HELPERS,
-      contents: goFile(goHead(options, ""), HELPER_IMPORTS, [
-        GO_HELPERS_BODY,
+      contents: goFile(goHead(options, ""), helperImports(report), [
+        goHelpersBody(report),
         ...literals.map(literalType),
       ]),
     },
@@ -179,6 +198,7 @@ function checkNames(model: Model): void {
     if (decl.kind === "enum") for (const c of enumConsts(decl)) claim(c.name, decl.path);
     if (decl.kind === "tagged") {
       claim(`Decode${decl.name}`, decl.path);
+      claim(`Report${decl.name}`, decl.path);
       claim(`union${decl.name}`, decl.path);
     }
     if (decl.kind === "struct") fieldNames(decl);
@@ -310,12 +330,17 @@ function struct(ctx: Ctx, decl: StructDecl): string {
     reads.length === 0
       ? "func(*objectDecoder) {}"
       : `func(d *objectDecoder) {\n${reads.join("")}\t}`;
+  const forbidden = ctx.report ? decl.forbidden.map((k) => `, ${JSON.stringify(k)}`).join("") : "";
+  const doc = ctx.report
+    ? `// UnmarshalJSON decodes strictly: missing required keys and explicit nulls fail. Unknown keys\n` +
+      `// are accepted, and their paths go to the hook set with SetUnknownKeyHook.\n`
+    : `// UnmarshalJSON decodes strictly: unknown keys, missing required keys and explicit nulls fail.\n`;
   const unmarshal =
-    `// UnmarshalJSON decodes strictly: unknown keys, missing required keys and explicit nulls fail.\n` +
+    doc +
     unmarshalMethod(decl.name) +
     `func (v *${decl.name}) decode(n *node) *DecodeError {\n` +
     `\tvar out ${decl.name}\n` +
-    `\treturn decodeObject(n, ${fill}, func() { *v = out })\n}\n`;
+    `\treturn decodeObject(n, ${fill}, func() { *v = out }${forbidden})\n}\n`;
   return `type ${decl.name} ${body}\n\n${unmarshal}${marshal(ctx, decl, names)}`;
 }
 
@@ -503,6 +528,12 @@ function tagged(ctx: Ctx, decl: TaggedDecl): string {
     `type ${decl.name} interface {\n\t${marker}()\n}\n\n` +
     `// Decode${decl.name} reads the ${key} key and decodes only the branch it names.\n` +
     `func Decode${decl.name}(data []byte) (${decl.name}, error) { return decodeRoot(data, union${decl.name}) }\n\n` +
+    (ctx.report
+      ? `// Report${decl.name} decodes like Decode${decl.name} and returns the value with the paths of its\n` +
+        `// unknown keys.\n` +
+        `func Report${decl.name}(data []byte) (Reported[${decl.name}], error) {\n` +
+        `\treturn decodeReport(data, union${decl.name})\n}\n\n`
+      : "") +
     `// union${decl.name} decodes a parsed ${decl.name} by its ${key} key.\n` +
     `func union${decl.name}(n *node) (${decl.name}, *DecodeError) {\n` +
     `\treturn decodeTagged(n, ${key}, ${tags}, map[string]func(*node) (${decl.name}, *DecodeError){\n${branches.join("")}\t})\n}\n\n` +
@@ -626,7 +657,8 @@ function comment(lines: readonly string[], indent: string): string {
  * and every type with an UnmarshalJSON, for tests that cover them all.
  */
 export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
-  const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])) };
+  const report = options.read === "report";
+  const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])), report };
   const entries = model.decls
     .filter((d) => d.source !== undefined)
     .map((d) => ({
@@ -645,9 +677,24 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
   ]
     .sort(compare)
     .map((name) => `\t\tnew(${name}),\n`);
-  return `${goHead(options, "")}import "encoding/json"
+  const registry = report
+    ? `// fixtureDecoders maps each fixture folder, "schema" for a root and "schema/def" for a def,
+// to a function that decodes JSON as the type generated for it and returns the value with the
+// paths of its unknown keys.
+func fixtureDecoders() map[string]func([]byte) (any, []string, error) {
+\treturn map[string]func([]byte) (any, []string, error){
+${entries.join("")}\t}
+}
 
-// fixtureDecoders maps each fixture folder, "schema" for a root and "schema/def" for a def,
+// asAny returns a decoder of JSON that parses it once, then decodes it with decode.
+func asAny[T any](decode func(*node) (T, *DecodeError)) func([]byte) (any, []string, error) {
+\treturn func(data []byte) (any, []string, error) {
+\t\tr, err := decodeReport(data, decode)
+\t\treturn r.Value, r.Unknown, err
+\t}
+}
+`
+    : `// fixtureDecoders maps each fixture folder, "schema" for a root and "schema/def" for a def,
 // to a function that decodes JSON as the type generated for it.
 func fixtureDecoders() map[string]func([]byte) (any, error) {
 \treturn map[string]func([]byte) (any, error){
@@ -661,7 +708,10 @@ func asAny[T any](decode func(*node) (T, *DecodeError)) func([]byte) (any, error
 \t\treturn v, err
 \t}
 }
+`;
+  return `${goHead(options, "")}import "encoding/json"
 
+${registry}
 // unmarshalers returns a new value of every generated type with an UnmarshalJSON method.
 func unmarshalers() []json.Unmarshaler {
 \treturn []json.Unmarshaler{
@@ -670,17 +720,20 @@ ${types.join("")}\t}
 `;
 }
 
-/** Standard library packages the helpers file uses, in import order. */
-const HELPER_IMPORTS = [
-  "bytes",
-  "encoding",
-  "encoding/json",
-  "errors",
-  "fmt",
-  "maps",
-  "slices",
-  "strconv",
-  "strings",
-  "unicode/utf8",
-];
+/** Standard library packages the helpers file uses, in import order. Report mode adds sync/atomic. */
+function helperImports(report: boolean): string[] {
+  return [
+    "bytes",
+    "encoding",
+    "encoding/json",
+    "errors",
+    "fmt",
+    "maps",
+    "slices",
+    "strconv",
+    "strings",
+    ...(report ? ["sync/atomic"] : []),
+    "unicode/utf8",
+  ];
+}
 

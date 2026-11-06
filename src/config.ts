@@ -28,7 +28,7 @@ export class ConfigError extends Error {
   }
 }
 
-/** How a decoder treats unknown keys. Not yet active. */
+/** How a decoder treats unknown keys: `strict` fails on them, `report` accepts and reports them. */
 export type ReadMode = "strict" | "report";
 
 /** The Rust fixture registry: where `registry.rs` goes, and the Rust path to the generated types. */
@@ -359,11 +359,12 @@ function readGo(r: Reader, value: unknown, path: Resolve): GoConfig {
 function readTypeScript(r: Reader, value: unknown, path: Resolve): TypeScriptConfig {
   const at = "targets.typescript";
   const o = r.object(value, at, ["out", "decoders", "read"]);
-  return {
-    out: path(r.required(o, at, "out"), `${at}.out`),
-    decoders: r.boolean(o.decoders, `${at}.decoders`, true),
-    read: r.oneOf(o.read, `${at}.read`, READ_MODES, "strict"),
-  };
+  const out = path(r.required(o, at, "out"), `${at}.out`);
+  const decoders = r.boolean(o.decoders, `${at}.decoders`, true);
+  const read = r.oneOf(o.read, `${at}.read`, READ_MODES, "strict");
+  // Report mode changes what the decoders do, so it needs them.
+  if (read === "report" && !decoders) r.fail(`${at}.read`, '"report" needs "decoders": true');
+  return { out, decoders, read };
 }
 
 function readLlm(r: Reader, value: unknown, path: Resolve): LlmConfig {

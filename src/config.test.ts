@@ -50,7 +50,7 @@ const FULL = {
       read: "report",
     },
     go: { out: "go/types", package: "orders", shared: false, fixtures: true, read: "strict" },
-    typescript: { out: "src/generated", decoders: false, read: "report" },
+    typescript: { out: "src/generated", decoders: false, read: "strict" },
   },
   llm: { profiles: ["openai", "anthropic"], out: "llm", cleanup: true },
   docs: { out: "docs/types", format: "markdown" },
@@ -125,7 +125,7 @@ describe("config defaults", () => {
     expect(config.targets.typescript).toEqual({
       out: join(ROOT, "src/generated"),
       decoders: false,
-      read: "report",
+      read: "strict",
     });
     expect(config.format).toEqual({ rust: "none", go: "none", typescript: "none" });
   });
@@ -285,6 +285,7 @@ const INVALID: readonly (readonly [string, unknown, string, string])[] = [
   ["out not a string", { targets: { typescript: { out: 1 } } }, "targets.typescript.out", "must be a string"],
   ["decoders not a boolean", { targets: { typescript: { out: "t", decoders: 1 } } }, "targets.typescript.decoders", "true or false"],
   ["unknown read mode", { targets: { typescript: { out: "t", read: "loose" } } }, "targets.typescript.read", 'must be one of "strict", "report"'],
+  ["report mode without decoders", { targets: { typescript: { out: "t", decoders: false, read: "report" } } }, "targets.typescript.read", '"report" needs "decoders": true'],
   ["unknown Rust option", { targets: { rust: { out: "r", clippy: [] } } }, "targets.rust.clippy", "unknown option"],
   ["fixtures true", { targets: { rust: { out: "r", fixtures: true } } }, "targets.rust.fixtures", "must be false or an object"],
   ["fixtures without crate", { targets: { rust: { out: "r", fixtures: { out: "t" } } } }, "targets.rust.fixtures.crate", "is required"],
@@ -355,7 +356,8 @@ describe("strictgen.schema.json", () => {
   });
 
   it("accepts the configs the loader accepts", () => {
-    for (const config of [FULL, { targets: ts }, { targets: { rust: { out: "r", fixtures: false } } }]) {
+    const report = { targets: { typescript: { out: "t", read: "report" }, go: { out: "g", read: "report" } } };
+    for (const config of [FULL, { targets: ts }, { targets: { rust: { out: "r", fixtures: false } } }, report]) {
       parse(config);
       expect(validate(config), JSON.stringify(validate.errors)).toBe(true);
     }

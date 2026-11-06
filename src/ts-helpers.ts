@@ -8,19 +8,173 @@ const CODE_CONSTANTS = ERROR_CODES.map(
 /** The title of each code in messages. */
 const CODE_TITLES = ERROR_CODES.map((c) => `  ${c.code}: "${c.title}",\n`).join("");
 
+/** The paragraph of the helpers' doc comment on unknown keys in report mode. */
+const REPORT_DOC = String.raw`
+ * This output reads in report mode: an unknown key is accepted rather than an error. Every
+ * decode collects the JSON Pointers of the unknown keys, in the order they appear in the input,
+ * gives them to the hook set with setUnknownKeyHook, and the report functions return them with
+ * the value. Only the branch of an untagged union that decoded reports its keys. A key that a
+ * sibling branch of an exactly-one union names still fails.
+ *`;
+
+/**
+ * The report mode section of `helpers.ts`: the unknown key hook, the collector of one decode,
+ * and the functions that run a whole decode and sort its unknown keys into input order.
+ */
+const REPORT_SECTION = String.raw`
+/** A decoded value and the paths of the unknown keys its input had. */
+export interface Reported<T> {
+  /** The decoded value, which leaves the unknown keys out. */
+  readonly value: T;
+  /** The JSON Pointer of each unknown key, like /customer/nickname, in the order the keys appear in the input. */
+  readonly unknown: readonly string[];
+}
+
+/** Receives the paths of the unknown keys of one decode, in input order. */
+export type UnknownKeyHook = (paths: readonly string[]) => void;
+
+/** The hook setUnknownKeyHook set. */
+let hook: UnknownKeyHook | undefined;
+
+/**
+ * Sets the one hook every decode calls with the paths of the unknown keys it accepted, for
+ * logging or counting them in one place. A decode calls it after the value decoded, only when
+ * there is at least one unknown key, and before it returns. undefined removes it.
+ */
+export function setUnknownKeyHook(next: UnknownKeyHook | undefined): void {
+  hook = next;
+}
+
+/** While a decode runs: the paths of the unknown keys it accepted so far, in decode order. */
+let unknown: string[] | undefined;
+
+/**
+ * Runs read as a whole decode, or as part of the decode already running, so the unknown keys
+ * of nested values reach the decode that started.
+ */
+export function report<T>(json: unknown, path: string, read: Decoder<T>): T {
+  if (unknown !== undefined) return read(json, path);
+  return reported(json, path, read).value;
+}
+
+/** Runs read as a whole decode, calls the hook, and returns the value with its unknown key paths. */
+export function reported<T>(json: unknown, path: string, read: Decoder<T>): Reported<T> {
+  const saved = unknown;
+  const found: string[] = [];
+  unknown = found;
+  let value: T;
+  try {
+    value = read(json, path);
+  } finally {
+    unknown = saved;
+  }
+  const paths = inputOrder(json, path, found);
+  if (paths.length > 0) hook?.([...paths]);
+  return { value, unknown: paths };
+}
+
+/** Reads JSON text strictly, then decodes it with read like reported. */
+export function reportFromJson<T>(text: string, read: Decoder<T>): Reported<T> {
+  return fromJson(text, (json, path) => reported(json, path, read));
+}
+
+/**
+ * Sorts the paths of unknown keys into input order: a depth first walk of json, the keys of
+ * each object in their order, which for text read by fromJson is the order the keys appear in
+ * it, as in Rust and Go. Each path is under base, as the decoders build it. The decoders read
+ * every object on a path, so a value that throws when read again is left in decode order.
+ */
+function inputOrder(json: unknown, base: string, paths: readonly string[]): string[] {
+  if (paths.length < 2) return [...paths];
+  const indexes = new Map<object, ReadonlyMap<string, number>>();
+  const position = (path: string): number[] => {
+    const out: number[] = [];
+    let current: unknown = json;
+    for (const raw of path.slice(base.length + 1).split("/")) {
+      const segment = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+      const holder = current as Readonly<Record<string, unknown>>;
+      if (Array.isArray(holder)) {
+        out.push(Number(segment));
+      } else {
+        let index = indexes.get(holder);
+        if (index === undefined) {
+          index = new Map(keysOf(holder).map((key, i) => [key, i]));
+          indexes.set(holder, index);
+        }
+        out.push(index.get(segment) ?? -1);
+      }
+      current = holder[segment];
+    }
+    return out;
+  };
+  try {
+    const keyed = paths.map((path) => ({ path, at: position(path) }));
+    keyed.sort((a, b) => {
+      for (let i = 0; i < a.at.length && i < b.at.length; i++) {
+        const x = a.at[i] ?? 0;
+        const y = b.at[i] ?? 0;
+        if (x !== y) return x - y;
+      }
+      return a.at.length - b.at.length;
+    });
+    return keyed.map((k) => k.path);
+  } catch {
+    return [...paths];
+  }
+}
+`;
+
+/** closed in strict mode: any key the type doesn't name fails. */
+/** In report mode, untagged notes how many unknown keys there were before trying a variant. */
+const UNTAGGED_MARK = String.raw`
+    const mark = unknown?.length ?? 0;`;
+
+/** In report mode, untagged drops the unknown keys of a variant that failed. */
+const UNTAGGED_ROLLBACK = String.raw`
+      if (unknown !== undefined) unknown.length = mark;`;
+
+const CLOSED_STRICT = String.raw`/** Fails on the first key, in input order, that is not one of keys, at that key's path. */
+export function closed(o: Readonly<Record<string, unknown>>, path: string, keys: readonly string[]): void {
+  for (const key of guard(path, () => keysOf(o))) {
+    if (!keys.includes(key)) throw new DecodeError(at(path, key), ErrorCode.UnknownKey);
+  }
+}`;
+
+/** closed in report mode: a key the type doesn't name is noted, unless a sibling branch names it. */
+const CLOSED_REPORT = String.raw`/**
+ * Notes each key, in input order, that is not one of keys as unknown, at that key's path. A key
+ * in forbidden, which a sibling branch of an exactly-one union names, still fails with
+ * unknown_key, and so does any unknown key outside a decode that collects them.
+ */
+export function closed(
+  o: Readonly<Record<string, unknown>>,
+  path: string,
+  keys: readonly string[],
+  forbidden: readonly string[] = [],
+): void {
+  for (const key of guard(path, () => keysOf(o))) {
+    if (keys.includes(key)) continue;
+    if (unknown === undefined || forbidden.includes(key)) {
+      throw new DecodeError(at(path, key), ErrorCode.UnknownKey);
+    }
+    unknown.push(at(path, key));
+  }
+}`;
+
 /**
  * The body of the generated `helpers.ts`, which every generated TypeScript file imports as
  * `h`. It has no imports itself, so the output needs no package to install. It is a raw
- * template, so backslashes stand for themselves.
+ * template, so backslashes stand for themselves. `report` adds what report mode needs.
  */
-export const TS_HELPERS_BODY = String.raw`/**
+export function tsHelpersBody(report: boolean): string {
+  return String.raw`/**
  * Helpers the generated decoders and encoders share.
  *
  * Decoders read a value that is already parsed, like the result of JSON.parse, and check it
  * strictly: unknown keys, missing required keys, null for an optional key and values of the
  * wrong type fail with a DecodeError at the JSON Pointer of the first problem, with the same
  * code and message as in Rust and Go.
- *
+ *${report ? REPORT_DOC : ""}
  * The FromJson decoders read JSON text with the strict reader below instead of JSON.parse, so
  * they reject what Rust and Go reject in the text itself: a key given twice, data after the
  * value, a lone surrogate, nesting past MAX_DEPTH and, for an integer, a spelling like 12.0 or
@@ -175,7 +329,7 @@ export function attemptJson<T>(decode: Decoder<T>, text: string): DecodeResult<T
     throw error;
   }
 }
-
+${report ? REPORT_SECTION : ""}
 /** The values of the escapes other than \u. */
 const ESCAPES = new Map([
   ['"', '"'],
@@ -781,12 +935,7 @@ export function optional<K extends string, T>(
   return out;
 }
 
-/** Fails on the first key, in input order, that is not one of keys, at that key's path. */
-export function closed(o: Readonly<Record<string, unknown>>, path: string, keys: readonly string[]): void {
-  for (const key of guard(path, () => keysOf(o))) {
-    if (!keys.includes(key)) throw new DecodeError(at(path, key), ErrorCode.UnknownKey);
-  }
-}
+${report ? CLOSED_REPORT : CLOSED_STRICT}
 
 /**
  * Decodes the members of o not named in skip, in input order, keys with key and values with
@@ -855,11 +1004,11 @@ export function tagged<T>(
  * wrong_type, or null_not_allowed for null, expected naming the union.
  */
 export function untagged<T>(json: unknown, path: string, name: string, variants: readonly Decoder<T>[]): T {
-  for (const variant of variants) {
+  for (const variant of variants) {${report ? UNTAGGED_MARK : ""}
     try {
       return variant(json, path);
     } catch (error) {
-      if (!(error instanceof DecodeError)) throw error;
+      if (!(error instanceof DecodeError)) throw error;${report ? UNTAGGED_ROLLBACK : ""}
     }
   }
   throw mismatch(path, name, json);
@@ -1119,3 +1268,4 @@ export function toJson(value: unknown): string {
   return parts.join("");
 }
 `;
+}

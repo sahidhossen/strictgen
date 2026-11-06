@@ -18,16 +18,18 @@ import {
   variantName,
 } from "./naming.js";
 import {
+  RUST_HELPERS_ATTEMPT,
   RUST_HELPERS_CONST_BOOL,
   RUST_HELPERS_CONST_INT,
-  RUST_HELPERS_CORE,
   RUST_HELPERS_ENUM,
-  RUST_HELPERS_OBJECT,
   RUST_HELPERS_ONE_OF,
   RUST_HELPERS_REST,
   RUST_HELPERS_TAGGED,
   RUST_NON_NULL,
+  rustHelpersCore,
+  rustHelpersObject,
 } from "./rust-helpers.js";
+import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
 
 /** Name of the built in type for any JSON value except `null`. */
@@ -52,6 +54,8 @@ const RESERVED = new Set([
   "ConstBool",
   "Decode",
   "DecodeError",
+  // Report mode's, reserved in strict mode too, so switching the mode never makes a schema fail.
+  "Reported",
 ]);
 
 const DERIVE_DATA = "#[derive(Debug, Clone, PartialEq, Eq, Serialize)]";
@@ -103,6 +107,11 @@ export interface RustOptions {
   readonly allow?: readonly LintAllow[];
   /** Modules written by another emitter, like `schemas`, declared `pub` and not re-exported. */
   readonly publicModules?: readonly string[];
+  /**
+   * How decoders treat unknown keys: `strict` fails on them, `report` accepts them, reports
+   * their paths and adds `Decode::report_from_json`. Defaults to `strict`.
+   */
+  readonly read?: ReadMode;
 }
 
 /**
@@ -135,6 +144,7 @@ export const HELPERS = "helpers";
 export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[] {
   const header = commentHeader(options.header ?? DEFAULT_HEADER);
   const publicModules = options.publicModules ?? [];
+  const report = options.read === "report";
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name) || KEYWORDS.has(decl.name)) {
       throw new CodegenError(
@@ -165,6 +175,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
   const usesEnum = model.decls.some((d) => d.kind === "enum");
   const usesRest = model.decls.some((d) => d.kind === "struct" && d.rest !== undefined);
   const usesTagged = model.decls.some((d) => d.kind === "tagged");
+  const usesUntagged = model.decls.some((d) => d.kind === "untagged");
   const literals = new Set(model.decls.flatMap(literalKinds));
   const exported = [
     ...(literals.has("boolean") ? ["ConstBool"] : []),
@@ -172,18 +183,20 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     "Decode",
     "DecodeError",
     NON_NULL_JSON,
+    ...(report ? ["Reported"] : []),
   ];
   // Only the parts some declaration uses, so the module has no dead code.
   const helpers = [
     `${header}\n\n//! Built in types and decoding functions the generated modules share.\n`,
-    RUST_HELPERS_CORE,
-    usesStruct ? RUST_HELPERS_OBJECT : "",
+    rustHelpersCore(report),
+    usesStruct ? rustHelpersObject(report) : "",
     usesRest ? RUST_HELPERS_REST : "",
     usesEnum || usesTagged ? RUST_HELPERS_ONE_OF : "",
     usesEnum ? RUST_HELPERS_ENUM : "",
     usesTagged ? RUST_HELPERS_TAGGED : "",
     literals.has("number") ? RUST_HELPERS_CONST_INT : "",
     literals.has("boolean") ? RUST_HELPERS_CONST_BOOL : "",
+    report && usesUntagged ? RUST_HELPERS_ATTEMPT : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -198,13 +211,18 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     "\n",
     modules.map((m) => `pub use ${m.name}::*;\n`).join(""),
     `pub use ${HELPERS}::{${exported.join(", ")}};\n`,
+    // A group of its own, all lower case, so every rustfmt style sorts it the same way.
+    report
+      ? `\n// The unknown key hook, which every decode calls with the paths of its unknown keys.\n` +
+        `pub use ${HELPERS}::{clear_unknown_key_hook, set_unknown_key_hook};\n`
+      : "",
   ].join("");
   return [
     { name: "mod.rs", contents: root },
     { name: `${HELPERS}.rs`, contents: helpers },
     ...modules.map((m) => ({
       name: `${m.name}.rs`,
-      contents: rustModule(model, m.schema, m.decls, moduleNames(modules), header),
+      contents: rustModule(model, m.schema, m.decls, moduleNames(modules), header, report),
     })),
   ];
 }
@@ -242,6 +260,7 @@ function rustModule(
   decls: readonly Decl[],
   modules: ReadonlyMap<string, string>,
   header: string,
+  report: boolean,
 ): string {
   const helpers = new Set<string>();
   const types = decls.flatMap(declTypes);
@@ -268,7 +287,7 @@ function rustModule(
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
     `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
-    ...decls.map((decl) => declaration(decl)),
+    ...decls.map((decl) => declaration(decl, report)),
   ];
   return parts.join("\n");
 }
@@ -309,17 +328,17 @@ function literalKinds(decl: Decl): string[] {
   return declTypes(decl).flatMap(of);
 }
 
-function declaration(decl: Decl): string {
+function declaration(decl: Decl, report: boolean): string {
   const head = docs(decl.doc === "" ? [] : decl.doc.split("\n"), "", [`Schema: \`${decl.path}\`.`]);
   switch (decl.kind) {
     case "struct":
-      return head + struct(decl);
+      return head + struct(decl, report);
     case "enum":
       return head + enumeration(decl);
     case "tagged":
       return head + tagged(decl);
     case "untagged":
-      return head + untagged(decl);
+      return head + untagged(decl, report);
     case "alias":
       return `${head}pub type ${decl.name} = ${typeText(decl.type)};\n`;
     case "id":
@@ -335,7 +354,7 @@ function declaration(decl: Decl): string {
  * rest map, and fails on the first key it didn't read. A struct with a rest map serializes by
  * hand, so its fields carry no serde attributes.
  */
-function struct(decl: StructDecl): string {
+function struct(decl: StructDecl, report: boolean): string {
   const derived = decl.rest === undefined;
   const seen = new Set<string>();
   const fields = decl.fields.map((f) => field(f, decl, seen, derived));
@@ -359,11 +378,15 @@ function struct(decl: StructDecl): string {
     reads.push(`            ${rest}: object.rest()?,\n`);
   }
   const body = fields.length === 0 ? "{}" : `{\n${fields.join("")}}`;
+  // In report mode, finish notes unknown keys, and fails on those a sibling branch names.
+  const finish = report
+    ? `object.finish(&[${decl.forbidden.map(rustString).join(", ")}])?`
+    : "object.finish()?";
   const decode = decodeImpl(
     decl.name,
     reads.length === 0
-      ? `        let object = ${HELPERS}::Object::new(node)?;\n        object.finish()?;\n        Ok(Self {})\n`
-      : `        let mut object = ${HELPERS}::Object::new(node)?;\n        let value = Self {\n${reads.join("")}        };\n        object.finish()?;\n        Ok(value)\n`,
+      ? `        let object = ${HELPERS}::Object::new(node)?;\n        ${finish};\n        Ok(Self {})\n`
+      : `        let mut object = ${HELPERS}::Object::new(node)?;\n        let value = Self {\n${reads.join("")}        };\n        ${finish};\n        Ok(value)\n`,
   );
   if (derived) {
     return `${DERIVE_DATA}\n#[serde(rename_all = "camelCase")]\npub struct ${decl.name} ${body}\n\n${decode}`;
@@ -495,9 +518,10 @@ function tagged(decl: TaggedDecl): string {
 
 /**
  * An untagged union, which tries the variants in order and keeps the first that decodes, like
- * Go and TypeScript. When none does, it fails naming the union.
+ * Go and TypeScript. When none does, it fails naming the union. In report mode each variant runs
+ * through `attempt`, which drops the unknown keys of one that fails.
  */
-function untagged(decl: UntaggedDecl): string {
+function untagged(decl: UntaggedDecl, report: boolean): string {
   const seen = new Set<string>();
   const variants = decl.variants.map((v) => {
     const name = unique(v.name, seen, decl.path);
@@ -505,11 +529,14 @@ function untagged(decl: UntaggedDecl): string {
     return { name, type, text: typeText(v.type) };
   });
   const lines = variants.map((v) => `    /// A \`${v.text}\`.\n    ${v.name}(${v.type}),\n`);
-  const tries = variants.map(
-    (v) =>
-      `        if let Ok(value) = <${v.type} as ${HELPERS}::Decode>::decode_node(node) {\n` +
-      `            return Ok(Self::${v.name}(value));\n        }\n`,
-  );
+  const tries = variants.map((v) => {
+    const decode = `<${v.type} as ${HELPERS}::Decode>::decode_node(node)`;
+    const run = report ? `${HELPERS}::attempt(|| ${decode})` : decode;
+    return (
+      `        if let Ok(value) = ${run} {\n` +
+      `            return Ok(Self::${v.name}(value));\n        }\n`
+    );
+  });
   return (
     `${DERIVE_DATA}\n#[serde(untagged)]\npub enum ${decl.name} {\n${lines.join("")}}\n\n` +
     decodeImpl(
@@ -601,8 +628,9 @@ export function serdeCamel(ident: string): string {
 export function emitRustFixtures(
   model: Model,
   crate: string,
-  options: { readonly header?: string } = {},
+  options: { readonly header?: string; readonly read?: ReadMode } = {},
 ): string {
+  const report = options.read === "report";
   const arms = model.decls
     .filter((d) => d.source !== undefined)
     .map((d) => ({ decl: d, schema: d.source?.schema ?? "", def: d.source?.def }))
@@ -627,12 +655,25 @@ pub enum Failure {
     Encode(String),
 }
 
-/// Decodes \`json\` as the type generated for \`schema\` and \`def\` (\`None\` for the root), then
+${registryTail(report, arms.join(""))}`;
+}
+
+/** Rustdoc lines, with `extra` lines after a blank line. */
+function docs(lines: readonly string[], indent: string, extra: readonly string[]): string {
+  const all =
+    lines.length > 0 && extra.length > 0 ? [...lines, "", ...extra] : [...lines, ...extra];
+  return all.map((line) => `${indent}///${line === "" ? "" : ` ${line}`}\n`).join("");
+}
+
+/** The end of the registry: round_trip, holding the match arms, and run. */
+function registryTail(report: boolean, arms: string): string {
+  if (!report) {
+    return `/// Decodes \`json\` as the type generated for \`schema\` and \`def\` (\`None\` for the root), then
 /// encodes it again. Returns \`None\` when no type is generated for that pair.
 #[allow(clippy::too_many_lines, reason = "one arm per generated def")]
 pub fn round_trip(schema: &str, def: Option<&str>, json: &[u8]) -> Option<Result<Value, Failure>> {
     let result = match (schema, def) {
-${arms.join("")}        _ => return None,
+${arms}        _ => return None,
     };
     Some(result)
 }
@@ -642,11 +683,27 @@ fn run<T: Decode + serde::Serialize>(json: &[u8]) -> Result<Value, Failure> {
     serde_json::to_value(decoded).map_err(|error| Failure::Encode(error.to_string()))
 }
 `;
+  }
+  // In report mode, it also returns the unknown key paths.
+  return `/// Decodes \`json\` as the type generated for \`schema\` and \`def\` (\`None\` for the root), then
+/// encodes it again, and returns the encoding with the paths of the unknown keys. Returns
+/// \`None\` when no type is generated for that pair.
+#[allow(clippy::too_many_lines, reason = "one arm per generated def")]
+pub fn round_trip(
+    schema: &str,
+    def: Option<&str>,
+    json: &[u8],
+) -> Option<Result<(Value, Vec<String>), Failure>> {
+    let result = match (schema, def) {
+${arms}        _ => return None,
+    };
+    Some(result)
 }
 
-/** Rustdoc lines, with `extra` lines after a blank line. */
-function docs(lines: readonly string[], indent: string, extra: readonly string[]): string {
-  const all =
-    lines.length > 0 && extra.length > 0 ? [...lines, "", ...extra] : [...lines, ...extra];
-  return all.map((line) => `${indent}///${line === "" ? "" : ` ${line}`}\n`).join("");
+fn run<T: Decode + serde::Serialize>(json: &[u8]) -> Result<(Value, Vec<String>), Failure> {
+    let decoded = T::report_from_json(json).map_err(Failure::Decode)?;
+    let encoded = serde_json::to_value(decoded.value).map_err(|error| Failure::Encode(error.to_string()))?;
+    Ok((encoded, decoded.unknown))
+}
+`;
 }
