@@ -13,6 +13,7 @@ import { typeScriptDriver } from "./drivers.js";
 import { parseFuzzArguments } from "./fuzz-args.js";
 import type { FuzzOptions } from "./fuzz.js";
 import { asciiJson, bumpManifest, cleanupInput, failureLines, fuzzMarks, runFuzz, runSeed, shrink, signature, treeCandidates } from "./fuzz.js";
+import { variantName } from "./protocol.js";
 import { writeJson } from "./walk.js";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -216,12 +217,13 @@ describe("the fuzzer against a deliberately broken emitter", () => {
    * emitter with an off by one would, called ts.
    */
   const drivers =
-    (broken: boolean): NonNullable<FuzzOptions["drivers"]> =>
+    (broken: boolean | string): NonNullable<FuzzOptions["drivers"]> =>
     (out, packages): Driver[] => {
       const copy = join(out, "broken");
       cpSync(join(out, "ts"), join(copy, "ts"), { recursive: true });
-      if (broken) {
-        for (const p of packages) {
+      if (broken !== false) {
+        // Every package, or only the one named.
+        for (const p of packages.filter((x) => broken === true || x.name === broken)) {
           const file = join(copy, "ts", p.name, "helpers.ts");
           const text = readFileSync(file, "utf8");
           expect(text).toContain("if (max !== undefined && n > max) {");
@@ -230,7 +232,7 @@ describe("the fuzzer against a deliberately broken emitter", () => {
       }
       return [{ ...typeScriptDriver(out, packages), language: "rust" }, typeScriptDriver(copy, packages)];
     };
-  const options = (broken: boolean, save?: "rust"): FuzzOptions => ({
+  const options = (broken: boolean | string, save?: "rust"): FuzzOptions => ({
     conformance,
     seed: 3,
     runs: 60,
@@ -262,7 +264,7 @@ describe("the fuzzer against a deliberately broken emitter", () => {
     const [type, kind, name] = saved.split("/");
     expect(kind).toBe("invalid");
     const dir = join(conformance, "cases", type ?? "", "invalid");
-    expect(readFileSync(join(dir, name ?? ""), "utf8")).toBe(`${failure.shrunk.text}\n`);
+    expect(readFileSync(join(dir, name ?? ""), "utf8")).toBe(`${failure.shrunk.payload ?? ""}\n`);
     expect(JSON.parse(readFileSync(join(dir, (name ?? "").replace(/\.json$/, ".expect.json")), "utf8"))).toMatchObject({ code: "too_long" });
     expect(name).toMatch(/^fuzz-[0-9a-f]{12}\.json$/);
     const manifest = readFileSync(join(conformance, "manifest.json"), "utf8");
@@ -274,6 +276,20 @@ describe("the fuzzer against a deliberately broken emitter", () => {
     expect(third.failure?.saved).toBeUndefined();
     expect(readdirSync(dir).length).toBe(before);
     expect(existsSync(join(dir, name ?? ""))).toBe(true);
+  });
+
+  it("shrinks a failure of the LLM decoders in normal JSON, and saves that", { timeout: FUZZ_TIMEOUT }, async () => {
+    // Only the code that reads maps as objects is broken, which only its LLM decoders read.
+    const lines: string[] = [];
+    // A seed of its own, so it doesn't shrink to the case the test above saved.
+    const result = await runFuzz({ ...options("strict_llm_objects", "rust"), runs: 200, batch: 100, seed: 11, log: (l) => void lines.push(l) });
+    const failure = result.failure;
+    if (failure?.shrunk?.payload === undefined) throw new Error("no shrunk failure in normal JSON");
+    expect(variantName(failure.variant)).toBe("strict/llm/objects");
+    const saved = failure.saved;
+    if (saved === undefined) throw new Error(`not saved: ${lines.join("; ")} ${failure.shrunk.payload} ${failure.shrunk.text}`);
+    // The case holds the payload in normal JSON; the suite projects it to the LLM form itself.
+    expect(readFileSync(join(conformance, "cases", saved), "utf8")).toBe(`${failure.shrunk.payload}\n`);
   });
 
   it("passes when nothing is broken", { timeout: FUZZ_TIMEOUT }, async () => {

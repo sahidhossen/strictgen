@@ -377,8 +377,11 @@ function textCandidates(text: string): string[] {
 
 /** The result of shrinking: the input, the rows it gives and how many steps it took. */
 export interface Shrunk {
+  /** The input of the failing variant, like the LLM form of the payload. */
   readonly text: string;
   readonly normal: boolean;
+  /** The payload in normal JSON, which the input is or is projected from, when it is one. */
+  readonly payload?: string;
   readonly job: Job;
   readonly rows: readonly Disagreement[];
   readonly steps: number;
@@ -441,7 +444,7 @@ export function shrink(drivers: readonly Driver[], job: Job, space: Space): Shru
     }
     if (!found) break;
   }
-  return { text, normal: space.normal, job: best, rows, steps };
+  return { text, normal: space.normal, job: best, rows, steps, ...(space.normal ? { payload: writeJson(current as Json) } : {}) };
 }
 
 /** How the input of a job is shrunk: in normal JSON when it is a projection of a fuzz payload. */
@@ -581,7 +584,7 @@ export async function runFuzz(options: FuzzOptions): Promise<FuzzResult> {
 
 /** Why a shrunk case can't be saved, or undefined when it can. */
 function unsavable(shrunk: Shrunk, trusted: Language, marks: readonly Mark[], strict: Result | undefined, report: Result | undefined): string | undefined {
-  if (!shrunk.normal) return "the failing input is not a payload of the type in normal JSON (an LLM-only near miss or a cleanup input), which conformance/cases can't hold; add it to the vectors by hand";
+  if (!shrunk.normal || shrunk.payload === undefined) return "the failing input is not a payload of the type in normal JSON (an LLM-only near miss or a cleanup input), which conformance/cases can't hold; add it to the vectors by hand";
   if (marks.length > 0) return `the payload needs the marks ${marks.map((m) => m.kind).join(", ")}, which a saved case must carry in marks.json only where needed; add it by hand`;
   if (strict === undefined || report === undefined) return `${trusted} did not run`;
   for (const r of [strict, report]) if (r.error?.code === "crash") return `${trusted} crashed, so its answer can't be the expectation`;
@@ -621,7 +624,8 @@ function saveCase(options: FuzzOptions, drivers: readonly Driver[], packages: re
   if (trusted === undefined) return undefined;
   const driver = drivers.find((d) => d.language === trusted);
   const type = shrunk.job.case.type;
-  const c: Case = { id: shrunk.job.case.id, type, valid: true, bytes: bytes(shrunk.text), strict: ACCEPTED, report: ACCEPTED };
+  const payload = shrunk.payload ?? shrunk.text;
+  const c: Case = { id: shrunk.job.case.id, type, valid: true, bytes: bytes(payload), strict: ACCEPTED, report: ACCEPTED };
   const marks = fuzzMarks(c);
   const jobs: Job[] = (["strict", "report"] as const).map((mode) => ({ case: c, variant: { mode, decoder: "normal", entry: "public" }, marks: [] }));
   const results = driver === undefined ? [] : driver.run(jobRequests(jobs));
@@ -633,7 +637,7 @@ function saveCase(options: FuzzOptions, drivers: readonly Driver[], packages: re
   };
   if (why !== undefined || strict === undefined || report === undefined) return fail(why ?? `${trusted} did not run`);
   const kind = strict.accepted ? "valid" : "invalid";
-  const name = `fuzz-${createHash("sha256").update(shrunk.text).digest("hex").slice(0, 12)}`;
+  const name = `fuzz-${createHash("sha256").update(payload).digest("hex").slice(0, 12)}`;
   const dir = join(options.conformance, "cases", type, kind);
   const file = join(dir, `${name}.json`);
   if (existsSync(file)) return fail(`${type}/${kind}/${name}.json is there already`);
@@ -644,7 +648,7 @@ function saveCase(options: FuzzOptions, drivers: readonly Driver[], packages: re
   const expect = kind === "invalid" ? expectFile(strict, report) : undefined;
   // Everything that can fail has: write.
   mkdirSync(dir, { recursive: true });
-  writeFileSync(file, `${shrunk.text}\n`);
+  writeFileSync(file, `${payload}\n`);
   if (expect !== undefined) writeFileSync(join(dir, `${name}${EXPECT}`), expect);
   writeFileSync(manifestFile, manifest);
   log(`saved ${type}/${kind}/${name}.json with ${trusted}'s answer${expect === undefined ? "" : `: ${expect.trim()}`}`);
@@ -668,9 +672,9 @@ export function failureLines(seed: number, failure: FuzzFailure, languages: read
   } else {
     out.push(
       "",
-      `shrunk in ${String(s.steps)} steps, ${s.normal ? "as a payload in normal JSON" : "as the input of this variant"}:`,
-      `  payload (json): ${asciiJson(s.text)}`,
-      `  payload (hex):  ${Buffer.from(s.text).toString("hex")}`,
+      `shrunk in ${String(s.steps)} steps, ${s.payload === undefined ? "as the input of this variant" : "as a payload in normal JSON"}:`,
+      ...(s.payload !== undefined && s.payload !== s.text ? [`  payload (json): ${asciiJson(s.payload)}`, `  as read here:   ${asciiJson(s.text)}`] : [`  payload (json): ${asciiJson(s.text)}`]),
+      `  input (hex):    ${Buffer.from(s.text).toString("hex")}`,
       "",
       ...table(s.rows, languages),
     );
