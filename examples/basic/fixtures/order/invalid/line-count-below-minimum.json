@@ -1,0 +1,19 @@
+{
+  "id": "ord_5h1c",
+  "note": "ab",
+  "quantity": 1,
+  "price": 0.5,
+  "tags": [
+    "a"
+  ],
+  "lines": [
+    {
+      "sku": "abc",
+      "count": 1
+    },
+    {
+      "sku": "abc",
+      "count": 0
+    }
+  ]
+}

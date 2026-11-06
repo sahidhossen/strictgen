@@ -107,6 +107,18 @@ describe("config targets", () => {
     const other = project({ idBase: "https://other.example/", targets: { rust } }, { common });
     expect(run(other).code).toBe(1);
   });
+
+  it("passes validation to the generator, so false leaves the checks out", () => {
+    const limited = { ...order, properties: { total: { type: "integer", minimum: 0 } } };
+    const on = project({ targets: { rust, go, typescript } }, { order: limited });
+    expect(contents(on, "go/order.go")).toContain('checkInt(v.Total, limit[int64]{">=", 0, "0"})');
+    expect(contents(on, "rust/src/generated/order.rs")).toContain("helpers::check_integer(");
+    expect(contents(on, "ts/generated/order.ts")).toContain("h.limits(h.decodeInteger");
+    const off = project({ validation: false, targets: { rust, go, typescript } }, { order: limited });
+    for (const file of files(off).filter((f) => /order\.(go|rs|ts)$/.test(f.path))) {
+      expect(file.contents, file.path).not.toMatch(/check|limits/);
+    }
+  });
 });
 
 describe("config header", () => {

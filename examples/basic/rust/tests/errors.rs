@@ -2,7 +2,7 @@
 //! isn't JSON, how values show in `found`, and the key order of enum-keyed maps, as the Go and
 //! TypeScript tests do.
 
-use example_basic::{Decode, DecodeError, Event, Role, User};
+use example_basic::{Decode, DecodeError, Event, Order, Role, User};
 
 #[test]
 fn decode_error_shape() {
@@ -133,6 +133,85 @@ fn enum_keys_encode_in_code_point_order() {
     assert!(Role::Admin < Role::Member && Role::Member < Role::Owner);
 }
 
+/// The messages of constraint errors, the same as Go's TestConstraintMessages and the
+/// TypeScript tests: counts in code points, items and keys, and numbers as JavaScript writes them.
+#[test]
+fn constraint_messages() {
+    // An order with every required key, then the keys of the case.
+    let order = |note: &str, rest: &str| {
+        format!(r#"{{"id":"ord_5h1c","note":{note},"quantity":1,"tags":["a"]{rest}}}"#)
+    };
+    let cases = [
+        (
+            r#""😀""#,
+            r#","price":1"#,
+            "/note: too short, expected at least 2 characters, found 1 character",
+        ),
+        (
+            r#""e\u0301e\u0301e\u0301""#,
+            r#","price":1"#,
+            "/note: too long, expected at most 5 characters, found 6 characters",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1,"packSize":7"#,
+            "/packSize: not a multiple, expected a multiple of 6, found 7",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1,"packSize":50"#,
+            "/packSize: too large, expected < 50, found 50",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1E3"#,
+            "/price: too large, expected < 1000, found 1000",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1e-7"#,
+            "/price: too small, expected >= 0.5, found 1e-7",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1,"discount":-0"#,
+            "/discount: too small, expected > 0, found -0",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1,"discount":1e21"#,
+            "/discount: too large, expected <= 0.75, found 1e+21",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1,"attributes":{"c":"abc","b":"abc","a":"abc"}"#,
+            "/attributes: too long, expected at most 2 keys, found 3 keys",
+        ),
+        (
+            r#""ab""#,
+            r#","price":1,"attributes":{"b":"x","a":"y"}"#,
+            "/attributes/a: too short, expected at least 3 characters, found 1 character",
+        ),
+        (
+            r#""a""#,
+            r#","price":"1""#,
+            "/price: wrong type, expected a number, found \"1\"",
+        ),
+    ];
+    for (note, rest, want) in cases {
+        let text = order(note, rest);
+        let error = Order::from_json(&text).expect_err(want);
+        assert_eq!(error.to_string(), want, "{text}");
+    }
+    let error =
+        Order::from_json(r#"{"id":"ord_5h1c","note":"ab","quantity":1,"price":1,"tags":[]}"#)
+            .expect_err("no tags");
+    assert_eq!(
+        error.to_string(),
+        "/tags: too short, expected at least 1 item, found 0 items"
+    );
+}
+
 #[test]
 fn every_code_is_a_constant() {
     let codes = [
@@ -147,6 +226,7 @@ fn every_code_is_a_constant() {
         (DecodeError::TOO_LONG, "too_long"),
         (DecodeError::TOO_SMALL, "too_small"),
         (DecodeError::TOO_LARGE, "too_large"),
+        (DecodeError::NOT_MULTIPLE_OF, "not_multiple_of"),
         (DecodeError::PATTERN_MISMATCH, "pattern_mismatch"),
         (DecodeError::BAD_FORMAT, "bad_format"),
         (DecodeError::NOT_UNIQUE, "not_unique"),

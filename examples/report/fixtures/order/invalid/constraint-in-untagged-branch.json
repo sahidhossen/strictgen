@@ -1,0 +1,24 @@
+{
+  "id": "ord_7d2k",
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com"
+  },
+  "payment": {
+    "type": "card",
+    "last4": "4242"
+  },
+  "lines": [
+    {
+      "sku": "A-1",
+      "quantity": 1
+    }
+  ],
+  "delivery": {
+    "carrier": {
+      "name": "A carrier with a long name"
+    },
+    "trackingCode": "T1",
+    "eta": "soon"
+  }
+}

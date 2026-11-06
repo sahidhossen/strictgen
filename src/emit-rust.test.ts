@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { buildModel } from "./build.js";
-import { emitRust, rustString } from "./emit-rust.js";
+import { emitRust, emitRustFixtures, rustString } from "./emit-rust.js";
 import { ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
 import type { JsonObject } from "./schema.js";
 import { schemaSet } from "./schema.js";
+
+const closed = (properties: JsonObject): JsonObject => ({
+  type: "object",
+  properties,
+  additionalProperties: false,
+});
 
 const BASE = "https://example.com/schemas/v1/";
 
@@ -243,6 +249,96 @@ describe("Rust report mode", () => {
   });
 });
 
+describe("Rust constraints", () => {
+  const model = buildModel(
+    schemaSet({
+      common: schema("common", {
+        $defs: {
+          orderId: { type: "string", minLength: 4 },
+          plainId: { type: "string" },
+        },
+      }),
+      lib: schema("lib", {
+        $defs: {
+          item: {
+            type: "object",
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 5 },
+              count: { type: "integer", minimum: 1, multipleOf: 2 },
+              price: { type: "number", exclusiveMinimum: 0, maximum: 1e21 },
+              ratio: { type: "number", minimum: -3 },
+              tags: { type: "array", items: { type: "string", maxLength: 3 }, maxItems: 2 },
+              byId: {
+                type: "object",
+                propertyNames: { $ref: `${BASE}common.json#/$defs/orderId` },
+                additionalProperties: { type: "integer", maximum: 9 },
+                minProperties: 1,
+              },
+              next: { $ref: "#/$defs/item" },
+            },
+            required: ["name", "count"],
+            additionalProperties: false,
+          },
+          codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 2 },
+          plain: closed({ name: { type: "string" } }),
+        },
+      }),
+    }),
+    { ids: { file: "common", suffix: "Id" } },
+  );
+  const files = emitRust(model);
+  const text = (name: string): string => files.find((f) => f.name === name)?.contents ?? "";
+
+  it("check a struct's fields in schema order, after the whole value decoded", () => {
+    const lib = text("lib.rs");
+    const name = lib.indexOf('helpers::within("name", helpers::check_length(&self.name, Some(1), Some(5)))?;');
+    const count = lib.indexOf(
+      'helpers::within("count", helpers::check_integer(self.count, &[(">=", 1, "1"), ("%", 2, "2")]))?;',
+    );
+    expect(name).toBeGreaterThan(-1);
+    expect(count).toBeGreaterThan(name);
+    expect(lib).toContain(
+      'helpers::within("price", helpers::check_number(value, &[(">", 0.0, "0"), ("<=", 1e+21, "1e+21")]))?;',
+    );
+    expect(lib).toContain('helpers::check_number(value, &[(">=", -3.0, "-3")])');
+    expect(lib).toContain(
+      'helpers::check_items(value, None, Some(2), |item| helpers::check_length(item, None, Some(3)))',
+    );
+    expect(lib).toContain(
+      'helpers::check_entries(value, Some(1), None, |key| key.0.as_str(), helpers::Decode::check, |item| helpers::check_integer(*item, &[("<=", 9, "9")]))',
+    );
+    expect(lib).toContain('helpers::within("next", helpers::Decode::check(value))?;');
+  });
+
+  it("check an id's string, and give an alias with constraints a decode function", () => {
+    expect(text("common.rs")).toContain("        helpers::check_length(&self.0, Some(4), None)\n");
+    expect(text("lib.rs")).toContain(
+      "pub fn decode_codes(json: impl AsRef<[u8]>) -> Result<Codes, helpers::DecodeError> {\n" +
+        "    let value = <Codes as helpers::Decode>::from_json(json)?;\n" +
+        "    helpers::check_items(&value, None, Some(2), |item| helpers::check_length(item, Some(3), None))?;\n",
+    );
+  });
+
+  it("write no check for a type without constraints, and no unused helper", () => {
+    const lib = text("lib.rs");
+    const plain = lib.slice(lib.indexOf("impl helpers::Decode for Plain {"));
+    expect(plain.slice(0, plain.indexOf("\n}\n"))).not.toContain("fn check");
+    expect(text("common.rs").slice(text("common.rs").indexOf("for PlainId"))).not.toContain("fn check");
+    const helpers = text("helpers.rs");
+    for (const used of ["fn within", "fn check_length", "fn check_items", "fn check_entries", "fn check_integer", "fn check_number"]) {
+      expect(helpers).toContain(used);
+    }
+    const none = emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: { plain: closed({ a: { type: "string" } }) } }) })));
+    expect(none.map((f) => f.contents).join("\n")).not.toMatch(/fn (within|check_|limit_error|count)\b/);
+  });
+
+  it("call a decode function in the fixture registry for an alias with constraints", () => {
+    const registry = emitRustFixtures(model, "crate_name");
+    expect(registry).toContain('("lib", Some("codes")) => encode(crate_name::decode_codes(json)),\n');
+    expect(registry).toContain('("lib", Some("item")) => run::<crate_name::Item>(json),\n');
+  });
+});
+
 describe("reserved names", () => {
   const lib = (entries: JsonObject) =>
     emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: entries }) })));
@@ -279,6 +375,15 @@ describe("reserved names", () => {
     expect(() => lib({ decode: { type: "string" } })).toThrow(
       "reserved-name: type name Decode is reserved in Rust",
     );
+  });
+
+  it("fails on two aliases whose decode functions share a name", () => {
+    expect(() =>
+      lib({
+        aB: { type: "string", maxLength: 1 },
+        ab: { type: "array", items: { type: "string" }, maxItems: 1 },
+      }),
+    ).toThrow("name-clash: the Rust function decode_ab is also used by lib.json#/$defs/aB");
   });
 
   it("fails on a schema file named like a crate the generated code uses", () => {

@@ -1,9 +1,12 @@
 import type { EmittedFile } from "./common.js";
 import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER, imports } from "./common.js";
+import { Checks, limitsOf } from "./checks.js";
 import type {
+  AliasDecl,
   Decl,
   EnumDecl,
   Field,
+  IdDecl,
   Model,
   StructDecl,
   TaggedDecl,
@@ -19,6 +22,7 @@ import {
 } from "./naming.js";
 import {
   RUST_HELPERS_ATTEMPT,
+  RUST_HELPERS_CHECKS,
   RUST_HELPERS_CONST_BOOL,
   RUST_HELPERS_CONST_INT,
   RUST_HELPERS_ENUM,
@@ -67,9 +71,24 @@ const DERIVE_ID = "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, 
 const DECODE_FN =
   "    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {\n";
 
-/** An impl of `Decode` for `name` whose method body is `body`, indented by eight spaces. */
-function decodeImpl(name: string, body: string): string {
-  return `impl ${HELPERS}::Decode for ${name} {\n${DECODE_FN}${body}    }\n}\n`;
+/**
+ * An impl of `Decode` for `name` whose method body is `body`, indented by eight spaces, with a
+ * `check` method whose body is `check`, when the type has constraints.
+ */
+function decodeImpl(name: string, body: string, check?: string): string {
+  const checkFn =
+    check === undefined
+      ? ""
+      : `\n    fn check(&self) -> Result<(), ${HELPERS}::DecodeError> {\n${check}    }\n`;
+  return `impl ${HELPERS}::Decode for ${name} {\n${DECODE_FN}${body}    }\n${checkFn}}\n`;
+}
+
+interface Ctx {
+  readonly decls: ReadonlyMap<string, Decl>;
+  /** True in report mode. */
+  readonly report: boolean;
+  /** Which values have constraints to check. */
+  readonly checks: Checks;
 }
 
 /** A lint the generated `mod.rs` allows for every module, and why. */
@@ -171,6 +190,16 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
       );
     }
   }
+  const ctx: Ctx = {
+    decls: new Map(model.decls.map((d) => [d.name, d])),
+    report,
+    checks: new Checks(model.decls),
+  };
+  checkDecoderNames(ctx, model);
+  const contents = modules.map((m) => ({
+    name: `${m.name}.rs`,
+    contents: rustModule(ctx, model, m.schema, m.decls, moduleNames(modules), header),
+  }));
   const usesStruct = model.decls.some((d) => d.kind === "struct");
   const usesEnum = model.decls.some((d) => d.kind === "enum");
   const usesRest = model.decls.some((d) => d.kind === "struct" && d.rest !== undefined);
@@ -197,6 +226,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     literals.has("number") ? RUST_HELPERS_CONST_INT : "",
     literals.has("boolean") ? RUST_HELPERS_CONST_BOOL : "",
     report && usesUntagged ? RUST_HELPERS_ATTEMPT : "",
+    ...checkParts(contents.map((c) => c.contents)),
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -220,11 +250,70 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
   return [
     { name: "mod.rs", contents: root },
     { name: `${HELPERS}.rs`, contents: helpers },
-    ...modules.map((m) => ({
-      name: `${m.name}.rs`,
-      contents: rustModule(model, m.schema, m.decls, moduleNames(modules), header, report),
-    })),
+    ...contents,
   ];
+}
+
+/** The check helpers the modules call, with the parts they need, in a fixed order. */
+function checkParts(modules: readonly string[]): string[] {
+  const wanted = new Set<string>();
+  const want = (name: string): void => {
+    if (wanted.has(name)) return;
+    wanted.add(name);
+    for (const need of RUST_HELPERS_CHECKS[name]?.needs ?? []) want(need);
+  };
+  for (const name of Object.keys(RUST_HELPERS_CHECKS)) {
+    if (modules.some((text) => text.includes(`${HELPERS}::${name}(`))) want(name);
+  }
+  return Object.entries(RUST_HELPERS_CHECKS)
+    .filter(([name]) => wanted.has(name))
+    .map(([, part]) => part.text);
+}
+
+/**
+ * The type an alias stands for, through other aliases. An alias of a non-ref type, like a list
+ * of strings, has no type of its own to check its constraints, so it gets a decode function.
+ */
+function aliasTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
+  let current = type;
+  for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
+    const decl = ctx.decls.get(current.name);
+    if (decl?.kind !== "alias") return current;
+    current = decl.type;
+  }
+  return current;
+}
+
+/** True for an alias that gets a `decode_x` function, since `X::from_json` can't check it. */
+function hasDecoder(ctx: Ctx, decl: Decl): decl is AliasDecl {
+  return (
+    decl.kind === "alias" &&
+    ctx.checks.decl(decl.name) &&
+    aliasTarget(ctx, decl.type).kind !== "ref"
+  );
+}
+
+/** The decode function of an alias, like `decode_short_names` for `ShortNames`. */
+export function aliasDecoderName(name: string): string {
+  return `decode_${name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()}`;
+}
+
+/** Two aliases whose decode functions would share a name fail. */
+function checkDecoderNames(ctx: Ctx, model: Model): void {
+  const owners = new Map<string, string>();
+  for (const decl of model.decls) {
+    if (!hasDecoder(ctx, decl)) continue;
+    const name = aliasDecoderName(decl.name);
+    const other = owners.get(name);
+    if (other !== undefined)
+      throw new CodegenError(
+        decl.path,
+        "name-clash",
+        `the Rust function ${name} is also used by ${other}`,
+        RENAME_TYPE,
+      );
+    owners.set(name, decl.path);
+  }
 }
 
 function moduleNames(modules: readonly { schema: string; name: string }[]): Map<string, string> {
@@ -255,12 +344,12 @@ export function moduleName(schema: string, path: string): string {
 
 /** One schema's module: imports from the other modules and the helpers, then its declarations. */
 function rustModule(
+  ctx: Ctx,
   model: Model,
   schema: string,
   decls: readonly Decl[],
   modules: ReadonlyMap<string, string>,
   header: string,
-  report: boolean,
 ): string {
   const helpers = new Set<string>();
   const types = decls.flatMap(declTypes);
@@ -271,8 +360,10 @@ function rustModule(
       if (kind === "boolean-literal") helpers.add("ConstBool");
     }
   }
-  // Every declaration but an alias implements Decode through the helpers module.
-  const decodes = decls.some((d) => d.kind !== "alias");
+  // Every declaration but an alias implements Decode through the helpers module, and an alias
+  // with constraints has a decode function.
+  const decodes = decls.some((d) => d.kind !== "alias" || hasDecoder(ctx, d));
+  const serializes = decls.some((d) => d.kind !== "alias");
   const usesMap =
     types.some((t) => kindsOf(t).has("map")) ||
     decls.some((d) => d.kind === "struct" && d.rest !== undefined);
@@ -283,11 +374,11 @@ function rustModule(
   if (fromHelpers.length === 1 && fromHelpers[0] === "self") uses.push(`use super::${HELPERS};\n`);
   else if (fromHelpers.length > 0)
     uses.push(`use super::${HELPERS}::${importList(fromHelpers)};\n`);
-  if (decodes) uses.push("use serde::Serialize;\n");
+  if (serializes) uses.push("use serde::Serialize;\n");
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
     `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
-    ...decls.map((decl) => declaration(decl, report)),
+    ...decls.map((decl) => declaration(ctx, decl)),
   ];
   return parts.join("\n");
 }
@@ -328,23 +419,27 @@ function literalKinds(decl: Decl): string[] {
   return declTypes(decl).flatMap(of);
 }
 
-function declaration(decl: Decl, report: boolean): string {
+function declaration(ctx: Ctx, decl: Decl): string {
   const head = docs(decl.doc === "" ? [] : decl.doc.split("\n"), "", [`Schema: \`${decl.path}\`.`]);
   switch (decl.kind) {
     case "struct":
-      return head + struct(decl, report);
+      return head + struct(ctx, decl);
     case "enum":
       return head + enumeration(decl);
     case "tagged":
-      return head + tagged(decl);
+      return head + tagged(ctx, decl);
     case "untagged":
-      return head + untagged(decl, report);
+      return head + untagged(ctx, decl);
     case "alias":
-      return `${head}pub type ${decl.name} = ${typeText(decl.type)};\n`;
+      return `${head}pub type ${decl.name} = ${typeText(decl.type)};\n${aliasDecoder(ctx, decl)}`;
     case "id":
       return (
         `${head}${DERIVE_ID}\n#[serde(transparent)]\npub struct ${decl.name}(pub String);\n\n` +
-        decodeImpl(decl.name, `        <String as ${HELPERS}::Decode>::decode_node(node).map(Self)\n`)
+        decodeImpl(
+          decl.name,
+          `        <String as ${HELPERS}::Decode>::decode_node(node).map(Self)\n`,
+          idCheck(ctx, decl),
+        )
       );
   }
 }
@@ -354,7 +449,8 @@ function declaration(decl: Decl, report: boolean): string {
  * rest map, and fails on the first key it didn't read. A struct with a rest map serializes by
  * hand, so its fields carry no serde attributes.
  */
-function struct(decl: StructDecl, report: boolean): string {
+function struct(ctx: Ctx, decl: StructDecl): string {
+  const { report } = ctx;
   const derived = decl.rest === undefined;
   const seen = new Set<string>();
   const fields = decl.fields.map((f) => field(f, decl, seen, derived));
@@ -387,6 +483,7 @@ function struct(decl: StructDecl, report: boolean): string {
     reads.length === 0
       ? `        let object = ${HELPERS}::Object::new(node)?;\n        ${finish};\n        Ok(Self {})\n`
       : `        let mut object = ${HELPERS}::Object::new(node)?;\n        let value = Self {\n${reads.join("")}        };\n        ${finish};\n        Ok(value)\n`,
+    structCheck(ctx, decl, idents),
   );
   if (derived) {
     return `${DERIVE_DATA}\n#[serde(rename_all = "camelCase")]\npub struct ${decl.name} ${body}\n\n${decode}`;
@@ -490,7 +587,7 @@ function enumeration(decl: EnumDecl): string {
 }
 
 /** A tagged union, which reads the tag and decodes only the branch it names. */
-function tagged(decl: TaggedDecl): string {
+function tagged(ctx: Ctx, decl: TaggedDecl): string {
   const seen = new Set<string>();
   const variants = decl.variants.map((v) => ({
     ...v,
@@ -512,6 +609,11 @@ function tagged(decl: TaggedDecl): string {
       decl.name,
       `        match ${HELPERS}::tag(node, ${tag})? {\n${arms.join("")}` +
         `            other => Err(${HELPERS}::bad_tag(${tag}, other, &[${tags}])),\n        }\n`,
+      variantCheck(
+        ctx,
+        variants.map((v) => ({ name: v.name, type: { kind: "ref", name: v.type } })),
+        ctx.checks.decl(decl.name),
+      ),
     )
   );
 }
@@ -521,12 +623,13 @@ function tagged(decl: TaggedDecl): string {
  * Go and TypeScript. When none does, it fails naming the union. In report mode each variant runs
  * through `attempt`, which drops the unknown keys of one that fails.
  */
-function untagged(decl: UntaggedDecl, report: boolean): string {
+function untagged(ctx: Ctx, decl: UntaggedDecl): string {
+  const { report } = ctx;
   const seen = new Set<string>();
   const variants = decl.variants.map((v) => {
     const name = unique(v.name, seen, decl.path);
     const type = v.boxed ? `Box<${typeText(v.type)}>` : typeText(v.type);
-    return { name, type, text: typeText(v.type) };
+    return { name, type, text: typeText(v.type), model: v.type };
   });
   const lines = variants.map((v) => `    /// A \`${v.text}\`.\n    ${v.name}(${v.type}),\n`);
   const tries = variants.map((v) => {
@@ -542,7 +645,137 @@ function untagged(decl: UntaggedDecl, report: boolean): string {
     decodeImpl(
       decl.name,
       `${tries.join("")}        Err(${HELPERS}::mismatch(${rustString(decl.name)}, node))\n`,
+      variantCheck(
+        ctx,
+        variants.map((v) => ({ name: v.name, type: v.model })),
+        ctx.checks.decl(decl.name),
+      ),
     )
+  );
+}
+
+/**
+ * A Rust expression of type `Result<(), DecodeError>` that checks `v`, a reference to a value
+ * of `type`, or undefined when there is nothing to check.
+ */
+function rustCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
+  if (!ctx.checks.type(type)) return undefined;
+  const n = (value: number | undefined): string =>
+    value === undefined ? "None" : `Some(${String(value)})`;
+  switch (type.kind) {
+    case "ref": {
+      const decl = ctx.decls.get(type.name);
+      if (decl?.kind === "alias") return rustCheck(ctx, decl.type, v);
+      return `${HELPERS}::Decode::check(${v})`;
+    }
+    case "string":
+      return `${HELPERS}::check_length(${v}, ${n(type.minLength)}, ${n(type.maxLength)})`;
+    case "integer": {
+      const limits = limitsOf(type).map(
+        (l) => `(${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)})`,
+      );
+      const value = v.startsWith("&") ? v.slice(1) : `*${v}`;
+      return `${HELPERS}::check_integer(${value}, &[${limits.join(", ")}])`;
+    }
+    case "number": {
+      const limits = limitsOf(type).map(
+        (l) => `(${JSON.stringify(l.op)}, ${floatLiteral(l.bound)}, ${JSON.stringify(l.text)})`,
+      );
+      return `${HELPERS}::check_number(${v}, &[${limits.join(", ")}])`;
+    }
+    case "array":
+      return `${HELPERS}::check_items(${v}, ${n(type.minItems)}, ${n(type.maxItems)}, ${rustCheckFn(ctx, type.items)})`;
+    case "map":
+      return `${HELPERS}::check_entries(${v}, ${n(type.minProperties)}, ${n(type.maxProperties)}, ${keyText(ctx, type.key)}, ${rustCheckFn(ctx, type.key)}, ${rustCheckFn(ctx, type.value)})`;
+    default:
+      return undefined;
+  }
+}
+
+/** A Rust `Fn(&T) -> Result<(), DecodeError>` that checks a value of `type`. */
+function rustCheckFn(ctx: Ctx, type: TypeExpr): string {
+  const check = rustCheck(ctx, type, "item");
+  if (check === undefined) return "|_| Ok(())";
+  if (check === `${HELPERS}::Decode::check(item)`) return `${HELPERS}::Decode::check`;
+  return `|item| ${check}`;
+}
+
+/** A closure that gives the JSON text of a map key, for its path. */
+function keyText(ctx: Ctx, type: TypeExpr): string {
+  const target = aliasTarget(ctx, type);
+  const decl = target.kind === "ref" ? ctx.decls.get(target.name) : undefined;
+  return decl?.kind === "id" ? "|key| key.0.as_str()" : "|key| key.as_str()";
+}
+
+/** An f64 literal for a bound, like `0.5` or `3.0`. */
+function floatLiteral(value: number): string {
+  const text = String(value);
+  return /[.eE]/.test(text) ? text : `${text}.0`;
+}
+
+/** A struct's check: its fields in schema order, then the keys of its rest map. */
+function structCheck(ctx: Ctx, decl: StructDecl, idents: readonly string[]): string | undefined {
+  if (!ctx.checks.decl(decl.name)) return undefined;
+  const lines = decl.fields.flatMap((f, i) => {
+    const ident = idents[i] ?? "";
+    const key = rustString(f.name);
+    if (f.required) {
+      const check = rustCheck(ctx, f.type, `&self.${ident}`);
+      return check === undefined ? [] : [`        ${HELPERS}::within(${key}, ${check})?;\n`];
+    }
+    const check = rustCheck(ctx, f.type, "value");
+    if (check === undefined) return [];
+    return [
+      `        if let Some(value) = &self.${ident} {\n            ${HELPERS}::within(${key}, ${check})?;\n        }\n`,
+    ];
+  });
+  const rest = decl.rest;
+  if (rest !== undefined && (ctx.checks.type(rest.key) || ctx.checks.type(rest.value))) {
+    lines.push(
+      `        ${HELPERS}::check_entries(&self.rest, None, None, ${keyText(ctx, rest.key)}, ${rustCheckFn(ctx, rest.key)}, ${rustCheckFn(ctx, rest.value)})?;\n`,
+    );
+  }
+  return `${lines.join("")}        Ok(())\n`;
+}
+
+/** A union's check: that of the variant it holds. */
+function variantCheck(
+  ctx: Ctx,
+  variants: readonly { readonly name: string; readonly type: TypeExpr }[],
+  checked: boolean,
+): string | undefined {
+  if (!checked) return undefined;
+  const arms = variants.map((v) => {
+    const check = rustCheck(ctx, v.type, "value");
+    return check === undefined
+      ? `            Self::${v.name}(_) => Ok(()),\n`
+      : `            Self::${v.name}(value) => ${check},\n`;
+  });
+  return `        match self {\n${arms.join("")}        }\n`;
+}
+
+/** An id's check: the constraints of its string. */
+function idCheck(ctx: Ctx, decl: IdDecl): string | undefined {
+  const check = rustCheck(ctx, decl.type, "&self.0");
+  return check === undefined ? undefined : `        ${check}\n`;
+}
+
+/**
+ * The decode function of an alias with constraints, like `decode_short_names`. An alias is not
+ * a type of its own, so `X::from_json` decodes what it stands for without its constraints.
+ */
+function aliasDecoder(ctx: Ctx, decl: AliasDecl): string {
+  if (!hasDecoder(ctx, decl)) return "";
+  const check = rustCheck(ctx, decl.type, "&value") ?? "Ok(())";
+  return (
+    `\n/// Decodes JSON text strictly as [${decl.name}], then checks its constraints. An alias is not a\n` +
+    `/// type of its own, so \`${decl.name}::from_json\` checks only those of the type it stands for.\n` +
+    `///\n/// # Errors\n///\n` +
+    `/// A [${HELPERS}::DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.\n` +
+    `pub fn ${aliasDecoderName(decl.name)}(json: impl AsRef<[u8]>) -> Result<${decl.name}, ${HELPERS}::DecodeError> {\n` +
+    `    let value = <${decl.name} as ${HELPERS}::Decode>::from_json(json)?;\n` +
+    `    ${check}?;\n` +
+    `    Ok(value)\n}\n`
   );
 }
 
@@ -631,13 +864,21 @@ export function emitRustFixtures(
   options: { readonly header?: string; readonly read?: ReadMode } = {},
 ): string {
   const report = options.read === "report";
+  const ctx: Ctx = {
+    decls: new Map(model.decls.map((d) => [d.name, d])),
+    report,
+    checks: new Checks(model.decls),
+  };
   const arms = model.decls
     .filter((d) => d.source !== undefined)
     .map((d) => ({ decl: d, schema: d.source?.schema ?? "", def: d.source?.def }))
     .sort((a, b) => compare(`${a.schema}#${a.def ?? ""}`, `${b.schema}#${b.def ?? ""}`))
     .map(({ decl, schema, def }) => {
       const pattern = `(${JSON.stringify(schema)}, ${def === undefined ? "None" : `Some(${JSON.stringify(def)})`})`;
-      return `        ${pattern} => run::<${crate}::${decl.name}>(json),\n`;
+      const run = hasDecoder(ctx, decl)
+        ? `encode(${crate}::${aliasDecoderName(decl.name)}(json))`
+        : `run::<${crate}::${decl.name}>(json)`;
+      return `        ${pattern} => ${run},\n`;
     });
   return `${commentHeader(options.header ?? DEFAULT_HEADER)}
 
@@ -679,7 +920,11 @@ ${arms}        _ => return None,
 }
 
 fn run<T: Decode + serde::Serialize>(json: &[u8]) -> Result<Value, Failure> {
-    let decoded = T::from_json(json).map_err(Failure::Decode)?;
+    encode(T::from_json(json))
+}
+
+fn encode<T: serde::Serialize>(decoded: Result<T, DecodeError>) -> Result<Value, Failure> {
+    let decoded = decoded.map_err(Failure::Decode)?;
     serde_json::to_value(decoded).map_err(|error| Failure::Encode(error.to_string()))
 }
 `;

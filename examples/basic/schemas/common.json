@@ -8,6 +8,12 @@
       "description": "The ID of a webhook event, like `evt_31xq`.",
       "type": "string"
     },
+    "orderId": {
+      "description": "The ID of an order, like `ord_5h1c`, 4 to 12 characters.",
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 12
+    },
     "timestamp": {
       "description": "An RFC 3339 date and time in UTC.",
       "type": "string",

@@ -36,7 +36,7 @@
       "description": "Who delivers the order.",
       "type": "object",
       "properties": {
-        "name": { "description": "The carrier's name.", "type": "string" }
+        "name": { "description": "The carrier's name, at most 20 characters.", "type": "string", "maxLength": 20 }
       },
       "required": ["name"],
       "unevaluatedProperties": false
@@ -72,7 +72,7 @@
       "type": "object",
       "properties": {
         "sku": { "description": "The item's stock keeping unit.", "type": "string" },
-        "quantity": { "description": "How many were ordered.", "type": "integer" }
+        "quantity": { "description": "How many were ordered, at least 1.", "type": "integer", "minimum": 1 }
       },
       "required": ["sku", "quantity"],
       "unevaluatedProperties": false

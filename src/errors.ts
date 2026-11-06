@@ -33,10 +33,19 @@ export const ERROR_CODES: readonly ErrorCodeInfo[] = [
   { code: "bad_tag", title: "bad tag", doc: "a tag that no branch of a tagged union has, at the tag's path" },
   { code: "not_in_enum", title: "not in enum", doc: "a string the enum doesn't list" },
   { code: "not_const", title: "not const", doc: "a value other than the const" },
-  { code: "too_short", title: "too short", doc: "a string or array shorter than its minimum" },
-  { code: "too_long", title: "too long", doc: "a string or array longer than its maximum" },
+  {
+    code: "too_short",
+    title: "too short",
+    doc: "a string, array or map with fewer code points, items or keys than its minimum",
+  },
+  {
+    code: "too_long",
+    title: "too long",
+    doc: "a string, array or map with more code points, items or keys than its maximum",
+  },
   { code: "too_small", title: "too small", doc: "a number below its minimum" },
   { code: "too_large", title: "too large", doc: "a number above its maximum" },
+  { code: "not_multiple_of", title: "not a multiple", doc: "an integer that isn't a multiple of its multipleOf" },
   { code: "pattern_mismatch", title: "pattern mismatch", doc: "a string that doesn't match its pattern" },
   { code: "bad_format", title: "bad format", doc: "a string that isn't in its format, like date-time" },
   { code: "not_unique", title: "not unique", doc: "an array whose items must be unique, with a repeat" },
@@ -59,6 +68,26 @@ export const FOUND_MAX = 64;
 
 /** The deepest nesting readers take: a value inside this many arrays and objects fails. */
 export const MAX_DEPTH = 128;
+
+/**
+ * The words a constraint error counts in, for one and for more: a string's length in code
+ * points, an array's items and a map's keys. Expected reads `at least 2 characters` or
+ * `at most 1 item`, and found the count the value has, like `3 characters`.
+ */
+export const COUNT_UNITS = {
+  length: ["character", "characters"],
+  items: ["item", "items"],
+  keys: ["key", "keys"],
+} as const;
+
+/**
+ * A number in a constraint error's expected and found: as JavaScript writes it, like `0.5`,
+ * `100` or `1e+21`, with `-0` kept. Rust and Go write a 64-bit float the same way, so all three
+ * show the same text. An integer shows as its decimal digits.
+ */
+export function numberText(value: number): string {
+  return Object.is(value, -0) ? "-0" : String(value);
+}
 
 /** A code as a constant name, like `UnknownKey`, with `Json` spelled `JSON` when `go` is set. */
 export function codeName(code: string, go: boolean): string {

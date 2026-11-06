@@ -55,6 +55,63 @@ export function encodeEventIdToJson(value: EventId): string {
   return h.toJson(encodeEventId(value));
 }
 
+/** The ID of an order, like `ord_5h1c`, 4 to 12 characters. */
+export type OrderId = string & { readonly __brand: "OrderId" };
+
+/** Marks a string as OrderId without checking it. Decode input from outside with decodeOrderId. */
+export function asOrderId(value: string): OrderId {
+  return value as OrderId;
+}
+
+/** Decodes the structure of OrderId, checking constraints only while h.checked asks for it. */
+function readOrderId(json: unknown, path: string): OrderId {
+  return h.length(h.decodeString, 4, 12)(json, path) as OrderId;
+}
+
+/**
+ * Decodes parsed JSON as OrderId, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeOrderId(json: unknown, path = ""): OrderId {
+  return h.checked(json, path, readOrderId);
+}
+
+/** Like decodeOrderId, but returns the DecodeError instead of throwing it. */
+export function tryDecodeOrderId(json: unknown): h.DecodeResult<OrderId> {
+  return h.attempt(decodeOrderId, json);
+}
+
+/**
+ * Reads JSON text as OrderId, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeOrderIdFromJson(text: string): OrderId {
+  return h.fromJson(text, decodeOrderId);
+}
+
+/** Like decodeOrderIdFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeOrderIdFromJson(text: string): h.DecodeResult<OrderId> {
+  return h.attemptJson(decodeOrderId, text);
+}
+
+/**
+ * Encodes OrderId as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeOrderId(value: OrderId): unknown {
+  return h.encodeString(value);
+}
+
+/**
+ * Encodes OrderId as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeOrderId.
+ */
+export function encodeOrderIdToJson(value: OrderId): string {
+  return h.toJson(encodeOrderId(value));
+}
+
 /** An RFC 3339 date and time in UTC. */
 export type Timestamp = string;
 

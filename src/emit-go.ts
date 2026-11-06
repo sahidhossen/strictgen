@@ -1,6 +1,7 @@
 import type { EmittedFile } from "./common.js";
 import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER } from "./common.js";
 import type {
+  AliasDecl,
   Decl,
   EnumDecl,
   Field,
@@ -10,6 +11,7 @@ import type {
   TypeExpr,
   UntaggedDecl,
 } from "./model.js";
+import { Checks, limitsOf } from "./checks.js";
 import type { ReadMode } from "./config.js";
 import { GO_CODES, GO_NON_NULL, goHelpersBody } from "./go-helpers.js";
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
@@ -58,6 +60,16 @@ interface Ctx {
   readonly decls: ReadonlyMap<string, Decl>;
   /** True in report mode. */
   readonly report: boolean;
+  /** Which values have constraints to check. */
+  readonly checks: Checks;
+}
+
+function context(model: Model, report: boolean): Ctx {
+  return {
+    decls: new Map(model.decls.map((d) => [d.name, d])),
+    report,
+    checks: new Checks(model.decls),
+  };
 }
 
 /** Options for the Go emitters. */
@@ -86,9 +98,8 @@ function goHead(options: GoOptions, doc: string): string {
  * names are unique across schemas and files need no imports between them.
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
-  const report = options.read === "report";
-  const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])), report };
-  checkNames(model);
+  const ctx = context(model, options.read === "report");
+  checkNames(ctx, model);
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
     contents: goFile(
@@ -101,8 +112,8 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   return [
     {
       name: GO_HELPERS,
-      contents: goFile(goHead(options, ""), helperImports(report), [
-        goHelpersBody(report),
+      contents: goFile(goHead(options, ""), helperImports(ctx.report), [
+        goHelpersBody(ctx.report),
         ...literals.map(literalType),
       ]),
     },
@@ -170,7 +181,7 @@ function goFile(head: string, packages: readonly string[], parts: readonly strin
 }
 
 /** Every package-level name must be unique, since all schemas share one package. */
-function checkNames(model: Model): void {
+function checkNames(ctx: Ctx, model: Model): void {
   // An enum constant like CodeTooDeep, from an enum named code, would clash with the helpers.
   const owners = new Map<string, string>(CODES.map((name) => [name, GO_HELPERS]));
   const claim = (name: string, path: string): void => {
@@ -201,6 +212,7 @@ function checkNames(model: Model): void {
       claim(`Report${decl.name}`, decl.path);
       claim(`union${decl.name}`, decl.path);
     }
+    if (hasDecoder(ctx, decl)) claim(`Decode${decl.name}`, decl.path);
     if (decl.kind === "struct") fieldNames(decl);
   }
 }
@@ -255,13 +267,18 @@ function declaration(ctx: Ctx, decl: Decl): string {
     case "untagged":
       return head + untagged(ctx, decl);
     case "alias":
-      return `${head}type ${decl.name} = ${goType(decl.type)}\n`;
+      return `${head}type ${decl.name} = ${goType(decl.type)}\n${aliasDecoder(ctx, decl)}`;
     case "id":
       return (
         `${head}type ${decl.name} string\n\n` +
         `// UnmarshalJSON decodes the id from a JSON string.\n` +
         unmarshalMethod(decl.name) +
-        `func (v *${decl.name}) decode(n *node) *DecodeError { return decodeStringInto(n, v) }\n`
+        `func (v *${decl.name}) decode(n *node) *DecodeError { return decodeStringInto(n, v) }\n` +
+        checkMethod(
+          decl.name,
+          [`\treturn ${goCheck(ctx, decl.type, "string(v)") ?? "nil"}\n`],
+          ctx.checks.decl(decl.name),
+        )
       );
   }
 }
@@ -341,7 +358,107 @@ function struct(ctx: Ctx, decl: StructDecl): string {
     `func (v *${decl.name}) decode(n *node) *DecodeError {\n` +
     `\tvar out ${decl.name}\n` +
     `\treturn decodeObject(n, ${fill}, func() { *v = out }${forbidden})\n}\n`;
-  return `type ${decl.name} ${body}\n\n${unmarshal}${marshal(ctx, decl, names)}`;
+  return `type ${decl.name} ${body}\n\n${unmarshal}${structCheck(ctx, decl, names)}${marshal(ctx, decl, names)}`;
+}
+
+/**
+ * The check method of a type with constraints, which runs once the whole value has decoded.
+ * Its body is `lines`, which end in a return. Empty when the type has nothing to check.
+ */
+function checkMethod(name: string, lines: readonly string[], checked: boolean): string {
+  if (!checked) return "";
+  return (
+    `\n// check checks the constraints of a decoded ${name}.\n` +
+    `func (v ${name}) check() *DecodeError {\n${lines.join("")}}\n`
+  );
+}
+
+/** A struct's check: its fields in schema order, then the keys of its rest map. */
+function structCheck(ctx: Ctx, decl: StructDecl, names: readonly string[]): string {
+  const lines = decl.fields.flatMap((f, i) => {
+    const name = `v.${names[i] ?? ""}`;
+    const pointer = fieldType(ctx, f).startsWith("*");
+    const check = goCheck(ctx, f.type, pointer ? `*${name}` : name);
+    if (check === undefined) return [];
+    const key = JSON.stringify(f.name);
+    const test = `if err := ${check}; err != nil {\n`;
+    if (!pointer || f.required) return [`\t${test}\t\treturn err.at(${key})\n\t}\n`];
+    return [`\tif ${name} != nil {\n\t\t${test}\t\t\treturn err.at(${key})\n\t\t}\n\t}\n`];
+  });
+  const rest = decl.rest;
+  if (rest !== undefined && (ctx.checks.type(rest.key) || ctx.checks.type(rest.value))) {
+    const entries = `checkEntries(v.Rest, -1, -1, ${goCheckFn(ctx, rest.key)}, ${goCheckFn(ctx, rest.value)})`;
+    lines.push(`\tif err := ${entries}; err != nil {\n\t\treturn err\n\t}\n`);
+  }
+  return checkMethod(decl.name, [...lines, "\treturn nil\n"], ctx.checks.decl(decl.name));
+}
+
+/**
+ * For an alias with constraints, `DecodeX`, which decodes strictly and checks them. An alias
+ * has no methods, so json.Unmarshal into it checks neither.
+ */
+function aliasDecoder(ctx: Ctx, decl: AliasDecl): string {
+  if (!hasDecoder(ctx, decl)) return "";
+  return (
+    `\n// Decode${decl.name} decodes JSON strictly as ${decl.name} and checks its constraints.\n` +
+    `// json.Unmarshal into ${decl.name} checks neither, since an alias has no methods.\n` +
+    `func Decode${decl.name}(data []byte) (${decl.name}, error) {\n` +
+    `\treturn decodeRoot(data, ${checkedDecoder(ctx, decl)})\n}\n`
+  );
+}
+
+/**
+ * True for an alias that gets a `DecodeX`: one with constraints that stands for a type without
+ * methods, like a list of codes. An alias of a struct decodes and checks through the struct.
+ */
+function hasDecoder(ctx: Ctx, decl: Decl): decl is AliasDecl {
+  return decl.kind === "alias" && ctx.checks.decl(decl.name) && resolve(ctx, decl.type).kind !== "ref";
+}
+
+/** The decoder of an alias with constraints, which checks them once the value decoded. */
+function checkedDecoder(ctx: Ctx, decl: AliasDecl): string {
+  const check = goCheck(ctx, decl.type, "v") ?? "nil";
+  return `withCheck(${decoder(ctx, decl.type)}, func(v ${decl.name}) *DecodeError { return ${check} })`;
+}
+
+/**
+ * A Go expression of type `*DecodeError` that checks `v`, a value of `type`, or undefined when
+ * there is nothing to check.
+ */
+function goCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
+  if (!ctx.checks.type(type)) return undefined;
+  const n = (value: number | undefined): string => (value === undefined ? "-1" : String(value));
+  switch (type.kind) {
+    case "ref": {
+      const decl = ctx.decls.get(type.name);
+      if (decl?.kind === "alias") return goCheck(ctx, decl.type, v);
+      if (decl?.kind === "tagged") return `checkValue(${v})`;
+      return v.startsWith("*") ? `(${v}).check()` : `${v}.check()`;
+    }
+    case "string":
+      return `checkLength(${v}, ${n(type.minLength)}, ${n(type.maxLength)})`;
+    case "integer":
+    case "number": {
+      const go = type.kind === "integer" ? "int64" : "float64";
+      const limits = limitsOf(type).map(
+        (l) => `limit[${go}]{${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)}}`,
+      );
+      return `${type.kind === "integer" ? "checkInt" : "checkNumber"}(${v}, ${limits.join(", ")})`;
+    }
+    case "array":
+      return `checkItems(${v}, ${n(type.minItems)}, ${n(type.maxItems)}, ${goCheckFn(ctx, type.items)})`;
+    case "map":
+      return `checkEntries(${v}, ${n(type.minProperties)}, ${n(type.maxProperties)}, ${goCheckFn(ctx, type.key)}, ${goCheckFn(ctx, type.value)})`;
+    default:
+      return undefined;
+  }
+}
+
+/** A Go `func(T) *DecodeError` that checks a value of `type`, or `nil` when there is nothing to check. */
+function goCheckFn(ctx: Ctx, type: TypeExpr): string {
+  const check = goCheck(ctx, type, "item");
+  if (check === undefined) return "nil";
+  return `func(item ${goType(type)}) *DecodeError { return ${check} }`;
 }
 
 /** UnmarshalJSON, which parses once and calls the type's decode method. */
@@ -580,8 +697,19 @@ function untagged(ctx: Ctx, decl: UntaggedDecl): string {
     unmarshalMethod(decl.name) +
     `func (v *${decl.name}) decode(n *node) *DecodeError {\n` +
     `\tvar out ${decl.name}\n` +
-    `\treturn decodeUntagged(n, ${name}, func() { *v = out },\n${tries.join("")}\t)\n}\n`
+    `\treturn decodeUntagged(n, ${name}, func() { *v = out },\n${tries.join("")}\t)\n}\n` +
+    untaggedCheck(ctx, decl)
   );
+}
+
+/** An untagged union's check: that of the variant that is set. */
+function untaggedCheck(ctx: Ctx, decl: UntaggedDecl): string {
+  const lines = decl.variants.flatMap((v) => {
+    const value = isValue(ctx, v.type);
+    const check = goCheck(ctx, v.type, value ? `v.${v.name}` : `*v.${v.name}`);
+    return check === undefined ? [] : [`\tif v.${v.name} != nil {\n\t\treturn ${check}\n\t}\n`];
+  });
+  return checkMethod(decl.name, [...lines, "\treturn nil\n"], ctx.checks.decl(decl.name));
 }
 
 function list(names: readonly string[]): string {
@@ -657,8 +785,7 @@ function comment(lines: readonly string[], indent: string): string {
  * and every type with an UnmarshalJSON, for tests that cover them all.
  */
 export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
-  const report = options.read === "report";
-  const ctx: Ctx = { decls: new Map(model.decls.map((d) => [d.name, d])), report };
+  const ctx = context(model, options.read === "report");
   const entries = model.decls
     .filter((d) => d.source !== undefined)
     .map((d) => ({
@@ -666,10 +793,13 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
         d.source?.def === undefined
           ? (d.source?.schema ?? "")
           : `${d.source.schema}/${d.source.def}`,
-      decode: decoder(ctx, { kind: "ref", name: d.name }),
+      decode:
+        d.kind === "alias" && hasDecoder(ctx, d)
+          ? `asAny(${checkedDecoder(ctx, d)})`
+          : `asAny(${decoder(ctx, { kind: "ref", name: d.name })})`,
     }))
     .sort((a, b) => compare(a.key, b.key))
-    .map((e) => `\t\t${JSON.stringify(e.key)}: asAny(${e.decode}),\n`);
+    .map((e) => `\t\t${JSON.stringify(e.key)}: ${e.decode},\n`);
   const types = [
     ...model.decls.filter((d) => d.kind !== "alias" && d.kind !== "tagged").map((d) => d.name),
     ...literalsOf(model).map(literalName),
@@ -677,7 +807,7 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
   ]
     .sort(compare)
     .map((name) => `\t\tnew(${name}),\n`);
-  const registry = report
+  const registry = ctx.report
     ? `// fixtureDecoders maps each fixture folder, "schema" for a root and "schema/def" for a def,
 // to a function that decodes JSON as the type generated for it and returns the value with the
 // paths of its unknown keys.

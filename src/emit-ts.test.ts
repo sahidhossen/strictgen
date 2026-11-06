@@ -851,6 +851,145 @@ describe("TypeScript maps", () => {
   });
 });
 
+describe("TypeScript constraints", () => {
+  const model = build({
+    common: schema("common", { $defs: { orderId: { type: "string", minLength: 4 } } }),
+    lib: schema("lib", {
+      $defs: {
+        item: closed(
+          {
+            name: { type: "string", minLength: 2, maxLength: 3 },
+            count: { type: "integer", minimum: 1, exclusiveMaximum: 10, multipleOf: 2 },
+            price: { type: "number", exclusiveMinimum: 0, maximum: 0.75 },
+            tags: { type: "array", items: { type: "string", maxLength: 1 }, minItems: 1, maxItems: 2 },
+            byId: {
+              type: "object",
+              propertyNames: { $ref: `${BASE}common.json#/$defs/orderId` },
+              additionalProperties: { type: "integer", maximum: 9 },
+              maxProperties: 2,
+            },
+            size: { oneOf: [{ type: "integer", minimum: 1 }, { type: "string", maxLength: 1 }] },
+          },
+          ["name"],
+        ),
+        codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 1 },
+      },
+    }),
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
+  }, COMPILE_TIMEOUT);
+
+  it("count lengths in code points, not UTF-16 units", () => {
+    expect(m.fn("decodeItem")({ name: "😀😀😀" })).toEqual({ name: "😀😀😀" });
+    expect(m.fn("decodeItem")({ name: "é" })).toEqual({ name: "é" });
+    expect(failure(m, "Item", { name: "😀" })).toBe(
+      "/name: too short, expected at least 2 characters, found 1 character",
+    );
+    expect(failure(m, "Item", { name: "😀😀😀😀" })).toBe(
+      "/name: too long, expected at most 3 characters, found 4 characters",
+    );
+    expect(failure(m, "Item", { name: "́" })).toBe(
+      "/name: too short, expected at least 2 characters, found 1 character",
+    );
+  });
+
+  it("check bounds and multipleOf in a fixed order, showing numbers as Rust and Go do", () => {
+    expect(failure(m, "Item", { name: "ab", count: 0 })).toBe("/count: too small, expected >= 1, found 0");
+    expect(failure(m, "Item", { name: "ab", count: 10 })).toBe("/count: too large, expected < 10, found 10");
+    expect(failure(m, "Item", { name: "ab", count: 3 })).toBe(
+      "/count: not a multiple, expected a multiple of 2, found 3",
+    );
+    expect(failure(m, "Item", { name: "ab", price: 0 })).toBe("/price: too small, expected > 0, found 0");
+    expect(failure(m, "Item", { name: "ab", price: -0 })).toBe("/price: too small, expected > 0, found -0");
+    expect(failure(m, "Item", { name: "ab", price: 1e21 })).toBe(
+      "/price: too large, expected <= 0.75, found 1e+21",
+    );
+    expect(m.fn("decodeItemFromJson")('{"name":"ab","price":75E-2}')).toEqual({ name: "ab", price: 0.75 });
+    // The value, not its spelling, as Rust and Go show it.
+    expect(failureFromJson(m, "Item", '{"name":"ab","price":1E0}')).toBe(
+      "/price: too large, expected <= 0.75, found 1",
+    );
+  });
+
+  it("check counts of items and keys, then each item and key", () => {
+    expect(failure(m, "Item", { name: "ab", tags: [] })).toBe(
+      "/tags: too short, expected at least 1 item, found 0 items",
+    );
+    expect(failure(m, "Item", { name: "ab", tags: ["ab", "a", "b"] })).toBe(
+      "/tags: too long, expected at most 2 items, found 3 items",
+    );
+    expect(failure(m, "Item", { name: "ab", tags: ["a", "bc"] })).toBe(
+      "/tags/1: too long, expected at most 1 character, found 2 characters",
+    );
+    expect(failure(m, "Item", { name: "ab", byId: { a: 1, b: 2, c: 3 } })).toBe(
+      "/byId: too long, expected at most 2 keys, found 3 keys",
+    );
+  });
+
+  it("check map keys in code point order, each key before its value", () => {
+    expect(failure(m, "Item", { name: "ab", byId: { ord_b: 10, ord_a: 10 } })).toBe(
+      "/byId/ord_a: too large, expected <= 9, found 10",
+    );
+    expect(failure(m, "Item", { name: "ab", byId: { ord_b: 10, ord: 1 } })).toBe(
+      "/byId/ord: too short, expected at least 4 characters, found 3 characters",
+    );
+    // UTF-16 order puts U+FFFD after the surrogates of U+1F600, code point order before.
+    expect(failure(m, "Item", { name: "ab", byId: { "ord😀": 10, "ord�": 10 } })).toBe(
+      "/byId/ord�: too large, expected <= 9, found 10",
+    );
+    expect(Object.keys(m.fn("decodeItem")({ name: "ab", byId: { ord_b: 1, ord_a: 2 } }) as object)).toEqual([
+      "name",
+      "byId",
+    ]);
+    const byId = (m.fn("decodeItem")({ name: "ab", byId: { ord_b: 1, ord_a: 2 } }) as { byId: object }).byId;
+    expect(Object.keys(byId)).toEqual(["ord_b", "ord_a"]);
+  });
+
+  it("report a structure error anywhere before any constraint", () => {
+    expect(failure(m, "Item", { name: "a", count: "1" })).toBe(
+      "/count: wrong type, expected an integer, found \"1\"",
+    );
+    expect(failure(m, "Item", { name: "a", extra: 1 })).toBe("/extra: unknown key");
+    expect(failure(m, "Item", { name: "a", byId: { ord_a: 1, x: "y" } })).toBe(
+      "/byId/x: wrong type, expected an integer, found \"y\"",
+    );
+    expect(failure(m, "Item", { name: "a", count: 0 })).toBe(
+      "/name: too short, expected at least 2 characters, found 1 character",
+    );
+  });
+
+  it("pick a union's variant by structure only, then check it", () => {
+    expect(failure(m, "Item", { name: "ab", size: 0 })).toBe("/size: too small, expected >= 1, found 0");
+    expect(failure(m, "Item", { name: "ab", size: "xy" })).toBe(
+      "/size: too long, expected at most 1 character, found 2 characters",
+    );
+    expect(failure(m, "Item", { name: "ab", size: true })).toBe(
+      "/size: wrong type, expected ItemSize, found true",
+    );
+  });
+
+  it("check ids and aliases decoded on their own, and nested ones", () => {
+    expect(failure(m, "OrderId", "ord")).toBe("too short, expected at least 4 characters, found 3 characters");
+    expect(failure(m, "Codes", ["abc", "abd"])).toBe("too long, expected at most 1 item, found 2 items");
+    expect(failure(m, "Codes", ["ab"])).toBe("/0: too short, expected at least 3 characters, found 2 characters");
+    expect(failure(m, "Codes", ["ab"], "/codes")).toBe(
+      "/codes/0: too short, expected at least 3 characters, found 2 characters",
+    );
+    expect(m.fn("tryDecodeCodesFromJson")('["abc"]')).toEqual({ ok: true, value: ["abc"] });
+  });
+
+  it("leave constraints out with validation off", async () => {
+    const off = await load(
+      buildModel(schemaSet({ lib: schema("lib", { $defs: { short: { type: "string", maxLength: 1 } } }) }), {
+        validation: false,
+      }),
+    );
+    expect(off.fn("decodeShort")("long")).toBe("long");
+  }, COMPILE_TIMEOUT);
+});
+
 describe("TypeScript any values, non-null values and recursion", () => {
   const model = libModel({
     holder: closed({ any: {}, nonNull: { not: { const: null } }, list: { type: "array", items: {} } }),

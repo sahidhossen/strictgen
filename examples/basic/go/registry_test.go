@@ -8,11 +8,18 @@ import "encoding/json"
 // to a function that decodes JSON as the type generated for it.
 func fixtureDecoders() map[string]func([]byte) (any, error) {
 	return map[string]func([]byte) (any, error){
-		"common/eventId":             asAny(decodeType[EventId]),
-		"common/timestamp":           asAny(decodeString),
-		"common/userId":              asAny(decodeType[UserId]),
-		"event":                      asAny(decodeType[Event]),
-		"event/eventType":            asAny(decodeType[EventType]),
+		"common/eventId":   asAny(decodeType[EventId]),
+		"common/orderId":   asAny(decodeType[OrderId]),
+		"common/timestamp": asAny(decodeString),
+		"common/userId":    asAny(decodeType[UserId]),
+		"event":            asAny(decodeType[Event]),
+		"event/eventType":  asAny(decodeType[EventType]),
+		"order":            asAny(decodeType[Order]),
+		"order/code":       asAny(withCheck(decodeString, func(v Code) *DecodeError { return checkLength(v, 3, 3) })),
+		"order/codes": asAny(withCheck(decodeSlice(decodeString), func(v Codes) *DecodeError {
+			return checkItems(v, -1, 2, func(item Code) *DecodeError { return checkLength(item, 3, 3) })
+		})),
+		"order/line":                 asAny(decodeType[Line]),
 		"payment-method":             asAny(unionPaymentMethod),
 		"payment-method/bankAccount": asAny(decodeType[BankAccount]),
 		"payment-method/card":        asAny(decodeType[Card]),
@@ -46,7 +53,11 @@ func unmarshalers() []json.Unmarshaler {
 		new(Event),
 		new(EventId),
 		new(EventType),
+		new(Line),
 		new(NonNullJson),
+		new(Order),
+		new(OrderId),
+		new(OrderSize),
 		new(Role),
 		new(Subscription),
 		new(User),

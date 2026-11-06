@@ -611,6 +611,72 @@ describe("Go encoding checks", () => {
   });
 });
 
+describe("Go constraints", () => {
+  const model = build({
+    common: schema("common", { $defs: { orderId: { type: "string", minLength: 4 } } }),
+    lib: schema("lib", {
+      $defs: {
+        item: closed(
+          {
+            name: { type: "string", minLength: 1, maxLength: 5 },
+            count: { type: "integer", minimum: 1, multipleOf: 2 },
+            price: { type: "number", exclusiveMinimum: 0, maximum: 1e21 },
+            tags: { type: "array", items: { type: "string", maxLength: 3 }, maxItems: 2 },
+            byId: {
+              type: "object",
+              propertyNames: { $ref: `${BASE}common.json#/$defs/orderId` },
+              additionalProperties: { type: "integer", maximum: 9 },
+              minProperties: 1,
+            },
+            next: { $ref: "#/$defs/item" },
+            size: { oneOf: [{ type: "integer", minimum: 1 }, { type: "string", maxLength: 2 }] },
+          },
+          ["name", "count"],
+        ),
+        codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 2 },
+        plain: closed({ name: { type: "string" } }),
+      },
+    }),
+  });
+  const out = go(model);
+
+  it("check a struct's fields in schema order, after the whole value decoded", () => {
+    const name = out.indexOf('\tif err := checkLength(v.Name, 1, 5); err != nil {\n\t\treturn err.at("name")\n\t}\n');
+    const count = out.indexOf(
+      'if err := checkInt(v.Count, limit[int64]{">=", 1, "1"}, limit[int64]{"%", 2, "2"}); err != nil {',
+    );
+    expect(name).toBeGreaterThan(-1);
+    expect(count).toBeGreaterThan(name);
+    expect(out).toContain(
+      '\tif v.Price != nil {\n\t\tif err := checkNumber(*v.Price, limit[float64]{">", 0, "0"}, limit[float64]{"<=", 1e+21, "1e+21"}); err != nil {\n\t\t\treturn err.at("price")\n',
+    );
+    expect(out).toContain(
+      "checkItems(*v.Tags, -1, 2, func(item string) *DecodeError { return checkLength(item, -1, 3) })",
+    );
+    expect(out).toContain(
+      'checkEntries(*v.ById, 1, -1, func(item OrderId) *DecodeError { return item.check() }, func(item int64) *DecodeError { return checkInt(item, limit[int64]{"<=", 9, "9"}) })',
+    );
+    expect(out).toContain("\t\tif err := (*v.Next).check(); err != nil {\n");
+    expect(out).toContain("func (v ItemSize) check() *DecodeError {\n\tif v.String != nil {\n\t\treturn checkLength(*v.String, -1, 2)\n\t}\n");
+  });
+
+  it("check an id's string, and give an alias with constraints a DecodeX", () => {
+    expect(out).toContain("func (v OrderId) check() *DecodeError {\n\treturn checkLength(string(v), 4, -1)\n}\n");
+    expect(out).toContain(
+      "func DecodeCodes(data []byte) (Codes, error) {\n" +
+        "\treturn decodeRoot(data, withCheck(decodeSlice(decodeString), func(v Codes) *DecodeError { " +
+        "return checkItems(v, -1, 2, func(item string) *DecodeError { return checkLength(item, 3, -1) }) }))\n}\n",
+    );
+    expect(emitGoFixtures(model)).toContain('\t\t"lib/codes": asAny(withCheck(decodeSlice(decodeString), ');
+    expect(emitGoFixtures(model)).toContain('\t\t"lib/item": asAny(decodeType[Item]),\n');
+  });
+
+  it("write no check for a type without constraints", () => {
+    expect(out).not.toContain("func (v Plain) check()");
+    expect(emitGoFixtures(lib({ plain: closed({ a: { type: "string" } }) }))).not.toContain("withCheck");
+  });
+});
+
 describe("Go error codes", () => {
   const helpers = file(lib({ name: { type: "string" } }), "helpers.go");
 
