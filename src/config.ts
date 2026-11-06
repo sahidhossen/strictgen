@@ -67,9 +67,17 @@ export interface Targets {
   readonly typescript?: TypeScriptConfig;
 }
 
-/** Not yet active. */
+/**
+ * A profile `llm.profiles` lists: a built in one by name, like `openai`, or a profile file by
+ * its path, ending in `.json`. `shown` is the path as the config writes it, for messages.
+ */
+export type LlmProfileRef =
+  | { readonly name: string }
+  | { readonly file: string; readonly shown: string };
+
+/** The provider-ready schemas to write, and whether the decoders get the cleanup step. */
 export interface LlmConfig {
-  readonly profiles: readonly string[];
+  readonly profiles: readonly LlmProfileRef[];
   readonly out: string;
   readonly cleanup: boolean;
 }
@@ -255,6 +263,18 @@ export function parseConfig(value: unknown, file: string, shown: string = file):
     format,
   };
   checkFolders(r, config);
+  // A profile file in a folder that is cleared before writing would be removed with it.
+  for (const [i, ref] of (llm?.profiles ?? []).entries()) {
+    if (!("file" in ref)) continue;
+    const owner = configFolders(config).find((f) => f.owned && within(ref.file, f.path));
+    if (owner !== undefined) {
+      r.fail(`llm.profiles[${String(i)}]`, `is inside ${owner.option}, which is cleared before writing`);
+    }
+  }
+  // The cleanup step is a helper the TypeScript decoders hold, so it needs them.
+  if (llm?.cleanup === true && targets.typescript?.decoders === false) {
+    r.fail("llm.cleanup", 'needs "decoders": true in targets.typescript');
+  }
   return config;
 }
 
@@ -377,11 +397,17 @@ function readLlm(r: Reader, value: unknown, path: Resolve): LlmConfig {
   const list = r.required(o, "llm", "profiles");
   if (!Array.isArray(list)) r.fail("llm.profiles", "must be an array");
   if (list.length === 0) r.fail("llm.profiles", "must list at least one profile");
-  const profiles = list.map((p: unknown, i) =>
-    r.string(p, `llm.profiles[${String(i)}]`, PROFILE, "a profile name, like openai"),
-  );
-  const twice = profiles.find((p, i) => profiles.indexOf(p) !== i);
+  const written = list.map((p: unknown, i) => {
+    const option = `llm.profiles[${String(i)}]`;
+    const value = r.string(p, option);
+    if (value.endsWith(".json")) return value;
+    return r.string(value, option, PROFILE, "a profile name, like openai, or a path to a .json profile");
+  });
+  const twice = written.find((p, i) => written.indexOf(p) !== i);
   if (twice !== undefined) r.fail("llm.profiles", `${twice} is listed twice`);
+  const profiles = written.map((p, i): LlmProfileRef =>
+    p.endsWith(".json") ? { file: path(p, `llm.profiles[${String(i)}]`), shown: p } : { name: p },
+  );
   return {
     profiles,
     out: path(r.required(o, "llm", "out"), "llm.out"),
@@ -425,6 +451,7 @@ export function configFolders(config: Config): ConfigFolder[] {
     ...(typescript === undefined
       ? []
       : [{ option: "targets.typescript.out", path: typescript.out, owned: true }]),
+    ...(config.llm === undefined ? [] : [{ option: "llm.out", path: config.llm.out, owned: true }]),
   ];
 }
 

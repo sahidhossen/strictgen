@@ -12,6 +12,7 @@ export type {
   FormatConfig,
   GoConfig,
   LlmConfig,
+  LlmProfileRef,
   ReadMode,
   RustConfig,
   RustFixtures,
@@ -55,6 +56,18 @@ export {
   FormatterFailedError,
   FormatterMissingError,
 } from "./format.js";
+export { emitLlm, LlmError, llmProjection } from "./llm.js";
+export type { BoundedKeyword, Profile, ProfileKeyword, ProfileLimits, ProfileSource } from "./llm-profile.js";
+export {
+  BUILTIN_PROFILES,
+  builtinProfile,
+  configProfiles,
+  loadProfile,
+  parseProfile,
+  PROFILE_KEYWORDS,
+} from "./llm-profile.js";
+export type { LlmChange, LlmChangeKind, Projection } from "./llm-project.js";
+export { projectedTypes, projectType, schemaText, WRAP_KEY } from "./llm-project.js";
 export type { Log, MainOptions, OutputFile, Target } from "./main.js";
 export {
   generate,

@@ -1,0 +1,45 @@
+{
+  "description": "Who orders.",
+  "type": "object",
+  "properties": {
+    "name": {
+      "description": "The full name. At least 1 character, at most 100 characters.",
+      "type": "string"
+    },
+    "email": {
+      "description": "An email address.",
+      "anyOf": [
+        {
+          "type": "string",
+          "pattern": "^[^@ ]+@[^@ ]+$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "contact": {
+      "description": "A way to reach the customer: a phone number, or a count of reminders to send.",
+      "anyOf": [
+        {
+          "description": "At least 6 characters.",
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "email",
+    "contact"
+  ],
+  "additionalProperties": false
+}

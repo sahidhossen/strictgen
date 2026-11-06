@@ -1,0 +1,19 @@
+{
+  "$schema": "./profile.schema.json",
+  "name": "gemini",
+  "version": 1,
+  "date": "2026-11-06",
+  "description": "Gemini API structured output with a JSON Schema (response_format with a schema)",
+  "sources": [
+    {
+      "url": "https://ai.google.dev/gemini-api/docs/structured-output",
+      "checked": "2026-11-06",
+      "notes": "Supported: format date-time and date, minimum and maximum (inclusive), minItems and maxItems, enum, anyOf and additionalProperties with a schema. const, pattern, the exclusive bounds, multipleOf and the uuid format are not listed, so they are treated as unsupported. minLength, maxLength, minProperties, maxProperties and uniqueItems are ignored by the provider. Recursion is possible but restricted, so it is treated as unsupported. No numeric limits are published."
+    }
+  ],
+  "keywords": ["format", "minimum", "maximum", "minItems", "maxItems"],
+  "formats": ["date-time", "date"],
+  "maps": "object",
+  "recursion": false,
+  "limits": {}
+}

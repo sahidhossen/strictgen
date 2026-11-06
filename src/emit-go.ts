@@ -15,6 +15,7 @@ import type {
 } from "./model.js";
 import { Checks, limitsOf, patternsOf } from "./checks.js";
 import type { ReadMode } from "./config.js";
+import { GO_CLEANUP } from "./cleanup-helpers.js";
 import { GO_CODES, GO_NON_NULL, GO_PATTERN_TYPE, goHelpersBody } from "./go-helpers.js";
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
@@ -103,6 +104,8 @@ export interface GoOptions {
    * their paths and adds `Report` and a `ReportX` per tagged union. Defaults to `strict`.
    */
   readonly read?: ReadMode;
+  /** Adds `CleanLLMJSON`, the LLM cleanup step, to the helpers. */
+  readonly cleanup?: boolean;
 }
 
 /** The first lines of a generated Go file: header comment, then `doc` and the package clause. */
@@ -119,7 +122,7 @@ function goHead(options: GoOptions, doc: string): string {
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   const ctx = context(model, options.read === "report");
-  checkNames(model);
+  checkNames(model, options.cleanup === true);
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
     contents: goFile(
@@ -136,6 +139,7 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
         goHelpersBody(ctx.report),
         ...(ctx.patterns.length > 0 ? [patternTable(ctx.patterns)] : []),
         ...literals.map(literalType),
+        ...(options.cleanup === true ? [GO_CLEANUP.trimStart()] : []),
       ]),
     },
     ...files,
@@ -239,9 +243,11 @@ function goFile(head: string, packages: readonly string[], parts: readonly strin
 }
 
 /** Every package-level name must be unique, since all schemas share one package. */
-function checkNames(model: Model): void {
+function checkNames(model: Model, cleanup: boolean): void {
   // An enum constant like CodeTooDeep, from an enum named code, would clash with the helpers.
   const owners = new Map<string, string>(CODES.map((name) => [name, GO_HELPERS]));
+  // The cleanup step's function is in the helpers too, when it is on.
+  if (cleanup) owners.set("CleanLLMJSON", GO_HELPERS);
   const claim = (name: string, path: string): void => {
     const other = owners.get(name);
     if (other !== undefined)

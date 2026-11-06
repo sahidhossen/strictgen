@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
 import { BreakingError, breaking, breakingJson, breakingLines, breaksAnything } from "./breaking.js";
@@ -12,9 +12,12 @@ import { ExplainError, explain, explained, explanationLines } from "./explain.js
 import { fixCommand } from "./fix-command.js";
 import { formatFiles, FormatterFailedError, FormatterMissingError } from "./format.js";
 import { fsReason, isFsError } from "./fs-error.js";
+import { LlmError, llmProjection } from "./llm.js";
+import { changeLines, schemaText } from "./llm-project.js";
 import type { OutputFile } from "./main.js";
 import { generateProject, writeOutput } from "./main.js";
 import { GenerateError } from "./payloads.js";
+import type { JsonObject } from "./schema.js";
 import { CodegenError } from "./schema.js";
 import { mainOptions } from "./targets.js";
 
@@ -131,6 +134,23 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       HELP_OPTION,
     ],
   },
+  llm: {
+    summary: "Print the provider-ready schema of one type for an LLM profile",
+    usage: "strictgen llm --profile <name> <Type> [--json] [--config <path>]",
+    details: [
+      "Prints the schema an LLM provider accepts for structured output, projected from the type",
+      "named as the generated code names it, like Order, by a profile: openai, anthropic, gemini,",
+      "a profile file llm.profiles lists, or the path of one. What moved to the decoder (optional",
+      "fields made nullable, constraints left out, maps as entries) is listed on stderr. Exits 1",
+      "when the type can't be projected, and 2 for an unknown type or profile.",
+    ],
+    options: [
+      "  --profile <name> The profile, or the path of a profile file ending in .json",
+      "  --json           Print { type, profile, schema, changes } as JSON on stdout",
+      CONFIG_OPTION,
+      HELP_OPTION,
+    ],
+  },
   dirs: {
     summary: "Print the folders the targets write to",
     usage: "strictgen dirs [--json] [--config <path>]",
@@ -170,6 +190,7 @@ const OPTIONS = {
   base: { type: "string" },
   json: { type: "boolean" },
   write: { type: "boolean" },
+  profile: { type: "string" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
   count: { type: "string" },
@@ -187,6 +208,7 @@ const COMMAND_OPTIONS: Readonly<Record<string, string>> = {
   invalid: "examples",
   array: "examples",
   format: "docs",
+  profile: "llm",
 };
 
 /** A whole number from `min` to `max`, from an option's text. */
@@ -265,7 +287,7 @@ function dispatch(argv: readonly string[], io: Io): number {
   }
   const { values, positionals } = parsed;
   const name = positionals[0];
-  const most = name === "explain" || name === "examples" ? 2 : 1;
+  const most = name === "explain" || name === "examples" || name === "llm" ? 2 : 1;
   if (positionals.length > most) {
     throw new UsageError(`unexpected argument ${JSON.stringify(positionals[most])}`);
   }
@@ -284,11 +306,23 @@ function dispatch(argv: readonly string[], io: Io): number {
     for (const line of lines) io.out(line);
     return EXIT_OK;
   }
-  if (values.json === true && name !== "dirs" && name !== "explain" && name !== "breaking") {
-    throw new UsageError("--json only applies to strictgen dirs, explain and breaking");
+  if (
+    values.json === true &&
+    name !== "dirs" &&
+    name !== "explain" &&
+    name !== "breaking" &&
+    name !== "llm"
+  ) {
+    throw new UsageError("--json only applies to strictgen dirs, explain, breaking and llm");
   }
   if (name === "breaking" && (values.base === undefined || values.base === "")) {
     throw new UsageError("breaking needs --base <git ref or folder>, like --base main");
+  }
+  if (name === "llm" && values.profile === undefined) {
+    throw new UsageError("llm needs --profile <name>, like --profile openai");
+  }
+  if (name === "llm" && positionals[1] === undefined) {
+    throw new UsageError("llm needs a type name, like Order");
   }
   if (values.write === true && name !== "fix") {
     throw new UsageError("--write only applies to strictgen fix");
@@ -335,6 +369,8 @@ function dispatch(argv: readonly string[], io: Io): number {
       return fixCommand(config, io, values.write === true);
     case "breaking":
       return breakingCommand(config, io, values.base ?? "", values.json === true);
+    case "llm":
+      return llmCommand(config, io, values.profile ?? "", location ?? "", values.json === true);
     case "dirs":
       return dirs(config, io, values.json === true);
     default:
@@ -353,7 +389,12 @@ function report(error: unknown, io: Io): number {
     io.err(`error: ${error.message}`);
     return error.exit;
   }
-  if (error instanceof ConfigError || error instanceof ExplainError || error instanceof UnknownTypeError) {
+  if (
+    error instanceof ConfigError ||
+    error instanceof ExplainError ||
+    error instanceof UnknownTypeError ||
+    error instanceof LlmError
+  ) {
     io.err(`error: ${error.message}`);
     return EXIT_USAGE;
   }
@@ -444,9 +485,20 @@ function breakingCommand(config: Config, io: Io, base: string, json: boolean): n
   return breaksAnything(result) ? EXIT_FAILED : EXIT_OK;
 }
 
+function llmCommand(config: Config, io: Io, profile: string, type: string, json: boolean): number {
+  const projection = llmProjection(config, profile, type, (p) => resolve(io.cwd, p));
+  if (json) {
+    io.out(schemaText(projection as unknown as JsonObject).trimEnd());
+    return EXIT_OK;
+  }
+  io.out(schemaText(projection.schema).trimEnd());
+  for (const line of changeLines(projection)) io.err(line);
+  return EXIT_OK;
+}
+
 function dirs(config: Config, io: Io, json: boolean): number {
   const list = configFolders(config).map((folder) => ({
-    target: folder.option.split(".")[1] ?? folder.option,
+    target: (folder.option.startsWith("targets.") ? folder.option.split(".")[1] : folder.option.split(".")[0]) ?? folder.option,
     dir: shown(io.cwd, folder.path),
     shared: !folder.owned,
   }));

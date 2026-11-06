@@ -1,0 +1,22 @@
+{
+  "$schema": "./profile.schema.json",
+  "name": "anthropic",
+  "version": 1,
+  "date": "2026-11-06",
+  "description": "Anthropic structured outputs (JSON outputs and strict tool use)",
+  "sources": [
+    {
+      "url": "https://platform.claude.com/docs/en/build-with-claude/structured-outputs",
+      "checked": "2026-11-06",
+      "notes": "Sections JSON Schema limitations and Schema complexity limits: const, format and minItems of 0 or 1 are supported; minimum, maximum, multipleOf, minLength, maxLength and other array constraints are not, and neither are recursive schemas or additionalProperties other than false. Simple patterns are supported but complex ones may be refused, so pattern is treated as unsupported. At most 16 parameters with union types: every anyOf counts here, so the count is never below the provider's."
+    }
+  ],
+  "keywords": ["const", "format", "minItems"],
+  "formats": ["date-time", "date", "uuid"],
+  "keywordMaximums": { "minItems": 1 },
+  "maps": "entries",
+  "recursion": false,
+  "limits": {
+    "maxUnions": 16
+  }
+}

@@ -63,23 +63,23 @@
       "additionalProperties": false
     },
     "llm": {
-      "description": "Not yet active. LLM structured output profiles.",
+      "description": "Provider-ready schemas for LLM structured output, one per type and profile. docs/llm.md explains them.",
       "type": "object",
       "properties": {
         "profiles": {
-          "description": "The provider profiles to generate, like openai.",
+          "description": "The provider profiles to generate: a built in one by name (openai, anthropic, gemini), or a profile file by its path, ending in .json, which replaces a built in one of the same name.",
           "type": "array",
-          "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+          "items": { "type": "string", "pattern": "^([a-z][a-z0-9-]*|.+\\.json)$" },
           "minItems": 1,
           "uniqueItems": true
         },
         "out": {
-          "description": "The folder the provider-ready schemas are written to.",
+          "description": "The folder the provider-ready schemas are written to, one folder per profile. strictgen clears it before writing.",
           "type": "string",
           "minLength": 1
         },
         "cleanup": {
-          "description": "Fixes common syntax mistakes, like a surrounding code fence, before LLM decoding.",
+          "description": "Adds the cleanup helper to every target: it removes a surrounding code fence, a byte order mark, surrounding white space and trailing commas, and nothing else.",
           "type": "boolean",
           "default": false
         }

@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/order.json",
+  "title": "OrderRequest",
+  "description": "An order a model reads out of a customer's message.",
+  "type": "object",
+  "properties": {
+    "customer": { "$ref": "#/$defs/customer" },
+    "lines": {
+      "description": "What the customer orders.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/line" },
+      "minItems": 1,
+      "maxItems": 20
+    },
+    "payment": { "$ref": "#/$defs/payment" },
+    "deliverOn": {
+      "description": "The day the customer wants it delivered.",
+      "type": "string",
+      "format": "date"
+    },
+    "note": {
+      "description": "A note for the packer.",
+      "type": "string",
+      "maxLength": 80
+    },
+    "priority": { "description": "How urgent it is.", "enum": ["low", "normal", "high"] },
+    "gift": { "description": "Whether to wrap it as a gift.", "type": "boolean" },
+    "labels": {
+      "description": "Labels by name, like a color per box.",
+      "type": "object",
+      "propertyNames": { "type": "string", "maxLength": 12 },
+      "additionalProperties": { "type": "string" },
+      "maxProperties": 5
+    }
+  },
+  "required": ["customer", "lines", "payment"],
+  "additionalProperties": false,
+  "$defs": {
+    "customer": {
+      "description": "Who orders.",
+      "type": "object",
+      "properties": {
+        "name": { "description": "The full name.", "type": "string", "minLength": 1, "maxLength": 100 },
+        "email": { "description": "An email address.", "type": "string", "pattern": "^[^@ ]+@[^@ ]+$" },
+        "contact": { "$ref": "#/$defs/contact" }
+      },
+      "required": ["name"],
+      "additionalProperties": false
+    },
+    "contact": {
+      "description": "A way to reach the customer: a phone number, or a count of reminders to send.",
+      "oneOf": [
+        { "type": "string", "minLength": 6 },
+        { "type": "integer", "minimum": 0, "maximum": 3 }
+      ]
+    },
+    "line": {
+      "description": "One line of an order.",
+      "type": "object",
+      "properties": {
+        "sku": { "$ref": "#/$defs/sku" },
+        "quantity": {
+          "description": "How many, in packs of 2.",
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "multipleOf": 2
+        },
+        "price": { "description": "The unit price.", "type": "number", "minimum": 0, "exclusiveMaximum": 10000 },
+        "tags": {
+          "description": "Free form tags.",
+          "type": "array",
+          "items": { "type": "string" },
+          "uniqueItems": true
+        }
+      },
+      "required": ["sku", "quantity"],
+      "additionalProperties": false
+    },
+    "sku": {
+      "description": "A stock keeping unit, like AB-1234.",
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[0-9]{4}$"
+    },
+    "payment": {
+      "description": "How the customer pays, picked by its method key.",
+      "oneOf": [{ "$ref": "#/$defs/card" }, { "$ref": "#/$defs/invoice" }]
+    },
+    "card": {
+      "description": "A card payment.",
+      "type": "object",
+      "properties": {
+        "method": { "const": "card" },
+        "last4": { "description": "The last four digits.", "type": "string", "minLength": 4, "maxLength": 4 }
+      },
+      "required": ["method", "last4"],
+      "unevaluatedProperties": false
+    },
+    "invoice": {
+      "description": "Payment by invoice.",
+      "type": "object",
+      "properties": {
+        "method": { "const": "invoice" },
+        "dueAt": { "description": "When the invoice is due.", "type": "string", "format": "date-time" },
+        "reference": { "description": "The customer's reference.", "type": "string", "format": "uuid" }
+      },
+      "required": ["method", "dueAt"],
+      "unevaluatedProperties": false
+    }
+  }
+}

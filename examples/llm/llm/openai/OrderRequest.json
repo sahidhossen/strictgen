@@ -1,0 +1,255 @@
+{
+  "description": "An order a model reads out of a customer's message.",
+  "type": "object",
+  "properties": {
+    "customer": {
+      "description": "Who orders.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The full name. At least 1 character, at most 100 characters.",
+          "type": "string"
+        },
+        "email": {
+          "description": "An email address.",
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[^@ ]+@[^@ ]+$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contact": {
+          "description": "A way to reach the customer: a phone number, or a count of reminders to send.",
+          "anyOf": [
+            {
+              "description": "At least 6 characters.",
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "email",
+        "contact"
+      ],
+      "additionalProperties": false
+    },
+    "lines": {
+      "description": "What the customer orders.",
+      "type": "array",
+      "items": {
+        "description": "One line of an order.",
+        "type": "object",
+        "properties": {
+          "sku": {
+            "description": "A stock keeping unit, like AB-1234.",
+            "type": "string",
+            "pattern": "^[A-Z]{2}-[0-9]{4}$"
+          },
+          "quantity": {
+            "description": "How many, in packs of 2.",
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "multipleOf": 2
+          },
+          "price": {
+            "description": "The unit price.",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0,
+                "exclusiveMaximum": 10000
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "description": "Free form tags. No two items equal.",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sku",
+          "quantity",
+          "price",
+          "tags"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 20
+    },
+    "payment": {
+      "description": "How the customer pays, picked by its method key.",
+      "anyOf": [
+        {
+          "description": "A card payment.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "card"
+            },
+            "last4": {
+              "description": "The last four digits. At least 4 characters, at most 4 characters.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "method",
+            "last4"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Payment by invoice.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "invoice"
+            },
+            "dueAt": {
+              "description": "When the invoice is due.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "reference": {
+              "description": "The customer's reference.",
+              "anyOf": [
+                {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "dueAt",
+            "reference"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "deliverOn": {
+      "description": "The day the customer wants it delivered.",
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "note": {
+      "description": "A note for the packer. At most 80 characters.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "priority": {
+      "description": "How urgent it is.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gift": {
+      "description": "Whether to wrap it as a gift.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "labels": {
+      "description": "Labels by name, like a color per box. Each key at most once.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "description": "At most 12 characters.",
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "key",
+              "value"
+            ],
+            "additionalProperties": false
+          },
+          "maxItems": 5
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "customer",
+    "lines",
+    "payment",
+    "deliverOn",
+    "note",
+    "priority",
+    "gift",
+    "labels"
+  ],
+  "additionalProperties": false
+}

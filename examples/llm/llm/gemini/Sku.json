@@ -1,0 +1,13 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "A stock keeping unit, like AB-1234. Matching the regular expression ^[A-Z]{2}-[0-9]{4}$.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

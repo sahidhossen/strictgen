@@ -1,0 +1,287 @@
+{
+  "description": "An order.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "The order ID. At least 4 characters, at most 12 characters.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The format version.",
+      "type": "integer",
+      "enum": [
+        2
+      ]
+    },
+    "status": {
+      "description": "Where the order is.",
+      "type": "string",
+      "enum": [
+        "open",
+        "paid",
+        "shipped"
+      ]
+    },
+    "total": {
+      "description": "The total. Less than 100000.",
+      "type": "number",
+      "minimum": 0
+    },
+    "count": {
+      "description": "Greater than 0, a multiple of 5.",
+      "anyOf": [
+        {
+          "type": "integer",
+          "maximum": 50
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "note": {
+      "description": "A note. At most 80 characters.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "code": {
+      "description": "Matching the regular expression ^[A-Z]{3}$.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "placedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "placedOn": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "reference": {
+      "description": "A UUID, like 123e4567-e89b-12d3-a456-426614174000.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tags": {
+      "description": "No two items equal.",
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "maxItems": 5
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lines": {
+      "type": "array",
+      "items": {
+        "description": "One line.",
+        "type": "object",
+        "properties": {
+          "sku": {
+            "type": "string"
+          },
+          "quantity": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "required": [
+          "sku",
+          "quantity"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 2
+    },
+    "payment": {
+      "description": "How it is paid.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "card"
+              ]
+            },
+            "last4": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "last4"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "wire"
+              ]
+            },
+            "iban": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "iban"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "contact": {
+      "description": "An email address or a phone extension.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "integer",
+          "minimum": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "labels": {
+      "description": "At least 1 key, at most 3 keys.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sizes": {
+      "description": "Each key one of \"s\", \"m\", \"l\".",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gift": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "version",
+    "status",
+    "total",
+    "count",
+    "note",
+    "code",
+    "placedAt",
+    "placedOn",
+    "reference",
+    "tags",
+    "lines",
+    "payment",
+    "contact",
+    "labels",
+    "sizes",
+    "gift"
+  ],
+  "additionalProperties": false
+}
+
+Moved to the decoder:
+  /properties/code: optional, so required and nullable: null stands for absent
+  /properties/code/anyOf/0: pattern ^[A-Z]{3}$: matching the regular expression ^[A-Z]{3}$
+  /properties/contact: optional, so required and nullable: null stands for absent
+  /properties/count: optional, so required and nullable: null stands for absent
+  /properties/count/anyOf/0: exclusiveMinimum 0: greater than 0
+  /properties/count/anyOf/0: multipleOf 5: a multiple of 5
+  /properties/gift: optional, so required and nullable: null stands for absent
+  /properties/id: minLength 4: at least 4 characters
+  /properties/id: maxLength 12: at most 12 characters
+  /properties/labels: optional, so required and nullable: null stands for absent
+  /properties/labels/anyOf/0: minProperties 1: at least 1 key
+  /properties/labels/anyOf/0: maxProperties 3: at most 3 keys
+  /properties/labels/anyOf/0/propertyNames: maxLength 8: at most 8 characters
+  /properties/note: optional, so required and nullable: null stands for absent
+  /properties/note/anyOf/0: maxLength 80: at most 80 characters
+  /properties/payment: a tagged union on "kind", as anyOf of its 2 branches
+  /properties/payment/anyOf/1/properties/iban: optional, so required and nullable: null stands for absent
+  /properties/placedAt: optional, so required and nullable: null stands for absent
+  /properties/placedOn: optional, so required and nullable: null stands for absent
+  /properties/reference: optional, so required and nullable: null stands for absent
+  /properties/reference/anyOf/0: format uuid: a UUID, like 123e4567-e89b-12d3-a456-426614174000
+  /properties/sizes: optional, so required and nullable: null stands for absent
+  /properties/sizes/anyOf/0: propertyNames: each key one of "s", "m", "l"
+  /properties/tags: optional, so required and nullable: null stands for absent
+  /properties/tags/anyOf/0: uniqueItems true: no two items equal
+  /properties/total: exclusiveMaximum 100000: less than 100000

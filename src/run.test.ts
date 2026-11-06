@@ -151,11 +151,15 @@ describe("help, version and usage", () => {
   });
 
   it.each([
-    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, examples, docs, breaking, dirs, fix'],
+    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, examples, docs, breaking, llm, dirs, fix'],
     [["--bogus"], "error: Unknown option '--bogus'"],
     [["generate", "extra"], 'error: unexpected argument "extra"'],
-    [["--json"], "error: --json only applies to strictgen dirs, explain and breaking"],
-    [["check", "--json"], "error: --json only applies to strictgen dirs, explain and breaking"],
+    [["--json"], "error: --json only applies to strictgen dirs, explain, breaking and llm"],
+    [["check", "--json"], "error: --json only applies to strictgen dirs, explain, breaking and llm"],
+    [["check", "--profile", "openai"], "error: --profile only applies to strictgen llm"],
+    [["llm", "Order"], "error: llm needs --profile <name>, like --profile openai"],
+    [["llm", "--profile", "openai"], "error: llm needs a type name, like Order"],
+    [["llm", "--profile", "openai", "Order", "extra"], 'error: unexpected argument "extra"'],
     [["explain"], "error: explain needs a schema location, like user.json#/$defs/address"],
     [["explain", "order.json", "extra"], 'error: unexpected argument "extra"'],
     [["--config"], "error: Option '--config <value>' argument missing"],

@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "How it is paid.",
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "card"
+              ]
+            },
+            "last4": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "last4"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": [
+                "wire"
+              ]
+            },
+            "iban": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "iban"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}
+
+Moved to the decoder:
+  (root): not an object, so wrapped as { "value": ... }: the decoder reads the value key
+  /properties/value: a tagged union on "kind", as anyOf of its 2 branches
+  /properties/value/anyOf/1/properties/iban: optional, so required and nullable: null stands for absent

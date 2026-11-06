@@ -5,6 +5,7 @@ import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
 import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
 import { RENAME_TYPE, TS_RESERVED } from "./naming.js";
+import { TS_CLEANUP } from "./cleanup-helpers.js";
 import { asciiString, tsHelpersBody } from "./ts-helpers.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -42,6 +43,8 @@ export interface TypeScriptOptions {
    * their paths and adds `reportX` and `reportXFromJson`. Defaults to `strict`.
    */
   readonly read?: ReadMode;
+  /** Adds `cleanLlmJson`, the LLM cleanup step, to the helpers. Needs the decoders. */
+  readonly cleanup?: boolean;
 }
 
 interface Ctx {
@@ -68,6 +71,8 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   const decoders = options.decoders ?? true;
   const report = options.read === "report";
   if (report && !decoders) throw new Error("report mode needs the decoders");
+  const cleanup = options.cleanup === true;
+  if (cleanup && !decoders) throw new Error("the cleanup step needs the decoders");
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   const checks = new Checks(model.decls);
   const patterns = patternsOf(model.decls);
@@ -106,13 +111,17 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
     ...valueModules.map((m) => `export * from "./${m}.js";\n`),
   ];
   if (decoders) {
-    const exported = report ? [...HELPER_EXPORTS, ...REPORT_EXPORTS] : HELPER_EXPORTS;
+    const exported = [
+      ...(cleanup ? ["cleanLlmJson"] : []),
+      ...HELPER_EXPORTS,
+      ...(report ? REPORT_EXPORTS : []),
+    ];
     const names = exported.map((n) => (TYPE_EXPORTS.has(n) ? `type ${n}` : n));
     index.push(`export { ${names.join(", ")} } from "./helpers.js";\n`);
   }
   return [
     ...files,
-    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report, patterns)}` }] : []),
+    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report, patterns)}${cleanup ? TS_CLEANUP : ""}` }] : []),
     { name: "index.ts", contents: `${header}\n\n${index.join("")}` },
   ];
 }
