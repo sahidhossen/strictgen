@@ -50,6 +50,14 @@ export function encodeContact(value: Contact): unknown {
   return h.encodeUntagged(value, "Contact", [encodeContactEmail, encodeContactPhone]);
 }
 
+/**
+ * Encodes Contact as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeContact.
+ */
+export function encodeContactToJson(value: Contact): string {
+  return h.toJson(encodeContact(value));
+}
+
 /** How to reach a user: by email or by phone, exactly one of them. */
 export interface ContactEmail {
   /** Who to ask for. */
@@ -97,12 +105,19 @@ export function tryDecodeContactEmailFromJson(text: string): h.DecodeResult<Cont
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeContactEmail(value: ContactEmail): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "name", value.name, h.encodeString);
-  h.member(out, "email", value.email, h.encodeString);
+  const out = h.encodeObject(value);
+  h.member(out, value, "name", h.encodeString);
+  h.member(out, value, "email", h.encodeString);
   h.encodeClosed(value, ["name", "email"]);
   return out;
+}
+
+/**
+ * Encodes ContactEmail as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeContactEmail.
+ */
+export function encodeContactEmailToJson(value: ContactEmail): string {
+  return h.toJson(encodeContactEmail(value));
 }
 
 /** How to reach a user: by email or by phone, exactly one of them. */
@@ -152,12 +167,19 @@ export function tryDecodeContactPhoneFromJson(text: string): h.DecodeResult<Cont
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeContactPhone(value: ContactPhone): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "name", value.name, h.encodeString);
-  h.member(out, "phone", value.phone, h.encodeString);
+  const out = h.encodeObject(value);
+  h.member(out, value, "name", h.encodeString);
+  h.member(out, value, "phone", h.encodeString);
   h.encodeClosed(value, ["name", "phone"]);
   return out;
+}
+
+/**
+ * Encodes ContactPhone as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeContactPhone.
+ */
+export function encodeContactPhoneToJson(value: ContactPhone): string {
+  return h.toJson(encodeContactPhone(value));
 }
 
 /** What the user may do. */
@@ -198,6 +220,14 @@ export function encodeRole(value: Role): unknown {
   return h.encodeEnum(value, ["owner", "admin", "member"] as const);
 }
 
+/**
+ * Encodes Role as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeRole.
+ */
+export function encodeRoleToJson(value: Role): string {
+  return h.toJson(encodeRole(value));
+}
+
 /** A user account. */
 export interface User {
   id: UserId;
@@ -209,6 +239,8 @@ export interface User {
   /** Free-form labels, by name. */
   labels: Record<string, string>;
   createdAt: Timestamp;
+  /** How many seats the user may hand out, by role. */
+  quota?: Partial<Record<Role, number>>;
 }
 
 /**
@@ -224,8 +256,9 @@ export function decodeUser(json: unknown, path = ""): User {
     role: h.required(o, "role", path, decodeRole),
     labels: h.required(o, "labels", path, h.map(h.decodeString, h.decodeString)),
     createdAt: h.required(o, "createdAt", path, decodeTimestamp),
+    ...h.optional(o, "quota", path, h.map(decodeRole, h.decodeInteger)),
   };
-  h.closed(o, path, ["id", "email", "displayName", "role", "labels", "createdAt"]);
+  h.closed(o, path, ["id", "email", "displayName", "role", "labels", "createdAt", "quota"]);
   return value;
 }
 
@@ -253,14 +286,22 @@ export function tryDecodeUserFromJson(text: string): h.DecodeResult<User> {
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeUser(value: User): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "id", value.id, encodeUserId);
-  h.member(out, "email", value.email, h.encodeString);
-  if (value.displayName !== undefined) h.member(out, "displayName", value.displayName, h.encodeString);
-  h.member(out, "role", value.role, encodeRole);
-  h.member(out, "labels", value.labels, h.encodeMap(h.encodeString, h.encodeString));
-  h.member(out, "createdAt", value.createdAt, encodeTimestamp);
-  h.encodeClosed(value, ["id", "email", "displayName", "role", "labels", "createdAt"]);
+  const out = h.encodeObject(value);
+  h.member(out, value, "id", encodeUserId);
+  h.member(out, value, "email", h.encodeString);
+  h.member(out, value, "displayName", h.encodeString, true);
+  h.member(out, value, "role", encodeRole);
+  h.member(out, value, "labels", h.encodeMap(h.encodeString, h.encodeString));
+  h.member(out, value, "createdAt", encodeTimestamp);
+  h.member(out, value, "quota", h.encodeMap(encodeRole, h.encodeInteger), true);
+  h.encodeClosed(value, ["id", "email", "displayName", "role", "labels", "createdAt", "quota"]);
   return out;
+}
+
+/**
+ * Encodes User as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeUser.
+ */
+export function encodeUserToJson(value: User): string {
+  return h.toJson(encodeUser(value));
 }

@@ -52,13 +52,20 @@ export function tryDecodeBankAccountFromJson(text: string): h.DecodeResult<BankA
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeBankAccount(value: BankAccount): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "type", value.type, encodeBankAccountType);
-  h.member(out, "holderName", value.holderName, h.encodeString);
-  h.member(out, "iban", value.iban, h.encodeString);
+  const out = h.encodeObject(value);
+  h.member(out, value, "type", encodeBankAccountType);
+  h.member(out, value, "holderName", h.encodeString);
+  h.member(out, value, "iban", h.encodeString);
   h.encodeClosed(value, ["type", "holderName", "iban"]);
   return out;
+}
+
+/**
+ * Encodes BankAccount as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeBankAccount.
+ */
+export function encodeBankAccountToJson(value: BankAccount): string {
+  return h.toJson(encodeBankAccount(value));
 }
 
 export type BankAccountType = "bank_account";
@@ -96,6 +103,14 @@ export function tryDecodeBankAccountTypeFromJson(text: string): h.DecodeResult<B
  */
 export function encodeBankAccountType(value: BankAccountType): unknown {
   return h.encodeEnum(value, ["bank_account"] as const);
+}
+
+/**
+ * Encodes BankAccountType as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeBankAccountType.
+ */
+export function encodeBankAccountTypeToJson(value: BankAccountType): string {
+  return h.toJson(encodeBankAccountType(value));
 }
 
 /** A payment card. */
@@ -152,15 +167,22 @@ export function tryDecodeCardFromJson(text: string): h.DecodeResult<Card> {
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeCard(value: Card): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "type", value.type, encodeCardType);
-  h.member(out, "brand", value.brand, encodeCardBrand);
-  h.member(out, "last4", value.last4, h.encodeString);
-  h.member(out, "expMonth", value.expMonth, h.encodeInteger);
-  h.member(out, "expYear", value.expYear, h.encodeInteger);
+  const out = h.encodeObject(value);
+  h.member(out, value, "type", encodeCardType);
+  h.member(out, value, "brand", encodeCardBrand);
+  h.member(out, value, "last4", h.encodeString);
+  h.member(out, value, "expMonth", h.encodeInteger);
+  h.member(out, value, "expYear", h.encodeInteger);
   h.encodeClosed(value, ["type", "brand", "last4", "expMonth", "expYear"]);
   return out;
+}
+
+/**
+ * Encodes Card as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeCard.
+ */
+export function encodeCardToJson(value: Card): string {
+  return h.toJson(encodeCard(value));
 }
 
 /** The card network. */
@@ -201,6 +223,14 @@ export function encodeCardBrand(value: CardBrand): unknown {
   return h.encodeEnum(value, ["visa", "mastercard", "amex"] as const);
 }
 
+/**
+ * Encodes CardBrand as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeCardBrand.
+ */
+export function encodeCardBrandToJson(value: CardBrand): string {
+  return h.toJson(encodeCardBrand(value));
+}
+
 export type CardType = "card";
 
 /**
@@ -236,6 +266,14 @@ export function tryDecodeCardTypeFromJson(text: string): h.DecodeResult<CardType
  */
 export function encodeCardType(value: CardType): unknown {
   return h.encodeEnum(value, ["card"] as const);
+}
+
+/**
+ * Encodes CardType as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeCardType.
+ */
+export function encodeCardTypeToJson(value: CardType): string {
+  return h.toJson(encodeCardType(value));
 }
 
 /** A way to pay, picked by its `type` key. */
@@ -282,6 +320,14 @@ export function encodePaymentMethod(value: PaymentMethod): unknown {
     ["bank_account", encodeBankAccount],
     ["wallet", encodeWallet],
   ]);
+}
+
+/**
+ * Encodes PaymentMethod as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodePaymentMethod.
+ */
+export function encodePaymentMethodToJson(value: PaymentMethod): string {
+  return h.toJson(encodePaymentMethod(value));
 }
 
 /** A digital wallet. */
@@ -332,13 +378,20 @@ export function tryDecodeWalletFromJson(text: string): h.DecodeResult<Wallet> {
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeWallet(value: Wallet): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "type", value.type, encodeWalletType);
-  h.member(out, "provider", value.provider, encodeWalletProvider);
-  if (value.email !== undefined) h.member(out, "email", value.email, h.encodeString);
+  const out = h.encodeObject(value);
+  h.member(out, value, "type", encodeWalletType);
+  h.member(out, value, "provider", encodeWalletProvider);
+  h.member(out, value, "email", h.encodeString, true);
   h.encodeClosed(value, ["type", "provider", "email"]);
   return out;
+}
+
+/**
+ * Encodes Wallet as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeWallet.
+ */
+export function encodeWalletToJson(value: Wallet): string {
+  return h.toJson(encodeWallet(value));
 }
 
 /** The wallet provider. */
@@ -379,6 +432,14 @@ export function encodeWalletProvider(value: WalletProvider): unknown {
   return h.encodeEnum(value, ["apple_pay", "google_pay"] as const);
 }
 
+/**
+ * Encodes WalletProvider as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeWalletProvider.
+ */
+export function encodeWalletProviderToJson(value: WalletProvider): string {
+  return h.toJson(encodeWalletProvider(value));
+}
+
 export type WalletType = "wallet";
 
 /**
@@ -414,4 +475,12 @@ export function tryDecodeWalletTypeFromJson(text: string): h.DecodeResult<Wallet
  */
 export function encodeWalletType(value: WalletType): unknown {
   return h.encodeEnum(value, ["wallet"] as const);
+}
+
+/**
+ * Encodes WalletType as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeWalletType.
+ */
+export function encodeWalletTypeToJson(value: WalletType): string {
+  return h.toJson(encodeWalletType(value));
 }

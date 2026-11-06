@@ -47,6 +47,14 @@ export function encodeEventId(value: EventId): unknown {
   return h.encodeString(value);
 }
 
+/**
+ * Encodes EventId as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeEventId.
+ */
+export function encodeEventIdToJson(value: EventId): string {
+  return h.toJson(encodeEventId(value));
+}
+
 /** An RFC 3339 date and time in UTC. */
 export type Timestamp = string;
 
@@ -83,6 +91,14 @@ export function tryDecodeTimestampFromJson(text: string): h.DecodeResult<Timesta
  */
 export function encodeTimestamp(value: Timestamp): unknown {
   return h.encodeString(value);
+}
+
+/**
+ * Encodes Timestamp as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeTimestamp.
+ */
+export function encodeTimestampToJson(value: Timestamp): string {
+  return h.toJson(encodeTimestamp(value));
 }
 
 /** The ID of a user, like `usr_8f2k`. */
@@ -126,4 +142,12 @@ export function tryDecodeUserIdFromJson(text: string): h.DecodeResult<UserId> {
  */
 export function encodeUserId(value: UserId): unknown {
   return h.encodeString(value);
+}
+
+/**
+ * Encodes UserId as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeUserId.
+ */
+export function encodeUserIdToJson(value: UserId): string {
+  return h.toJson(encodeUserId(value));
 }

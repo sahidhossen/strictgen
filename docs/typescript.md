@@ -1,6 +1,6 @@
 # TypeScript decoders
 
-With `targets.typescript.decoders` on (the default), every generated type `X` gets five functions next to it, and the folder gets a `helpers.ts` that they share. There is no package to install.
+With `targets.typescript.decoders` on (the default), every generated type `X` gets six functions next to it, and the folder gets a `helpers.ts` that they share. There is no package to install.
 
 ```ts
 decodeXFromJson(text: string): X                 // reads JSON text strictly, throws a DecodeError
@@ -8,11 +8,12 @@ tryDecodeXFromJson(text: string): DecodeResult<X>
 decodeX(json: unknown, path?: string): X         // checks a value that is already parsed
 tryDecodeX(json: unknown): DecodeResult<X>       // { ok: true, value } or { ok: false, error }
 encodeX(value: X): unknown                       // a JSON value, ready for JSON.stringify
+encodeXToJson(value: X): string                  // JSON text, keys in the order Rust and Go write
 ```
 
 Use `decodeXFromJson` for input from outside. It accepts and rejects the same documents as the Rust and Go decoders. `decodeX` is for a value something else has parsed already, and can't see what `JSON.parse` has thrown away (see [Numbers](#numbers)).
 
-Decoders read a value that is already parsed, like the result of `JSON.parse`, and check it the way the Rust and Go decoders do: unknown keys, missing required keys, `null` for an optional key and values of the wrong type fail. A `DecodeError` has the JSON Pointer of the first problem in `path` and the reason in `reason`, like `/items/2/price: expected a number, found a string`. Pass `path` to report errors under the place the value came from.
+Decoders read a value that is already parsed, like the result of `JSON.parse`, and check it the way the Rust and Go decoders do: unknown keys, missing required keys, `null` for an optional key and values of the wrong type fail. A `DecodeError` has the shared error shape of [error-codes.md](error-codes.md): the JSON Pointer of the first problem in `path`, a `code` from `ErrorCode`, and `expected` and `found` when the code has them. Its `message` is like `/items/2/price: wrong type, expected a number, found "5"`, and `compact()` gives `/items/2/price wrong_type, expected a number, found "5"`, the same text Go gives. Pass `path` to report errors under the place the value came from.
 
 Keys like `__proto__` and `constructor` are read and written as data, never as object internals.
 
@@ -28,11 +29,13 @@ Keys like `__proto__` and `constructor` are read and written as data, never as o
 - at most 127 nested arrays and objects: a value inside 128 or more fails, the limit of `serde_json` and of the Go decoders, so reading and decoding stay bounded however deep the input
 - for an `integer`, an integer spelling: `12.0`, `1e2` and `-0` fail, as in Rust and Go. A `number` takes any spelling
 
-A failure is a `DecodeError` whose `path` is the JSON Pointer of the value being read and whose `reason` gives the offset in UTF-8 bytes, the same reason Go gives:
+A failure is a `DecodeError` with the code `invalid_json`, `duplicate_key` or `too_deep`, whose `path` is the JSON Pointer of the value being read and whose `found` ends with the offset in UTF-8 bytes, the same as Go:
 
 ```text
-/items/0: invalid JSON at offset 31: key "sku" given twice
+/items/0/sku: duplicate key, found "sku" at offset 31
 ```
+
+The reader also keeps the order of each object's keys, which a JavaScript object doesn't for keys like `"1"`, so the first unknown key reported is the one Go reports. After `JSON.parse`, `decodeX` sees such keys first.
 
 The text is a JavaScript string, so bytes are already decoded. Decode them with `new TextDecoder("utf-8", { fatal: true, ignoreBOM: true })`, which fails on invalid UTF-8 and keeps a leading byte order mark, so the reader rejects it, as Rust and Go do. A non-fatal decoder turns it into U+FFFD, which can't be told apart afterwards.
 
@@ -44,7 +47,7 @@ An ID type is a branded string, like `type UserId = string & { readonly __brand:
 
 JavaScript holds every JSON number as a 64-bit float, which keeps neither the number's spelling nor every integer. The TypeScript decoders fail rather than read a different number than was sent:
 
-- An `integer` decodes only when it is a whole number within `Number.MAX_SAFE_INTEGER` (2^53 - 1), and not `-0`. A larger value fails, since `JSON.parse` has already rounded it.
+- An `integer` decodes only when it is a whole number within `Number.MAX_SAFE_INTEGER` (2^53 - 1), and not `-0`. A larger value fails with `out_of_range_integer`, since `JSON.parse` has already rounded it. Go and Rust take integers up to the 64-bit limit.
 - A `number` decodes when it is finite. `JSON.parse` turns `1e400` into `Infinity`, which fails.
 
 Where TypeScript differs from Rust and Go:
@@ -75,16 +78,16 @@ The decoders check that the value is a string. They don't check the pattern yet,
 
 ## Unions
 
-A tagged union (a `oneOf` whose branches share a required string `const`, like `"type": { "const": "card" }`) is a TypeScript union of its branch types. `decodeX` reads the tag first and decodes only the branch it names. Like Go, it fails with:
+A tagged union (a `oneOf` whose branches share a required string `const`, like `"type": { "const": "card" }`) is a TypeScript union of its branch types. `decodeX` reads the tag first and decodes only the branch it names. Like Go, it fails at the tag's path with:
 
-- `missing key "type"` when the tag is absent
-- `"type" must be a string, found a number` when it isn't a string
-- `unknown type "cash", expected one of card, wire` when no branch has it, the tags sorted
-- the branch's own error, prefixed with the branch, like `/root/installments: type "card": expected a number, found a string`
+- `missing_key` when the tag is absent: `/type: missing key`
+- `wrong_type` when it isn't a string: `/type: wrong type, expected a string, found 1`
+- `bad_tag` when no branch has it, the tags in schema order: `/type: bad tag, expected one of "card", "wire", found "cash"`
+- the branch's own error inside it, like `/root/installments: wrong type, expected an integer, found "2"`
 
 A union that lists another tagged union is spread into one, so its branches decode as branches of the outer union, as in Rust and Go.
 
-An untagged union tries its variants in a fixed order, the same as Rust and Go, and keeps the first that decodes: objects with required keys, then arrays, maps, enums, strings, integers, numbers, booleans, other unions, and any JSON value last. A value that matches two variants decodes as the earlier one in every language. When none matches, the error is `data did not match any variant of X`, at the union's path. An exactly-one `oneOf` of required keys beside properties, like an email or a phone, is a union of one object type per choice, with the other choices' keys typed `never`.
+An untagged union tries its variants in a fixed order, the same as Rust and Go, and keeps the first that decodes: objects with required keys, then arrays, maps, enums, strings, integers, numbers, booleans, other unions, and any JSON value last. A value that matches two variants decodes as the earlier one in every language. When none matches, the error is `wrong_type` at the union's path, naming the union: `wrong type, expected Contact, found an object`, or `null_not_allowed` for `null`. An exactly-one `oneOf` of required keys beside properties, like an email or a phone, is a union of one object type per choice, with the other choices' keys typed `never`.
 
 ## Any JSON values
 
@@ -101,4 +104,4 @@ An untagged union tries its variants in a fixed order, the same as Rust and Go, 
 - for an integer, a fraction, `-0`, which `JSON.stringify` writes as `0`, or a value past `Number.MAX_SAFE_INTEGER`
 - a tagged union whose tag no branch has, and an untagged union value no variant takes
 
-Named keys are written in schema order, then the other keys sorted by code point, the order Rust and Go write. A tagged union encodes with the branch its tag names, an untagged one with the first variant, in decode order, whose encoder takes the value. The named keys and the other keys share one TypeScript object, so no key can be written twice, which the Rust and Go encoders check for.
+Named keys are written in schema order, then the other keys sorted by code point, the order Rust and Go write. `JSON.stringify` puts keys like `"1"` first whatever the order, so use `encodeXToJson` when the order of the text matters. A tagged union encodes with the branch its tag names, an untagged one with the first variant, in decode order, whose encoder takes the value. The named keys and the other keys share one TypeScript object, so no key can be written twice, which the Rust and Go encoders check for.

@@ -22,7 +22,7 @@ A `strictgen.json` at the project root drives everything. Paths are relative to 
 }
 ```
 
-Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`. TypeScript gets strict decoders next to the types, `decodeX`, `tryDecodeX` and `encodeX`, unless `"decoders": false`; [`docs/typescript.md`](docs/typescript.md) explains them and their number limits. [`strictgen.schema.json`](strictgen.schema.json) documents every option and its default. [`examples/basic`](examples/basic) has a full example.
+Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`. TypeScript gets strict decoders next to the types, `decodeXFromJson`, `decodeX`, `encodeX` and their variants, unless `"decoders": false`; [`docs/typescript.md`](docs/typescript.md) explains them and their number limits. Go and TypeScript report the same decode errors, described in [`docs/error-codes.md`](docs/error-codes.md). [`strictgen.schema.json`](strictgen.schema.json) documents every option and its default. [`examples/basic`](examples/basic) has a full example.
 
 ## Command line
 

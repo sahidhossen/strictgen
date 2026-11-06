@@ -33,3 +33,19 @@ func TestJSONErrorCodes(t *testing.T) {
 		})
 	}
 }
+
+// TestFoundStrings checks how errors show strings, the same rule as TypeScript: quoted, " and \
+// escaped, control characters, U+2028 and U+2029 as \u escapes, and cut to 64 code points.
+func TestFoundStrings(t *testing.T) {
+	cases := []struct{ text, want string }{
+		{`a"b\c`, `"a\"b\\c"`},
+		{"\u0000\u001f\u007f\u0085\u2028\u2029é😀", `"\u0000\u001f\u007f\u0085\u2028\u2029é😀"`},
+		{strings.Repeat("😀", 64), `"` + strings.Repeat("😀", 64) + `"`},
+		{strings.Repeat("😀", 65), `"` + strings.Repeat("😀", 64) + `"...`},
+	}
+	for _, c := range cases {
+		if got := quote(c.text); got != c.want {
+			t.Errorf("quote(%q) = %s, expected %s", c.text, got, c.want)
+		}
+	}
+}

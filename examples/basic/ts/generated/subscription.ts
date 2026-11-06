@@ -63,14 +63,21 @@ export function tryDecodeSubscriptionFromJson(text: string): h.DecodeResult<Subs
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeSubscription(value: Subscription): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "url", value.url, h.encodeString);
-  h.member(out, "match", value.match, h.encodeArray(encodeEventType));
-  h.member(out, "default", value.default, h.encodeBoolean);
-  if (value.async !== undefined) h.member(out, "async", value.async, h.encodeBoolean);
-  if (value.select !== undefined) h.member(out, "select", value.select, h.encodeArray(h.encodeString));
-  if (value.self !== undefined) h.member(out, "self", value.self, h.encodeString);
+  const out = h.encodeObject(value);
+  h.member(out, value, "url", h.encodeString);
+  h.member(out, value, "match", h.encodeArray(encodeEventType));
+  h.member(out, value, "default", h.encodeBoolean);
+  h.member(out, value, "async", h.encodeBoolean, true);
+  h.member(out, value, "select", h.encodeArray(h.encodeString), true);
+  h.member(out, value, "self", h.encodeString, true);
   h.encodeClosed(value, ["url", "match", "default", "async", "select", "self"]);
   return out;
+}
+
+/**
+ * Encodes Subscription as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeSubscription.
+ */
+export function encodeSubscriptionToJson(value: Subscription): string {
+  return h.toJson(encodeSubscription(value));
 }
