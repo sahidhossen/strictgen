@@ -307,7 +307,7 @@ const INVALID: readonly (readonly [string, unknown, string, string])[] = [
   ["llm with a profile twice", { targets: ts, llm: { profiles: ["openai", "openai"], out: "llm" } }, "llm.profiles", "listed twice"],
   ["llm cleanup not a boolean", { targets: ts, llm: { profiles: ["openai"], out: "llm", cleanup: 1 } }, "llm.cleanup", "true or false"],
   ["docs without out", { targets: ts, docs: {} }, "docs.out", "is required"],
-  ["unknown docs format", { targets: ts, docs: { out: "d", format: "html" } }, "docs.format", "must be one of"],
+  ["unknown docs format", { targets: ts, docs: { out: "d", format: "pdf" } }, "docs.format", "must be one of"],
   ["unknown formatter", { targets: ts, format: { go: "goimports" } }, "format.go", "must be one of"],
   ["unknown format option", { targets: ts, format: { java: "none" } }, "format.java", "unknown option"],
 ];

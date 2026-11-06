@@ -531,12 +531,8 @@ function field(f: Field, decl: StructDecl, seen: Set<string>, serde: boolean): s
   seen.add(ident);
   const attrs: string[] = [];
   if (serdeCamel(ident) !== f.name) attrs.push(`rename = ${rustString(f.name)}`);
-  let type = typeText(f.type);
-  if (f.boxed) type = `Box<${type}>`;
-  if (!f.required) {
-    attrs.push('skip_serializing_if = "Option::is_none"');
-    type = `Option<${type}>`;
-  }
+  const type = rustFieldType(f);
+  if (!f.required) attrs.push('skip_serializing_if = "Option::is_none"');
   const attr = !serde || attrs.length === 0 ? "" : `    #[serde(${attrs.join(", ")})]\n`;
   const text = f.doc === "" ? [`The \`${f.name}\` key.`] : f.doc.split("\n");
   return `${docs(text, "    ", [])}${attr}    pub ${ident}: ${type},\n`;
@@ -803,6 +799,17 @@ function unique(name: string, seen: Set<string>, path: string): string {
     );
   seen.add(name);
   return name;
+}
+
+/** The Rust type of a field: boxed when it closes a cycle, an `Option` when it is optional. */
+export function rustFieldType(f: Field): string {
+  const type = f.boxed ? `Box<${typeText(f.type)}>` : typeText(f.type);
+  return f.required ? type : `Option<${type}>`;
+}
+
+/** The Rust type for a type expression, as generated code names it. */
+export function rustType(type: TypeExpr): string {
+  return typeText(type);
 }
 
 function typeText(type: TypeExpr): string {

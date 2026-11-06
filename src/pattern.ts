@@ -575,6 +575,14 @@ export function patternCost(pattern: string): number {
   return cost(new Parser(pattern).parse());
 }
 
+/** A parsed pattern, for the payload generator (src/payloads.ts), which builds strings from it. */
+export type PatternNode = Node;
+
+/** Parses a pattern, as written or in its portable form, into its tree. Throws a PatternError. */
+export function patternTree(pattern: string): PatternNode {
+  return new Parser(pattern).parse();
+}
+
 /** The number of parts of a pattern, as {@link parts} counts them. For tests. */
 export function patternParts(pattern: string): number {
   return parts(new Parser(pattern).parse());
