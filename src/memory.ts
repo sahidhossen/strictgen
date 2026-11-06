@@ -15,7 +15,7 @@ import { emitTargets } from "./generate.js";
 import type { Profile } from "./llm-profile.js";
 import type { Model } from "./model.js";
 import type { JsonObject, SchemaOptions, SchemaSet } from "./schema.js";
-import { parseSchemaFile, schemaSet } from "./schema.js";
+import { CodegenError, parseSchemaFile, schemaSet } from "./schema.js";
 import type { TargetSettings } from "./target-set.js";
 import { settingsTargets } from "./target-set.js";
 
@@ -40,15 +40,20 @@ export interface MemoryOutput {
 
 /**
  * Reads schema texts the way `loadSchemas` reads a folder: sorted by file name, each parsed as
- * JSON and checked to be an object, then checked as a set. Every name must end in `.json`, and no
- * name may be given twice. Throws a {@link CodegenError} for a schema outside the conventions.
+ * JSON and checked to be an object, then checked as a set. Throws a {@link CodegenError} for a
+ * schema outside the conventions, a name that doesn't end in `.json` (`read-failed`) and a name
+ * given twice (`name-clash`).
  */
 export function memorySchemas(files: readonly MemorySchema[], options: SchemaOptions = {}): SchemaSet {
   const parsed: Record<string, JsonObject> = {};
   const names = files.map((f) => f.name).sort();
   for (const [i, name] of names.entries()) {
-    if (!name.endsWith(".json")) throw new Error(`schema file ${JSON.stringify(name)} must end in .json`);
-    if (names[i - 1] === name) throw new Error(`schema file ${JSON.stringify(name)} is given twice`);
+    if (!name.endsWith(".json") || name === ".json") {
+      throw new CodegenError(name, "read-failed", "a schema file name must end in .json", "name it like order.json");
+    }
+    if (names[i - 1] === name) {
+      throw new CodegenError(name, "name-clash", "two schema files have this name", "give each file its own name");
+    }
   }
   for (const name of names) {
     const file = files.find((f) => f.name === name);
@@ -80,12 +85,14 @@ export interface DefaultSettingsOptions {
   /** The LLM profiles. None leaves the LLM output and decoders out. */
   readonly profiles: readonly Profile[];
   readonly cleanup: boolean;
+  /** `targets.rust.serdeBridge`: serde's `Deserialize` through the strict decoders. Off by default. */
+  readonly serdeBridge?: boolean;
 }
 
 /**
  * Settings with every target on and every other option at the default a config file gives it:
  * the generated header, TypeScript decoders, Rust's default lint allowances without embedded
- * schemas, Go's default package, and no fixture registries.
+ * schemas or the serde bridge unless asked for, Go's default package, and no fixture registries.
  */
 export function defaultSettings(options: DefaultSettingsOptions): TargetSettings {
   const { read } = options;
@@ -93,7 +100,7 @@ export function defaultSettings(options: DefaultSettingsOptions): TargetSettings
     header: DEFAULT_HEADER,
     targets: {
       typescript: { out: MEMORY_DIRS.typescript, decoders: true, read },
-      rust: { out: MEMORY_DIRS.rust, allow: DEFAULT_ALLOW, embedSchemas: false, read },
+      rust: { out: MEMORY_DIRS.rust, allow: DEFAULT_ALLOW, embedSchemas: false, read, serdeBridge: options.serdeBridge ?? false },
       go: { out: MEMORY_DIRS.go, package: GO_PACKAGE, shared: true, fixtures: false, read },
     },
     ...(options.profiles.length === 0

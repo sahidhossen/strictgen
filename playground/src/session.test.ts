@@ -8,7 +8,7 @@ import { expected, loadCases, loadMarks } from "../../src/conformance/cases.js";
 import { canonicalize } from "../../src/conformance/canonical.js";
 import { builtinProfileFile } from "../../src/profile-files.js";
 import type { Outcome } from "./decode.js";
-import { transpiler } from "./decode.js";
+import { evaluate, SHADOWED, transpiler } from "./decode.js";
 import type { GenerateInput } from "./session.js";
 import { respond, Session } from "./session.js";
 import { PROFILES } from "./state.js";
@@ -52,6 +52,7 @@ describe("the playground decoders", () => {
           read,
           profiles: [],
           cleanup: false,
+          serdeBridge: false,
           ids: { file: "common", suffix: "Id" },
         });
         if (!generated.ok) throw new Error(generated.error);
@@ -101,6 +102,7 @@ describe("the playground decoders", () => {
         read: "strict",
         profiles: [...PROFILES],
         cleanup: true,
+        serdeBridge: false,
         ids: null,
       });
       if (!generated.ok) throw new Error(generated.error);
@@ -143,8 +145,18 @@ const INPUT: GenerateInput = {
   read: "strict",
   profiles: [],
   cleanup: false,
+  serdeBridge: false,
   ids: null,
 };
+
+describe("evaluate", () => {
+  it("hides the network, code loading and the global object from generated code", () => {
+    const exports: Record<string, unknown> = {};
+    evaluate(`"use strict";\nexports.seen = [${SHADOWED.map((n) => `typeof ${n}`).join(", ")}];`, exports, () => undefined);
+    expect(exports.seen).toEqual(SHADOWED.map(() => "undefined"));
+    expect(SHADOWED).toEqual(expect.arrayContaining(["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts"]));
+  });
+});
 
 describe("respond", () => {
   it("generates, then decodes the payload as the type asked for", () => {
@@ -214,7 +226,7 @@ describe("respond", () => {
 
   it("calls a decoder that throws something other than a DecodeError a crash", () => {
     const s = new Session(transpiler(ts), PROFILE_TEXTS, (body, exports, require) => {
-      new Function("exports", "require", "module", body)(exports, require, { exports });
+      evaluate(body, exports, require);
       // Only in order.ts, where the export is a value; index.ts re-exports it with a getter.
       if (Object.getOwnPropertyDescriptor(exports, "decodeOrderFromJson")?.writable === true) {
         exports.decodeOrderFromJson = () => {

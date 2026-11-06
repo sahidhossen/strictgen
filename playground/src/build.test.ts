@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -76,8 +76,11 @@ describe("the playground build", () => {
     expect(html).not.toMatch(/\sstyle=|\son[a-z]+=/);
     // The only URLs in the page's code are the example schema's $id values, never fetched.
     expect(readFileSync(join(out, "style.css"), "utf8")).not.toMatch(/url\(|@import/);
+    // worker.js names these once, in the names hidden from the generated code (decode.ts SHADOWED).
     for (const file of ["app.js", "worker.js"]) {
-      expect(readFileSync(join(out, file), "utf8"), file).not.toMatch(/\bfetch\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource|importScripts/);
+      expect(readFileSync(join(out, file), "utf8"), file).not.toMatch(
+        /\bfetch\(|new (XMLHttpRequest|WebSocket|EventSource)\b|importScripts\(|sendBeacon/,
+      );
     }
   });
 
@@ -96,6 +99,7 @@ describe("the playground build", () => {
           read: "report",
           profiles: ["openai"],
           cleanup: true,
+          serdeBridge: true,
           ids: { file: "common", suffix: "Id" },
         },
         type: "Order",
@@ -121,7 +125,7 @@ describe("the playground build", () => {
   });
 
   it(
-    "refuses generator code that imports a Node built in module, and takes the in-memory generator",
+    "refuses code that imports a Node built in module or uses a Node global, and takes the in-memory generator",
     () => {
       const check = (entry: string) =>
         spawnSync(
@@ -134,9 +138,34 @@ describe("the playground build", () => {
           ],
           { encoding: "utf8", timeout: TIMEOUT },
         ).stdout.trim();
-      expect(check("src/config.ts").split("\n")).toContain("src/config.ts imports node:fs, which the browser doesn't have");
+      expect(check("src/config.ts")).toMatch(/^src\/config\.ts uses the Node global process on line \d+, which the browser doesn't have$/m);
       expect(check("src/targets.ts").split("\n")).toContain("src/targets.ts imports node:path, which the browser doesn't have");
       expect(check("src/memory.ts")).toBe("ok");
+      // Any built in module Node lists, with or without the prefix, and the globals it adds.
+      const dir = mkdtempSync(join(tmpdir(), "strictgen-guard-"));
+      try {
+        const entry = (name: string, text: string): string => {
+          writeFileSync(join(dir, name), text);
+          return join(dir, name);
+        };
+        const imports = entry("imports.ts", 'import "fs/promises";\nimport "worker_threads";\nimport "node:sqlite";\n');
+        expect(check(imports).split("\n").map((l) => l.replace(/^.* imports /, ""))).toEqual([
+          "fs/promises, which the browser doesn't have",
+          "worker_threads, which the browser doesn't have",
+          "node:sqlite, which the browser doesn't have",
+        ]);
+        const globals = entry(
+          "globals.ts",
+          'export const a = process.env.X;\nexport const b = Buffer.from("x");\n' +
+            'export const c = { process: 1 }.process;\nexport const d = "process Buffer"; // process\n',
+        );
+        expect(check(globals).split("\n").map((l) => l.replace(/^.* uses /, ""))).toEqual([
+          "the Node global process on line 1, which the browser doesn't have",
+          "the Node global Buffer on line 2, which the browser doesn't have",
+        ]);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
     TIMEOUT,
   );

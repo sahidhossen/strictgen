@@ -21,6 +21,8 @@ export interface State {
   /** The LLM profiles, each one of {@link PROFILES}, in that order. */
   readonly profiles: readonly string[];
   readonly cleanup: boolean;
+  /** `targets.rust.serdeBridge`. */
+  readonly serdeBridge: boolean;
   /** The ID rule, or null for none. */
   readonly ids: { readonly file: string; readonly suffix: string } | null;
   /** The type the payload is decoded as, by its name in the generated code. */
@@ -59,9 +61,9 @@ export function checkState(value: unknown): State {
     throw new StateError(`the link's state is broken: ${what}`);
   };
   if (!isObject(value)) return fail("not an object");
-  const known = ["schemas", "read", "profiles", "cleanup", "ids", "type", "decoder", "payload"];
+  const known = ["schemas", "read", "profiles", "cleanup", "serdeBridge", "ids", "type", "decoder", "payload"];
   for (const key of Object.keys(value)) if (!known.includes(key)) fail(`unknown field ${JSON.stringify(key)}`);
-  const { schemas, read, profiles, cleanup, ids, type, decoder, payload } = value;
+  const { schemas, read, profiles, cleanup, serdeBridge, ids, type, decoder, payload } = value;
   if (!Array.isArray(schemas) || schemas.length === 0 || schemas.length > MAX_SCHEMAS) {
     fail(`schemas must list 1 to ${String(MAX_SCHEMAS)} files`);
   }
@@ -81,6 +83,7 @@ export function checkState(value: unknown): State {
     fail(`profiles must be some of ${PROFILES.join(", ")}, in that order, each once`);
   }
   if (typeof cleanup !== "boolean") fail("cleanup must be true or false");
+  if (typeof serdeBridge !== "boolean") fail("serdeBridge must be true or false");
   let rule: State["ids"] = null;
   if (ids !== null) {
     if (!isObject(ids) || Object.keys(ids).length !== 2 || typeof ids.file !== "string" || typeof ids.suffix !== "string") {
@@ -97,6 +100,7 @@ export function checkState(value: unknown): State {
     read: read as ReadMode,
     profiles: ordered,
     cleanup: cleanup as boolean,
+    serdeBridge: serdeBridge as boolean,
     ids: rule,
     type: type as string,
     decoder: decoder as Decoder,
@@ -111,6 +115,7 @@ function stateJson(state: State): string {
     read: state.read,
     profiles: state.profiles,
     cleanup: state.cleanup,
+    serdeBridge: state.serdeBridge,
     ids: state.ids === null ? null : { file: state.ids.file, suffix: state.ids.suffix },
     type: state.type,
     decoder: state.decoder,

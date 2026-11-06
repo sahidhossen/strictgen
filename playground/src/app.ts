@@ -41,6 +41,7 @@ const ui = {
   schema: byId<HTMLTextAreaElement>("schema"),
   read: byId<HTMLSelectElement>("read"),
   cleanup: byId<HTMLInputElement>("cleanup"),
+  serdeBridge: byId<HTMLInputElement>("serde-bridge"),
   idsFile: byId<HTMLInputElement>("ids-file"),
   idsSuffix: byId<HTMLInputElement>("ids-suffix"),
   genStatus: byId<HTMLParagraphElement>("gen-status"),
@@ -64,21 +65,49 @@ class Runner {
   private ready = false;
   private pending: { id: number; timer: ReturnType<typeof setTimeout> } | undefined;
   private queued: Request | undefined;
+  /** The last request sent, sent again by {@link retry}. */
+  private last: Omit<Request, "id"> | undefined;
   private next = 1;
 
-  constructor(private readonly onResponse: (r: Response) => void, private readonly onProblem: (text: string) => void) {
+  constructor(
+    private readonly onResponse: (r: Response) => void,
+    private readonly onProblem: (text: string, retry?: () => void) => void,
+  ) {
     this.start();
   }
 
   private start(): void {
     this.ready = false;
-    const worker = new Worker(new URL("./worker.js", import.meta.url), { type: "classic" });
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL("./worker.js", import.meta.url), { type: "classic" });
+    } catch {
+      this.failedToLoad();
+      return;
+    }
     worker.onmessage = (event: MessageEvent<unknown>) => this.message(event.data);
     worker.onerror = (event) => {
       event.preventDefault();
-      this.onProblem(`The worker failed: ${event.message}`);
+      // Before its first message the script itself didn't load or run, like a failed download.
+      if (!this.ready) this.failedToLoad();
+      else this.onProblem(`The worker failed: ${event.message}`);
     };
     this.worker = worker;
+  }
+
+  private failedToLoad(): void {
+    this.worker?.terminate();
+    this.worker = undefined;
+    this.onProblem(
+      "The playground's worker (worker.js), which generates and decodes, didn't load. Check the connection, then retry.",
+      () => this.retry(),
+    );
+  }
+
+  /** Starts a new worker and sends the last request again. */
+  retry(): void {
+    if (this.queued === undefined && this.last !== undefined) this.queued = { ...this.last, id: this.next++ };
+    this.start();
   }
 
   private message(data: unknown): void {
@@ -99,6 +128,7 @@ class Runner {
 
   /** Sends `request` now, or after the request in flight, replacing any other that waits. */
   send(request: Omit<Request, "id">): void {
+    this.last = request;
     this.queued = { ...request, id: this.next++ };
     this.flush();
   }
@@ -153,6 +183,7 @@ function renderSettings(): void {
   }
   ui.cleanup.checked = state.cleanup;
   ui.cleanup.disabled = state.profiles.length === 0;
+  ui.serdeBridge.checked = state.serdeBridge;
   ui.idsFile.value = state.ids?.file ?? "";
   ui.idsSuffix.value = state.ids?.suffix ?? "";
   ui.decoder.value = state.decoder;
@@ -267,8 +298,20 @@ function renderDecoded(decoded: Decoded | null, type: string): void {
   }
 }
 
-function problem(text: string): void {
-  ui.result.replaceChildren(el("p", text, "verdict crash"));
+function problem(text: string, retry?: () => void): void {
+  const parts: HTMLElement[] = [el("p", text, "verdict crash")];
+  if (retry !== undefined) {
+    const button = el("button", "Retry");
+    button.type = "button";
+    button.addEventListener("click", () => {
+      ui.result.replaceChildren(el("p", "Loading the worker again...", "verdict"));
+      retry();
+    });
+    parts.push(button);
+    ui.genStatus.className = "status error";
+    ui.genStatus.textContent = "Nothing is generated until the worker loads.";
+  }
+  ui.result.replaceChildren(...parts);
 }
 
 const runner = new Runner(
@@ -286,7 +329,7 @@ let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 function runNow(): void {
   runner.send({
-    input: { schemas: state.schemas, read: state.read, profiles: state.profiles, cleanup: state.cleanup, ids: state.ids },
+    input: { schemas: state.schemas, read: state.read, profiles: state.profiles, cleanup: state.cleanup, serdeBridge: state.serdeBridge, ids: state.ids },
     type: state.type,
     decoder: state.decoder,
     payload: state.payload,
@@ -392,6 +435,7 @@ for (const p of PROFILES) {
 }
 
 ui.cleanup.addEventListener("change", () => update({ ...state, cleanup: ui.cleanup.checked }));
+ui.serdeBridge.addEventListener("change", () => update({ ...state, serdeBridge: ui.serdeBridge.checked }));
 
 function readIds(): void {
   const file = ui.idsFile.value.trim();

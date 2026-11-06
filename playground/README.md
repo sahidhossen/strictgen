@@ -12,10 +12,10 @@ Browsers don't start workers from a `file://` page, so open it through the serve
 
 ## What it runs
 
-- **The real generator.** The page bundles `src/` as it is. `generateInMemory` in `src/memory.ts` takes schema texts and settings instead of a folder and a config file, and gives the same files `strictgen generate` writes, byte for byte, before formatting. A test holds it to the CLI on `examples/basic`, `examples/report` and `examples/llm`. The build fails when a module it pulls in imports one of Node's built in modules, so the browser never gets a stand-in that behaves differently.
+- **The real generator.** The page bundles `src/` as it is. `generateInMemory` in `src/memory.ts` takes schema texts and settings instead of a folder and a config file, and gives the same files `strictgen generate` writes, byte for byte, before formatting. A test holds it to the CLI on `examples/basic`, `examples/report` and `examples/llm`. The build fails when a module it pulls in from the repository imports one of Node's built in modules, or uses a Node global like `process` or `Buffer`, so the browser never gets a stand-in that behaves differently.
 - **Unformatted Rust and Go.** The page doesn't run rustfmt or gofmt, so Rust and Go are shown as generated. `strictgen generate` formats them by default, which changes their layout. TypeScript and the LLM schemas are written as shown.
 - **The generated TypeScript decoders.** The TypeScript compiler, bundled into the page, removes the types from the generated files with the target the conformance runner uses (ES2023), and the page links them as modules. The strict JSON reader in `helpers.ts` is the one the CLI writes. A test runs every conformance case and the shared LLM vectors of `examples/llm` through this path and checks the results the suite expects.
-- **Defaults.** Every target is on, with the defaults a config file gives: decoders on, Rust's default lint allowances, Go's default package, no fixture registries. The settings pick the read mode, the built in LLM profiles, the cleanup step and the ID rule. Schema file names are lowercase letters, digits and dashes, ending in `.json`, as `$ref` can name them.
+- **Defaults.** Every target is on, with the defaults a config file gives: decoders on, Rust's default lint allowances, Go's default package, no fixture registries. The settings pick the read mode, the built in LLM profiles, the cleanup step, the Rust serde bridge and the ID rule. Schema file names are lowercase letters, digits and dashes, ending in `.json`, as `$ref` can name them.
 
 The decoders are `decodeXFromJson` in strict mode, `reportXFromJson` in report mode, and `decodeXFromLlm` for LLM output. An accepted value is encoded again with `encodeXToJson`. A rejected one shows the shared error, `path`, `code`, `expected`, `found` and the message, and its compact form. The conformance suite holds the Rust and Go decoders to the same results.
 
@@ -23,7 +23,8 @@ The decoders are `decodeXFromJson` in strict mode, `reportXFromJson` in report m
 
 - Generation and decoding run in a Web Worker. A request that takes more than 5 seconds, like a pattern that backtracks a lot on a payload, stops the worker, and a new one starts.
 - The page sets every piece of text with `textContent` or as an input's value, never as markup.
-- The page loads only its own four files. Its content security policy (a `meta` tag) allows scripts, styles and the worker from the same origin only, and no network requests. A worker gets the policy its own response carries, not the page's, so the worker can run the code it compiles; GitHub Pages sends no policy.
+- The page loads only its own four files. Its content security policy (a `meta` tag) allows scripts, styles and the worker from the same origin only, and no network requests. A worker gets the policy its own response carries, not the page's, so the worker can run the code it compiles; GitHub Pages sends no policy. So each generated module also runs with `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`, `self` and `globalThis` undefined in its scope.
+- When the worker script doesn't load, the page says so and offers a Retry button.
 
 ## Sharing
 

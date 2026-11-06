@@ -11,6 +11,7 @@ const STATE: State = {
   read: "report",
   profiles: ["anthropic", "openai"],
   cleanup: true,
+  serdeBridge: true,
   ids: { file: "common", suffix: "Id" },
   type: "Order",
   decoder: "llm",
@@ -105,6 +106,7 @@ describe("checkState", () => {
     expect(broken({ profiles: ["openai", "openai"] })).toBe("profiles must be some of anthropic, gemini, openai, in that order, each once");
     expect(broken({ profiles: ["other"] })).toBe("profiles must be some of anthropic, gemini, openai, in that order, each once");
     expect(broken({ cleanup: "yes" })).toBe("cleanup must be true or false");
+    expect(broken({ serdeBridge: 1 })).toBe("serdeBridge must be true or false");
     expect(broken({ ids: { file: "common" } })).toBe('ids must be null or {"file", "suffix"}');
     expect(broken({ ids: { file: "", suffix: "Id" } })).toBe("ids has an empty or long field");
     expect(broken({ type: "<b>" })).toBe("type must be a type name");

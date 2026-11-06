@@ -68,28 +68,40 @@ describe("generateInMemory", () => {
   });
 
   it("refuses a file name without .json and a name given twice", () => {
-    expect(() => memorySchemas([{ name: "order", text: "{}" }])).toThrow('schema file "order" must end in .json');
+    const message = (files: Parameters<typeof memorySchemas>[0]): string => {
+      try {
+        memorySchemas(files);
+      } catch (error) {
+        expect(error).toBeInstanceOf(CodegenError);
+        return (error as CodegenError).message;
+      }
+      throw new Error("no error");
+    };
+    expect(message([{ name: "order", text: "{}" }])).toBe(
+      "order: read-failed: a schema file name must end in .json. Hint: name it like order.json",
+    );
+    expect(message([{ name: ".json", text: "{}" }])).toMatch(/^\.json: read-failed: /);
     const twice = [
       { name: "a.json", text: "{}" },
       { name: "a.json", text: "{}" },
     ];
-    expect(() => memorySchemas(twice)).toThrow('schema file "a.json" is given twice');
+    expect(message(twice)).toBe("a.json: name-clash: two schema files have this name. Hint: give each file its own name");
   });
 });
 
 describe("defaultSettings", () => {
   it("are the settings a config with only the output folders gives", () => {
     for (const read of ["strict", "report"] as const) {
-      for (const cleanup of [false, true]) {
+      for (const [cleanup, serdeBridge] of [[false, false], [true, true]] as const) {
         const config = parseConfig(
           {
-            targets: { typescript: { out: "ts", read }, rust: { out: "rust", read }, go: { out: "go", read } },
+            targets: { typescript: { out: "ts", read }, rust: { out: "rust", read, serdeBridge }, go: { out: "go", read } },
             llm: { profiles: [...BUILTIN_PROFILES], out: "llm", cleanup },
           },
           join(EXAMPLES, "virtual", "strictgen.json"),
         );
         const profiles = BUILTIN_PROFILES.map(profileFromFile);
-        expect(defaultSettings({ read, profiles, cleanup })).toEqual(targetSettings(config));
+        expect(defaultSettings({ read, profiles, cleanup, serdeBridge })).toEqual(targetSettings(config));
       }
     }
     const plain = parseConfig(

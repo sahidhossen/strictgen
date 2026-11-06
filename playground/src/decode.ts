@@ -20,17 +20,28 @@ export function transpiler(compiler: typeof ts): Transpile {
     }).outputText;
 }
 
-/** Runs a CommonJS module body with its `exports` and `require`. */
-export type Evaluate = (body: string, exports: Record<string, unknown>, require: (spec: string) => unknown) => void;
+/** Runs a CommonJS module body with its `exports` and the function that links its imports. */
+export type Evaluate = (body: string, exports: Record<string, unknown>, link: (spec: string) => unknown) => void;
 
-/** Evaluates a module body as a function of its own, in strict mode as the transpiler writes it. */
-export const evaluate: Evaluate = (body, exports, require) => {
-  const run = new Function("exports", "require", "module", body) as (
+/**
+ * The worker's ways to the network, to more code and to the global object. The generated code uses
+ * none of them, so each is undefined in a module's scope: a second guard beside the page's content
+ * security policy, which a worker served without its own policy header doesn't get.
+ */
+export const SHADOWED = ["fetch", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts", "self", "globalThis"] as const;
+
+/**
+ * Evaluates a module body as a function of its own, in strict mode as the transpiler writes it,
+ * with {@link SHADOWED} names undefined.
+ */
+export const evaluate: Evaluate = (body, exports, link) => {
+  const run = new Function("exports", "require", "module", ...SHADOWED, body) as (
     e: Record<string, unknown>,
     r: (spec: string) => unknown,
     m: { exports: Record<string, unknown> },
+    ...shadowed: undefined[]
   ) => void;
-  run(exports, require, { exports });
+  run(exports, link, { exports }, ...SHADOWED.map(() => undefined));
 };
 
 /** The exports of a generated TypeScript package, from its `index.ts`. */

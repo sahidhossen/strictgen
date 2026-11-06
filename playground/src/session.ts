@@ -19,6 +19,7 @@ export interface GenerateInput {
   readonly read: ReadMode;
   readonly profiles: readonly string[];
   readonly cleanup: boolean;
+  readonly serdeBridge: boolean;
   readonly ids: State["ids"];
 }
 
@@ -82,7 +83,7 @@ export class Session {
 
   /** Generates from `input`, or returns the last result when the input is the same. */
   generate(input: GenerateInput): Generated {
-    const key = JSON.stringify([input.schemas, input.read, input.profiles, input.cleanup, input.ids]);
+    const key = JSON.stringify([input.schemas, input.read, input.profiles, input.cleanup, input.serdeBridge, input.ids]);
     if (key === this.key && this.generated !== undefined) return this.generated;
     this.key = key;
     this.pkg = undefined;
@@ -97,7 +98,7 @@ export class Session {
       const profiles = input.profiles.map((p) => this.profile(p));
       files = generateInMemory({
         schemas: input.schemas,
-        settings: defaultSettings({ read: input.read, profiles, cleanup: input.cleanup }),
+        settings: defaultSettings({ read: input.read, profiles, cleanup: input.cleanup, serdeBridge: input.serdeBridge }),
         ...(input.ids === null ? {} : { ids: input.ids }),
       }).files;
     } catch (error) {

@@ -76,6 +76,7 @@ export const SAMPLE: State = {
   read: "strict",
   profiles: ["anthropic", "gemini", "openai"],
   cleanup: false,
+  serdeBridge: false,
   ids: null,
   type: "Order",
   decoder: "normal",

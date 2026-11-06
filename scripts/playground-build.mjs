@@ -14,7 +14,10 @@ import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { builtinModules } from "node:module";
+
 import { build } from "esbuild";
+import ts from "typescript";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const PLAYGROUND = join(ROOT, "playground");
@@ -23,17 +26,66 @@ const PROFILES = ["anthropic", "gemini", "openai"];
 /** The files a build writes, by name. */
 export const OUTPUT_FILES = ["index.html", "style.css", "app.js", "worker.js"];
 
-const BUILTIN = /^node:|^(assert|buffer|child_process|crypto|events|fs|module|os|path|process|stream|url|util|worker_threads)(\/.*)?$/;
+/** Node's built in modules, as Node lists them, with and without the `node:` prefix. */
+const BUILTINS = new Set(builtinModules.flatMap((m) => (m.startsWith("node:") ? [m, m.slice(5)] : [m, `node:${m}`])));
 
-/** Fails the build on an import of a Node built in module from the repository's own code. */
+/** True for an import of a built in module, like `fs`, `node:fs` or `fs/promises`. */
+export function isBuiltin(path) {
+  return BUILTINS.has(path) || path.startsWith("node:");
+}
+
+/** Node's globals that the browser doesn't have. */
+const NODE_GLOBALS = new Set(["process", "Buffer", "__dirname", "__filename", "require", "global"]);
+
+/**
+ * The Node globals a TypeScript source refers to, by line. Only references count: a property
+ * like `x.process`, a key, a name being declared or text in a string or comment doesn't.
+ */
+export function nodeGlobals(source, fileName = "source.ts") {
+  const file = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true);
+  const found = [];
+  const visit = (node) => {
+    if (ts.isIdentifier(node) && NODE_GLOBALS.has(node.text) && isReference(node)) {
+      found.push(`${node.text} on line ${String(file.getLineAndCharacterOfPosition(node.getStart()).line + 1)}`);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  return found;
+}
+
+function isReference(node) {
+  const p = node.parent;
+  if (p === undefined) return true;
+  if ((ts.isPropertyAccessExpression(p) || ts.isQualifiedName(p)) && p.name === node) return false;
+  if ((ts.isPropertyAssignment(p) || ts.isPropertySignature(p) || ts.isPropertyDeclaration(p) || ts.isMethodDeclaration(p)) && p.name === node) return false;
+  if ((ts.isVariableDeclaration(p) || ts.isParameter(p) || ts.isFunctionDeclaration(p) || ts.isBindingElement(p)) && p.name === node) return false;
+  if (ts.isImportSpecifier(p) || ts.isExportSpecifier(p) || ts.isImportClause(p) || ts.isNamespaceImport(p)) return false;
+  return true;
+}
+
+const ownCode = (path) => path !== "" && !path.split(sep).includes("node_modules");
+
+/**
+ * Fails the build when the repository's own code imports a Node built in module or refers to a
+ * Node global, like `process` or `Buffer`. Bundled packages, like the TypeScript compiler, guard
+ * their own use of Node.
+ */
 const browserOnly = {
   name: "browser-only",
   setup(b) {
     b.onResolve({ filter: /.*/ }, (args) => {
-      if (args.importer === "" || args.importer.split(sep).includes("node_modules")) return undefined;
-      if (!BUILTIN.test(args.path)) return undefined;
+      if (!ownCode(args.importer) || !isBuiltin(args.path)) return undefined;
       return {
         errors: [{ text: `${relative(ROOT, args.importer)} imports ${args.path}, which the browser doesn't have` }],
+      };
+    });
+    b.onLoad({ filter: /\.ts$/ }, (args) => {
+      if (!ownCode(args.path)) return undefined;
+      const found = nodeGlobals(readFileSync(args.path, "utf8"), args.path);
+      if (found.length === 0) return undefined;
+      return {
+        errors: found.map((f) => ({ text: `${relative(ROOT, args.path)} uses the Node global ${f}, which the browser doesn't have` })),
       };
     });
   },
