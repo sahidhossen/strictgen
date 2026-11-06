@@ -48,7 +48,7 @@ const NUMBER_CONSTRAINTS = [
 const ARRAY_CONSTRAINTS = ["minItems", "maxItems", "uniqueItems"];
 const MAP_CONSTRAINTS = ["minProperties", "maxProperties"];
 /** Every constraint keyword. One beside a type it doesn't apply to fails generation. */
-const CONSTRAINTS = new Set([
+export const CONSTRAINTS: ReadonlySet<string> = new Set([
   ...STRING_CONSTRAINTS,
   ...NUMBER_CONSTRAINTS,
   ...ARRAY_CONSTRAINTS,

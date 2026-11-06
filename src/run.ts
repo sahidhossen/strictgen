@@ -6,6 +6,7 @@ import { differences } from "./check.js";
 import type { Config } from "./config.js";
 import { ConfigError, configFolders, loadConfig } from "./config.js";
 import { ExplainError, explain, explained, explanationLines } from "./explain.js";
+import { fixCommand } from "./fix-command.js";
 import { formatFiles, FormatterFailedError, FormatterMissingError } from "./format.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import type { OutputFile } from "./main.js";
@@ -88,11 +89,29 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       HELP_OPTION,
     ],
   },
+  fix: {
+    summary: "Rewrite the schemas into the supported subset, as a diff or in place",
+    usage: "strictgen fix [--write] [--config <path>]",
+    details: [
+      "Rewrites the schema files where it can, with rules that run until nothing changes: it closes",
+      "open objects, makes a oneOf whose branches each have a const property a tagged union, merges",
+      "simple allOf parts and moves definitions and inline schemas a $ref points at into $defs.",
+      "Prints a unified diff of the changes, or with --write writes them in place, keeping key order",
+      "and formatting. Then it generates every target in memory and lists what is left to change by",
+      "hand, with the file, JSON pointer and rule. Exits 1 when generation still fails.",
+    ],
+    options: [
+      "  --write          Write the fixed schemas in place instead of printing a diff",
+      CONFIG_OPTION,
+      HELP_OPTION,
+    ],
+  },
 };
 
 const OPTIONS = {
   config: { type: "string" },
   json: { type: "boolean" },
+  write: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
 } as const;
@@ -186,6 +205,9 @@ function dispatch(argv: readonly string[], io: Io): number {
   if (values.json === true && name !== "dirs" && name !== "explain") {
     throw new UsageError("--json only applies to strictgen dirs and strictgen explain");
   }
+  if (values.write === true && name !== "fix") {
+    throw new UsageError("--write only applies to strictgen fix");
+  }
   const location = positionals[1];
   if (name === "explain" && location === undefined) {
     throw new UsageError("explain needs a schema location, like user.json#/$defs/address");
@@ -196,6 +218,8 @@ function dispatch(argv: readonly string[], io: Io): number {
       return explainCommand(config, io, location ?? "", values.json === true);
     case "check":
       return check(config, io);
+    case "fix":
+      return fixCommand(config, io, values.write === true);
     case "dirs":
       return dirs(config, io, values.json === true);
     default:

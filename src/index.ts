@@ -27,6 +27,15 @@ export type { TypeScriptOptions } from "./emit-ts.js";
 export { emitTypeScript } from "./emit-ts.js";
 export type { Explanation, Failure, TargetExplanation } from "./explain.js";
 export { explain, ExplainError, explanationLines } from "./explain.js";
+export type {
+  FixedFile,
+  FixInput,
+  FixNote,
+  FixOptions,
+  FixResult,
+  FixRuleId,
+} from "./fix.js";
+export { FIX_RULES, fixSchemas, noteText } from "./fix.js";
 export type { FormatOptions, Formatter } from "./format.js";
 export {
   FORMAT_TIMEOUT,
