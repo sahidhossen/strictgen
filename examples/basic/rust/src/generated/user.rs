@@ -3,8 +3,8 @@
 //! Types for `user.json`.
 
 use super::common::{Timestamp, UserId};
-use super::helpers::present;
-use serde::{Deserialize, Deserializer, Serialize};
+use super::helpers;
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// How to reach a user: by email or by phone, exactly one of them.
@@ -19,30 +19,23 @@ pub enum Contact {
     Phone(ContactPhone),
 }
 
-impl<'de> Deserialize<'de> for Contact {
-    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let value = serde_json::Value::deserialize(deserializer)?;
-        if value.is_object()
-            && let Ok(inner) = <ContactEmail>::deserialize(&value)
-        {
-            return Ok(Self::Email(inner));
+impl helpers::Decode for Contact {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        if let Ok(value) = <ContactEmail as helpers::Decode>::decode_node(node) {
+            return Ok(Self::Email(value));
         }
-        if value.is_object()
-            && let Ok(inner) = <ContactPhone>::deserialize(&value)
-        {
-            return Ok(Self::Phone(inner));
+        if let Ok(value) = <ContactPhone as helpers::Decode>::decode_node(node) {
+            return Ok(Self::Phone(value));
         }
-        Err(serde::de::Error::custom(
-            "data did not match any variant of untagged enum Contact",
-        ))
+        Err(helpers::mismatch("Contact", node))
     }
 }
 
 /// How to reach a user: by email or by phone, exactly one of them.
 ///
 /// Schema: `user.json#/$defs/contact`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactEmail {
     /// Who to ask for.
     pub name: String,
@@ -50,11 +43,23 @@ pub struct ContactEmail {
     pub email: String,
 }
 
+impl helpers::Decode for ContactEmail {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            name: object.required("name")?,
+            email: object.required("email")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
+}
+
 /// How to reach a user: by email or by phone, exactly one of them.
 ///
 /// Schema: `user.json#/$defs/contact`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ContactPhone {
     /// Who to ask for.
     pub name: String,
@@ -62,10 +67,22 @@ pub struct ContactPhone {
     pub phone: String,
 }
 
+impl helpers::Decode for ContactPhone {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            name: object.required("name")?,
+            phone: object.required("phone")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
+}
+
 /// What the user may do.
 ///
 /// Schema: `user.json#/$defs/role`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum Role {
     /// `owner`
     #[serde(rename = "owner")]
@@ -78,22 +95,55 @@ pub enum Role {
     Member,
 }
 
+impl Role {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Admin => "admin",
+            Self::Member => "member",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for Role {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for Role {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for Role {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "owner" => Ok(Self::Owner),
+            "admin" => Ok(Self::Admin),
+            "member" => Ok(Self::Member),
+            other => Err(helpers::not_in_enum(other, &["owner", "admin", "member"])),
+        }
+    }
+}
+
 /// A user account.
 ///
 /// Schema: `user.json#`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     /// The `id` key.
     pub id: UserId,
     /// The address the user signs in with.
     pub email: String,
     /// The name shown to other users, when the user set one.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// The `role` key.
     pub role: Role,
@@ -102,10 +152,23 @@ pub struct User {
     /// The `createdAt` key.
     pub created_at: Timestamp,
     /// How many seats the user may hand out, by role.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub quota: Option<BTreeMap<Role, i64>>,
+}
+
+impl helpers::Decode for User {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            id: object.required("id")?,
+            email: object.required("email")?,
+            display_name: object.optional("displayName")?,
+            role: object.required("role")?,
+            labels: object.required("labels")?,
+            created_at: object.required("createdAt")?,
+            quota: object.optional("quota")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
 }

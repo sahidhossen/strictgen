@@ -25,7 +25,7 @@ mod user;
 
 pub use common::*;
 pub use event::*;
-pub use helpers::NonNullJson;
+pub use helpers::{Decode, DecodeError, NonNullJson};
 pub use payment_method::*;
 pub use subscription::*;
 pub use user::*;

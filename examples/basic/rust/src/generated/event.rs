@@ -3,17 +3,17 @@
 //! Types for `event.json`.
 
 use super::common::{EventId, Timestamp};
-use super::helpers::present;
+use super::helpers;
 use super::payment_method::PaymentMethod;
 use super::user::User;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::collections::BTreeMap;
 
 /// A webhook event envelope, delivered as the body of one POST request.
 ///
 /// Schema: `event.json#`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Event {
     /// The `id` key.
     pub id: EventId,
@@ -26,25 +26,34 @@ pub struct Event {
     /// The `user` key.
     pub user: User,
     /// The `paymentMethod` key.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub payment_method: Option<PaymentMethod>,
     /// Key and value pairs the sender attached, by key.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<BTreeMap<String, String>>,
+}
+
+impl helpers::Decode for Event {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            id: object.required("id")?,
+            r#type: object.required("type")?,
+            occurred_at: object.required("occurredAt")?,
+            attempt: object.required("attempt")?,
+            user: object.required("user")?,
+            payment_method: object.optional("paymentMethod")?,
+            metadata: object.optional("metadata")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
 }
 
 /// What happened.
 ///
 /// Schema: `event.json#/$defs/eventType`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum EventType {
     /// `user.created`
     #[serde(rename = "user.created")]
@@ -55,4 +64,44 @@ pub enum EventType {
     /// `payment_method.attached`
     #[serde(rename = "payment_method.attached")]
     PaymentMethodAttached,
+}
+
+impl EventType {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::UserCreated => "user.created",
+            Self::UserUpdated => "user.updated",
+            Self::PaymentMethodAttached => "payment_method.attached",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for EventType {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for EventType {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for EventType {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "user.created" => Ok(Self::UserCreated),
+            "user.updated" => Ok(Self::UserUpdated),
+            "payment_method.attached" => Ok(Self::PaymentMethodAttached),
+            other => Err(helpers::not_in_enum(
+                other,
+                &["user.created", "user.updated", "payment_method.attached"],
+            )),
+        }
+    }
 }

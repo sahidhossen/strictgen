@@ -3,14 +3,14 @@
 //! Types for `subscription.json`.
 
 use super::event::EventType;
-use super::helpers::present;
-use serde::{Deserialize, Serialize};
+use super::helpers;
+use serde::Serialize;
 
 /// Where webhook events are delivered. Several keys are keywords in Rust, Go or TypeScript, so the generated field names show how each language escapes them.
 ///
 /// Schema: `subscription.json#`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Subscription {
     /// The endpoint events are posted to.
     pub url: String,
@@ -19,24 +19,28 @@ pub struct Subscription {
     /// True when events no other subscription matches go here.
     pub default: bool,
     /// True to deliver without waiting for the endpoint's reply.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub r#async: Option<bool>,
     /// The top-level event keys to send. Every key when absent.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub select: Option<Vec<String>>,
     /// The URL of this subscription in the API.
-    #[serde(
-        default,
-        deserialize_with = "present",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub self_: Option<String>,
+}
+
+impl helpers::Decode for Subscription {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        let mut object = helpers::Object::new(node)?;
+        let value = Self {
+            url: object.required("url")?,
+            r#match: object.required("match")?,
+            default: object.required("default")?,
+            r#async: object.optional("async")?,
+            select: object.optional("select")?,
+            self_: object.optional("self")?,
+        };
+        object.finish()?;
+        Ok(value)
+    }
 }

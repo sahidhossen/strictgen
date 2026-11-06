@@ -1,6 +1,6 @@
 # Decode errors
 
-Every language reports a failed decode the same way: the same JSON Pointer, the same code and the same message, so a log line or a retry prompt doesn't depend on which service read the payload. Go and TypeScript report this shape today; Rust follows.
+Every language reports a failed decode the same way: the same JSON Pointer, the same code and the same message, so a log line or a retry prompt doesn't depend on which service read the payload.
 
 ## Shape
 
@@ -15,7 +15,7 @@ Every language reports a failed decode the same way: the same JSON Pointer, the 
 | `expected` | What the type takes there, when the code has one, like `a string` or `one of "open", "closed"` |
 | `found` | What the input has there, when the code has one, like `12.5` or `"gone"` |
 
-In TypeScript it is `DecodeError` with `path`, `code`, `expected` and `found` (`undefined` when absent), `message` and `compact()`. In Go it is `*DecodeError` with `Path`, `Code`, `Expected` and `Found` (empty when absent), `Error()` and `Compact()`. The codes are constants: `ErrorCode.UnknownKey` in TypeScript, `CodeUnknownKey` in Go.
+In TypeScript it is `DecodeError` with `path`, `code`, `expected` and `found` (`undefined` when absent), `message` and `compact()`. In Go it is `*DecodeError` with `Path`, `Code`, `Expected` and `Found` (empty when absent), `Error()` and `Compact()`. In Rust it is `DecodeError` with `path`, `code`, `expected` and `found` (`None` when absent), `Display` for the message and `compact()`, returned by `T::from_json(text)` from the `Decode` trait every generated type implements. The codes are constants: `ErrorCode.UnknownKey` in TypeScript, `CodeUnknownKey` in Go, `DecodeError::UNKNOWN_KEY` in Rust.
 
 Decoding stops at the first problem. Keys are checked in schema order, then unknown keys in input order, so every language reports the same first error.
 
@@ -91,4 +91,4 @@ TypeScript also checks values that didn't come from JSON, like `undefined` or a 
 
 ## Fixtures
 
-Each invalid example fixture has a `<case>.expect.json` next to it with the `path` and `code` it must fail with, like `{"path": "/user/nickname", "code": "unknown_key"}`. The Go and TypeScript fixture runs check it, and fail on an invalid case without one or an expectation without a case.
+Each invalid example fixture has a `<case>.expect.json` next to it with the `path` and `code` it must fail with, like `{"path": "/user/nickname", "code": "unknown_key"}`. The Rust, Go and TypeScript fixture runs check it, and fail on an invalid case without one or an expectation without a case.

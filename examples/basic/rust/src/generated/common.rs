@@ -2,14 +2,21 @@
 
 //! Types for `common.json`.
 
-use serde::{Deserialize, Serialize};
+use super::helpers;
+use serde::Serialize;
 
 /// The ID of a webhook event, like `evt_31xq`.
 ///
 /// Schema: `common.json#/$defs/eventId`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct EventId(pub String);
+
+impl helpers::Decode for EventId {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+}
 
 /// An RFC 3339 date and time in UTC.
 ///
@@ -19,6 +26,12 @@ pub type Timestamp = String;
 /// The ID of a user, like `usr_8f2k`.
 ///
 /// Schema: `common.json#/$defs/userId`.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct UserId(pub String);
+
+impl helpers::Decode for UserId {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+}
