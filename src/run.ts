@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -20,6 +19,7 @@ import { GenerateError } from "./payloads.js";
 import type { JsonObject } from "./schema.js";
 import { CodegenError } from "./schema.js";
 import { serdeFallbacks } from "./emit-rust.js";
+import { packageFileText } from "./package-files.js";
 import { mainOptions } from "./targets.js";
 
 /** Exit codes: success, generation failed or `check` found a difference, bad usage or config. */
@@ -253,10 +253,9 @@ function commandHelp(name: string, command: Command): string[] {
   ];
 }
 
-/** The version in `package.json`. */
+/** The version in `package.json`, the one beside `dist/` or the one a binary embeds. */
 export function version(): string {
-  const file = new URL("../package.json", import.meta.url);
-  return (JSON.parse(readFileSync(file, "utf8")) as { version: string }).version;
+  return (JSON.parse(packageFileText("package.json")) as { version: string }).version;
 }
 
 class UsageError extends Error {}

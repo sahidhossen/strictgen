@@ -13,3 +13,6 @@ target/
 /bin/
 *.test
 *.out
+
+# Single executables (scripts/binary-build.mjs)
+dist-bin/

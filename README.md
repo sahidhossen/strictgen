@@ -178,13 +178,22 @@ These lines are not typed by hand. `pnpm docs:check` runs the three programs in 
 
 ## Install
 
-After the first release:
+After the first release (nothing is published yet):
 
 ```bash
-npm install --save-dev strictgen    # or: npx strictgen generate
+npm install --save-dev strictgen    # Node 22 or later; or: npx strictgen generate
 ```
 
-Single binaries for macOS, Linux and Windows are planned for the first release, so Rust and Go projects won't need Node. Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
+Rust and Go projects can use a single binary instead, which needs no Node. Each GitHub release has one for macOS (arm64, x64), Linux (x64, arm64, glibc) and Windows (x64), and a `SHA256SUMS` file to check the download against:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS    # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
+chmod +x strictgen-linux-x64 && ./strictgen-linux-x64 --version
+```
+
+The binaries aren't signed by Apple or Microsoft yet, so macOS and Windows may warn on first run. On macOS, `xattr -d com.apple.quarantine strictgen-macos-arm64` clears the warning for a file you have checked. `rustfmt` and `gofmt` stay separate installs, as with npm.
+
+Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
 
 ## Docs
 

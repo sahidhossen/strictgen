@@ -1,0 +1,182 @@
+import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+
+import { BUILTIN_PROFILES } from "./llm-profile.js";
+import { inBinary, PACKAGE_FILES, packageFileText } from "./package-files.js";
+import { builtinProfile } from "./profile-files.js";
+import { version } from "./run.js";
+
+const ROOT = join(import.meta.dirname, "..");
+const read = (file: string): string => readFileSync(join(ROOT, file), "utf8");
+const pkg = JSON.parse(read("package.json")) as {
+  version: string;
+  private?: boolean;
+  bin: Record<string, string>;
+  files: string[];
+  exports: Record<string, unknown>;
+  engines: Record<string, string>;
+  publishConfig: Record<string, unknown>;
+  scripts: Record<string, string>;
+};
+/** Starting node runs a few times per test. */
+const SPAWNS = 20_000;
+
+function script(name: string, args: readonly string[], env: NodeJS.ProcessEnv = {}): { status: number | null; stdout: string; stderr: string } {
+  // Only PATH from this process, so a CI=true or GITHUB_REF of the test run never leaks in.
+  const r = spawnSync(process.execPath, [join(ROOT, "scripts", name), ...args], {
+    encoding: "utf8",
+    env: { PATH: process.env.PATH ?? "", ...env },
+  });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+describe("package files", () => {
+  it("lists package.json and every built in profile, and each exists", () => {
+    expect([...PACKAGE_FILES]).toEqual(["package.json", ...BUILTIN_PROFILES.map((n) => `profiles/${n}.json`)]);
+    for (const f of PACKAGE_FILES) expect(existsSync(join(ROOT, f)), f).toBe(true);
+  });
+
+  it("reads them from disk outside a binary", () => {
+    expect(inBinary()).toBe(false);
+    expect(packageFileText("package.json")).toBe(read("package.json"));
+    expect(version()).toBe(pkg.version);
+    for (const name of BUILTIN_PROFILES) expect(builtinProfile(name).name).toBe(name);
+  });
+});
+
+describe("npm package", () => {
+  it("is ready to publish, with provenance and the publish guard", () => {
+    expect(pkg.private).toBeUndefined();
+    expect(pkg.bin).toEqual({ strictgen: "dist/cli.js" });
+    expect(pkg.exports["."]).toEqual({ types: "./dist/index.d.ts", default: "./dist/index.js" });
+    expect(pkg.engines.node).toBe(">=22");
+    expect(pkg.publishConfig).toEqual({ access: "public", provenance: true });
+    expect(pkg.scripts.prepublishOnly).toBe("node scripts/publish-guard.mjs");
+    expect(pkg.files).toEqual(expect.arrayContaining(["!dist/conformance/", "!dist/snippets*", "profiles/", "CHANGELOG.md"]));
+    // 0.x until 1.0 is decided; the release sets the version, never a test.
+    expect(pkg.version).toMatch(/^0\./);
+  });
+});
+
+describe("publish guard", () => {
+  const repository = "sahidhossen/strictgen";
+  const release = {
+    CI: "true",
+    GITHUB_ACTIONS: "true",
+    GITHUB_REF: `refs/tags/v${pkg.version}`,
+    GITHUB_REPOSITORY: repository,
+    GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/release.yml@refs/tags/v${pkg.version}`,
+  };
+
+  it("lets the release workflow's tag run publish", () => {
+    expect(script("publish-guard.mjs", [], release).status).toBe(0);
+  }, SPAWNS);
+
+  it("stops a publish from a laptop", () => {
+    const r = script("publish-guard.mjs", []);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("npm publish only runs in GitHub Actions");
+  }, SPAWNS);
+
+  it("stops a run with any one of the release values wrong or missing", () => {
+    const wrong: Record<keyof typeof release, string> = {
+      CI: "1",
+      GITHUB_ACTIONS: "false",
+      GITHUB_REF: "refs/heads/main",
+      GITHUB_REPOSITORY: "someone/strictgen",
+      GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/ci.yml@refs/tags/v${pkg.version}`,
+    };
+    for (const key of Object.keys(release) as (keyof typeof release)[]) {
+      const { [key]: _, ...without } = release;
+      expect(script("publish-guard.mjs", [], without).status, `${key} missing`).toBe(1);
+      expect(script("publish-guard.mjs", [], { ...release, [key]: wrong[key] }).status, `${key} wrong`).toBe(1);
+    }
+  }, SPAWNS);
+
+  it("stops a tag that doesn't match package.json's version", () => {
+    const r = script("publish-guard.mjs", [], {
+      ...release,
+      GITHUB_REF: "refs/tags/v9.9.9",
+      GITHUB_WORKFLOW_REF: `${repository}/.github/workflows/release.yml@refs/tags/v9.9.9`,
+    });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain(`not refs/tags/v${pkg.version}`);
+  }, SPAWNS);
+});
+
+describe("release notes", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "strictgen-notes-"));
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+  const changelog = (text: string): string => {
+    const file = join(scratch, `${String(Math.random()).slice(2)}.md`);
+    writeFileSync(file, text);
+    return file;
+  };
+  const released = changelog(
+    "# Changelog\n\n## [Unreleased]\n\n- next\n\n## [1.2.0] - 2026-11-01\n\n### Added\n\n- a\n\n## [1.1.0] - 2026-10-01\n\n- b\n\n[1.2.0]: https://example.com\n",
+  );
+
+  it("prints the section of the version, without its heading", () => {
+    const r = script("release-notes.mjs", ["1.2.0", "--changelog", released]);
+    expect(r).toEqual({ status: 0, stdout: "### Added\n\n- a\n", stderr: "" });
+    expect(script("release-notes.mjs", ["1.1.0", "--changelog", released]).stdout).toBe("- b\n\n[1.2.0]: https://example.com\n");
+  }, SPAWNS);
+
+  it("fails for a version without a dated section, a section given twice and an empty one", () => {
+    expect(script("release-notes.mjs", ["1.3.0", "--changelog", released]).status).toBe(1);
+    expect(script("release-notes.mjs", ["1.2.0", "--changelog", changelog("## [1.2.0]\n\n- undated\n")]).status).toBe(1);
+    expect(script("release-notes.mjs", ["1.2.0", "--changelog", changelog("## [1.2.0] - 2026-11-01\n- a\n## [1.2.0] - 2026-11-02\n- b\n")]).status).toBe(1);
+    expect(script("release-notes.mjs", ["1.2.0", "--changelog", changelog("## [1.2.0] - 2026-11-01\n\n## [1.1.0] - 2026-10-01\n- b\n")]).status).toBe(1);
+    expect(script("release-notes.mjs", ["latest"]).status).toBe(2);
+  }, SPAWNS);
+
+  it("falls back to [Unreleased] only in a dry run", () => {
+    const r = script("release-notes.mjs", ["1.3.0", "--dry-run", "--changelog", released]);
+    expect([r.status, r.stdout]).toEqual([0, "- next\n"]);
+    expect(r.stderr).toContain("the dry run uses [Unreleased]");
+  }, SPAWNS);
+});
+
+describe("release workflow", () => {
+  const workflow = read(".github/workflows/release.yml");
+  /** The text of one job, from its key to the next job's key. */
+  const job = (name: string): string => {
+    const start = workflow.indexOf(`\n  ${name}:\n`);
+    expect(start, name).toBeGreaterThan(0);
+    const next = workflow.slice(start + 1).search(/\n {2}[a-z-]+:\n/);
+    return next < 0 ? workflow.slice(start) : workflow.slice(start, start + 1 + next);
+  };
+  const gate =
+    "if: needs.guard.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.repository.visibility == 'public'";
+
+  it("runs on v* tags and by hand for dry runs only", () => {
+    expect(workflow).toContain('tags: ["v*"]');
+    expect(workflow).toContain("dry_run:");
+    expect(workflow).toContain("permissions: {}");
+  });
+
+  it("publishes only from jobs gated on the guard, a tag push and a public repository", () => {
+    for (const [name, step] of [["npm", "npm publish --provenance"], ["github-release", "gh release create"]] as const) {
+      const text = job(name);
+      expect(text).toContain(gate);
+      expect(text).toContain(step);
+    }
+    for (const name of ["guard", "ci", "assemble"]) {
+      expect(job(name)).not.toContain("npm publish");
+      expect(job(name)).not.toContain("gh release");
+      expect(job(name)).not.toContain("contents: write");
+      expect(job(name)).not.toContain("id-token");
+    }
+  });
+
+  it("checks the visibility, the token, the tag, main and the changelog before CI", () => {
+    const guard = job("guard");
+    for (const check of ['"$VISIBILITY" != "public"', 'gh api "repos/$GITHUB_REPOSITORY" --jq .visibility', '"$TOKEN_SET" != "true"', '"refs/tags/v$version"', "merge-base --is-ancestor", 'release-notes.mjs "$version"']) {
+      expect(guard, check).toContain(check);
+    }
+    expect(job("ci")).toContain("uses: ./.github/workflows/ci.yml");
+  });
+});

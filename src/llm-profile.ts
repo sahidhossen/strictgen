@@ -77,6 +77,9 @@ export interface Profile {
 /** The profiles strictgen ships, by name. */
 export const BUILTIN_PROFILES = ["anthropic", "gemini", "openai"] as const;
 
+/** The name of a profile strictgen ships. */
+export type BuiltinProfileName = (typeof BUILTIN_PROFILES)[number];
+
 const NAME = /^[a-z][a-z0-9-]*$/;
 const DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
 

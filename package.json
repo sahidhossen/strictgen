@@ -2,19 +2,58 @@
   "name": "strictgen",
   "version": "0.0.0",
   "description": "One JSON Schema. Strict Rust, Go and TypeScript types and decoders that accept and reject exactly the same JSON.",
-  "private": true,
+  "keywords": [
+    "json-schema",
+    "codegen",
+    "code-generator",
+    "rust",
+    "go",
+    "golang",
+    "typescript",
+    "serde",
+    "decoder",
+    "validation",
+    "strict",
+    "llm",
+    "structured-outputs"
+  ],
   "license": "Apache-2.0",
   "author": "Sahid Hossen",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sahidhossen/strictgen.git"
   },
+  "homepage": "https://github.com/sahidhossen/strictgen#readme",
+  "bugs": {
+    "url": "https://github.com/sahidhossen/strictgen/issues"
+  },
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "engines": {
     "node": ">=22"
   },
   "bin": {
     "strictgen": "dist/cli.js"
+  },
+  "files": [
+    "dist/**/*.js",
+    "dist/**/*.d.ts",
+    "!dist/conformance/",
+    "!dist/snippets*",
+    "profiles/",
+    "CHANGELOG.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -29,12 +68,17 @@
     "examples": "pnpm build && node dist/cli.js generate --config examples/basic/strictgen.json && node dist/cli.js generate --config examples/report/strictgen.json && node dist/cli.js generate --config examples/llm/strictgen.json && node dist/cli.js generate --config examples/quickstart/strictgen.json",
     "examples:check": "pnpm build && node dist/cli.js check --config examples/basic/strictgen.json && node dist/cli.js check --config examples/report/strictgen.json && node dist/cli.js check --config examples/llm/strictgen.json && node dist/cli.js check --config examples/quickstart/strictgen.json",
     "docs": "pnpm build && node dist/snippets-main.js",
-    "docs:check": "pnpm build && node dist/snippets-main.js --check"
+    "docs:check": "pnpm build && node dist/snippets-main.js --check",
+    "binary": "pnpm build && node scripts/binary-build.mjs",
+    "binary:smoke": "node scripts/binary-smoke.mjs",
+    "package:check": "pnpm build && node scripts/package-check.mjs",
+    "prepublishOnly": "node scripts/publish-guard.mjs"
   },
   "devDependencies": {
     "@types/node": "^22",
     "ajv": "^8",
     "esbuild": "^0.28.2",
+    "postject": "1.0.0-alpha.6",
     "typescript": "^6",
     "vitest": "^5"
   }

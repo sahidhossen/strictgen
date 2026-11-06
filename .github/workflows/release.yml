@@ -1,0 +1,203 @@
+name: Release
+
+# Publishes strictgen to npm with provenance and creates the GitHub release with the binaries,
+# their SHA-256 sums and the CHANGELOG section of the version.
+#
+# A release happens only when a maintainer pushes a tag v<version> that matches package.json.
+# Before anything is published:
+#   - the repository must be public and the NPM_TOKEN secret set, or the guard job fails;
+#   - the tag must equal "v" + package.json's version, point at a commit on main, and
+#     CHANGELOG.md must have a "## [<version>] - YYYY-MM-DD" section;
+#   - all of CI must pass on the tagged commit: typecheck, tests, the conformance suite, the
+#     fixed-seed fuzz run, docs:check, the examples, hygiene, the npm package check and the
+#     binaries on every platform.
+# npm publish runs scripts/publish-guard.mjs first (prepublishOnly), which checks the tag and that
+# this workflow is the one running.
+#
+# Dry run: run this workflow by hand (Actions, Release, Run workflow) with dry_run checked. It runs
+# every check and all of CI, builds the binaries, the sums, the notes and the npm tarball, and
+# keeps them as the "release" artifact, then stops: the publish jobs are skipped. It works in a
+# private repository and without NPM_TOKEN. Run by hand with dry_run unchecked, it fails.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build and check everything, publish nothing
+        type: boolean
+        required: true
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: Release guard
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      publish: ${{ steps.check.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check the tag, the version, the changelog, the repository and the token
+        id: check
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            if [[ "$DRY_RUN" != "true" ]]; then
+              echo "::error::Run by hand, this workflow only does dry runs. Push the tag v$version to release."
+              exit 1
+            fi
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "Dry run of $version: repository $VISIBILITY, NPM_TOKEN set: $TOKEN_SET. Nothing will be published."
+            node scripts/release-notes.mjs "$version" --dry-run > /dev/null
+            exit 0
+          fi
+          if [[ "$EVENT" != "push" || "$GITHUB_REF" != "refs/tags/v$version" ]]; then
+            echo "::error::The tag ${GITHUB_REF#refs/tags/} doesn't match package.json's version $version (expected v$version)."
+            exit 1
+          fi
+          if [[ "$VISIBILITY" != "public" ]]; then
+            echo "::error::The repository is $VISIBILITY. Releases are published from a public repository only."
+            exit 1
+          fi
+          api_visibility="$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)"
+          if [[ "$api_visibility" != "public" ]]; then
+            echo "::error::The API says the repository is $api_visibility. Releases are published from a public repository only."
+            exit 1
+          fi
+          if [[ "$TOKEN_SET" != "true" ]]; then
+            echo "::error::The NPM_TOKEN secret isn't set."
+            exit 1
+          fi
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::The tag points at $GITHUB_SHA, which isn't on main."
+            exit 1
+          fi
+          node scripts/release-notes.mjs "$version" > /dev/null
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT: ${{ github.event_name }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          VISIBILITY: ${{ github.event.repository.visibility }}
+          TOKEN_SET: ${{ secrets.NPM_TOKEN != '' }}
+          GH_TOKEN: ${{ github.token }}
+
+  ci:
+    name: CI
+    needs: guard
+    permissions:
+      contents: read
+    uses: ./.github/workflows/ci.yml
+    secrets:
+      HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
+
+  assemble:
+    name: Assemble the release
+    needs: [guard, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # The binaries CI built and smoke tested on each platform.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: binary-*
+          path: release
+          merge-multiple: true
+      - name: SHA-256 sums, release notes and the npm tarball
+        run: |
+          test "$(ls release | wc -l)" -eq 5
+          (cd release && sha256sum strictgen-* > SHA256SUMS)
+          cat release/SHA256SUMS
+          notes=()
+          if [[ "$PUBLISH" != "true" ]]; then notes=(--dry-run); fi
+          node scripts/release-notes.mjs "$VERSION" "${notes[@]}" > release/NOTES.md
+          npm pack --ignore-scripts --pack-destination release
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          PUBLISH: ${{ needs.guard.outputs.publish }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release
+          path: release
+          if-no-files-found: error
+          retention-days: 7
+
+  npm:
+    name: Publish to npm
+    needs: [guard, assemble]
+    if: needs.guard.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.repository.visibility == 'public'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The OIDC token npm signs the provenance statement with.
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # From the package folder, so prepublishOnly (scripts/publish-guard.mjs) runs. A version
+      # with a prerelease part, like 1.0.0-rc.1, goes to the next dist-tag instead of latest.
+      - name: npm publish
+        run: |
+          if [[ "$VERSION" == *-* ]]; then tag=next; else tag=latest; fi
+          npm publish --provenance --access public --tag "$tag"
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github-release:
+    name: GitHub release
+    needs: [guard, npm]
+    if: needs.guard.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.repository.visibility == 'public'
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating a release and uploading its files.
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      - name: Create the release
+        run: |
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "v$VERSION" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "v$VERSION" --notes-file release/NOTES.md "${prerelease[@]}" \
+            release/strictgen-macos-arm64 release/strictgen-macos-x64 \
+            release/strictgen-linux-x64 release/strictgen-linux-arm64 \
+            release/strictgen-windows-x64.exe release/SHA256SUMS
+        env:
+          VERSION: ${{ needs.guard.outputs.version }}
+          GH_TOKEN: ${{ github.token }}

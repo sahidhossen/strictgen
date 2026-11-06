@@ -11,6 +11,14 @@ import { RULE_EXAMPLES } from "./snippets-rules.js";
 const ROOT = join(import.meta.dirname, "..");
 const read = (file: string): string => readFileSync(join(ROOT, file), "utf8");
 
+/**
+ * Doc pages the README doesn't link yet, with the reason. Each starts with the draft banner, and
+ * the test fails once the README links one, so the entry goes when the page is approved.
+ */
+const UNLINKED: Readonly<Record<string, string>> = {
+  "docs/launch.md": "the launch post, a draft until the first release is approved",
+};
+
 /** The lines of a section, from its heading to the next heading of the same level or higher. */
 function section(text: string, heading: string): string[] {
   const lines = text.split("\n");
@@ -109,7 +117,15 @@ describe("docs coverage", () => {
 
   it("links every doc page from the README", () => {
     const readme = read("README.md");
-    for (const file of docsFiles(ROOT).filter((f) => f.startsWith("docs/"))) expect(readme, file).toContain(`(${file})`);
+    for (const file of docsFiles(ROOT).filter((f) => f.startsWith("docs/") && !(f in UNLINKED))) expect(readme, file).toContain(`(${file})`);
+  });
+
+  it("leaves unlinked only the pages that say why", () => {
+    for (const [file, reason] of Object.entries(UNLINKED)) {
+      expect(docsFiles(ROOT), file).toContain(file);
+      expect(read("README.md"), file).not.toContain(`(${file})`);
+      expect(read(file).startsWith("> **Draft, not published.**"), `${file}: ${reason}`).toBe(true);
+    }
   });
 });
 

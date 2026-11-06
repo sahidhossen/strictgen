@@ -5,16 +5,13 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { basename } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type { Config, LlmProfileRef } from "./config.js";
 import { ConfigError } from "./config-error.js";
 import { fsReason, isFsError } from "./fs-error.js";
-import type { Profile } from "./llm-profile.js";
+import type { BuiltinProfileName, Profile } from "./llm-profile.js";
 import { builtinProfileFromText, checkBuiltinProfile, profileFromText } from "./llm-profile.js";
-
-/** The folder the built in profiles ship in, beside `src/` and `dist/`. */
-const PROFILES_DIR = new URL("../profiles/", import.meta.url);
+import { inBinary, packageFileText, packagePath } from "./package-files.js";
 
 type Raw = Readonly<Record<string, unknown>>;
 
@@ -33,15 +30,20 @@ function readProfile(path: string, shown: string): string {
   }
 }
 
-/** The path of a built in profile's file. */
+/** The path of a built in profile's file in the package folder: `profiles/`, beside `dist/`. */
 export function builtinProfileFile(name: string): string {
-  return fileURLToPath(new URL(`${name}.json`, PROFILES_DIR));
+  return packagePath(`profiles/${name}.json`);
 }
 
-/** A built in profile by name. Throws a {@link ConfigError} for a name strictgen doesn't ship. */
+/**
+ * A built in profile by name, from the package folder or, in a single executable, from the
+ * binary's assets. Throws a {@link ConfigError} for a name strictgen doesn't ship.
+ */
 export function builtinProfile(name: string, option = "llm.profiles"): Profile {
   checkBuiltinProfile(name, option);
-  return builtinProfileFromText(name, readProfile(builtinProfileFile(name), `profiles/${name}.json`));
+  const file = `profiles/${name as BuiltinProfileName}.json` as const;
+  const text = inBinary() ? packageFileText(file) : readProfile(builtinProfileFile(name), file);
+  return builtinProfileFromText(name, text);
 }
 
 /**

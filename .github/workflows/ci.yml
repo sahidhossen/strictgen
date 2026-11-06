@@ -6,6 +6,11 @@ on:
     types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
+  # The release workflow runs all of CI on the tagged commit before it publishes anything.
+  workflow_call:
+    secrets:
+      HYGIENE_DENYLIST:
+        required: true
 
 permissions:
   contents: read
@@ -35,6 +40,35 @@ jobs:
       - run: pnpm build
       # The playground page, bundled as Pages would serve it. Its tests above build it too.
       - run: pnpm playground:build
+
+  package:
+    name: npm package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      # The exact file list of npm pack, then the tarball installed offline into an empty project,
+      # where npx strictgen --version, a built in profile and import("strictgen") must work.
+      - run: node scripts/package-check.mjs
+      # npm publish stops in its prepublishOnly guard outside the release workflow's tag run.
+      - name: The publish guard refuses this run
+        run: |
+          if node scripts/publish-guard.mjs; then
+            echo "The publish guard let a run that isn't a release through."
+            exit 1
+          fi
+
+  binaries:
+    name: Binaries
+    uses: ./.github/workflows/binaries.yml
 
   examples:
     name: Examples are up to date
