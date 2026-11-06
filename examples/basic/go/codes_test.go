@@ -49,3 +49,36 @@ func TestFoundStrings(t *testing.T) {
 		}
 	}
 }
+
+// TestConstraintMessages checks the messages of constraint errors, the same as Rust's
+// constraint_messages and the TypeScript tests: counts in code points, items and keys, and
+// numbers as JavaScript writes them.
+func TestConstraintMessages(t *testing.T) {
+	order := func(note, rest string) string {
+		return `{"id":"ord_5h1c","note":` + note + `,"quantity":1,"tags":["a"]` + rest + `}`
+	}
+	cases := []struct{ note, rest, want string }{
+		{`"😀"`, `,"price":1`, "/note: too short, expected at least 2 characters, found 1 character"},
+		{`"e\u0301e\u0301e\u0301"`, `,"price":1`, "/note: too long, expected at most 5 characters, found 6 characters"},
+		{`"ab"`, `,"price":1,"packSize":7`, "/packSize: not a multiple, expected a multiple of 6, found 7"},
+		{`"ab"`, `,"price":1,"packSize":50`, "/packSize: too large, expected < 50, found 50"},
+		{`"ab"`, `,"price":1E3`, "/price: too large, expected < 1000, found 1000"},
+		{`"ab"`, `,"price":1e-7`, "/price: too small, expected >= 0.5, found 1e-7"},
+		{`"ab"`, `,"price":1,"discount":-0`, "/discount: too small, expected > 0, found -0"},
+		{`"ab"`, `,"price":1,"discount":1e21`, "/discount: too large, expected <= 0.75, found 1e+21"},
+		{`"ab"`, `,"price":1,"attributes":{"c":"abc","b":"abc","a":"abc"}`, "/attributes: too long, expected at most 2 keys, found 3 keys"},
+		{`"ab"`, `,"price":1,"attributes":{"b":"x","a":"y"}`, "/attributes/a: too short, expected at least 3 characters, found 1 character"},
+		{`"a"`, `,"price":"1"`, `/price: wrong type, expected a number, found "1"`},
+	}
+	decode := fixtureDecoders()["order"]
+	for _, c := range cases {
+		text := order(c.note, c.rest)
+		if _, err := decode([]byte(text)); err == nil || err.Error() != c.want {
+			t.Errorf("%s: got %v, expected %s", text, err, c.want)
+		}
+	}
+	text := `{"id":"ord_5h1c","note":"ab","quantity":1,"price":1,"tags":[]}`
+	if _, err := decode([]byte(text)); err == nil || err.Error() != "/tags: too short, expected at least 1 item, found 0 items" {
+		t.Errorf("%s: got %v", text, err)
+	}
+}

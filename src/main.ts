@@ -186,7 +186,10 @@ export function generateProject(options: MainOptions): OutputFile[] {
     options.schemaDir,
     options.idBase === undefined ? {} : { idBase: options.idBase },
   );
-  return generate(schemas, options.targets, options.ids === undefined ? {} : { ids: options.ids });
+  return generate(schemas, options.targets, {
+    ...(options.ids === undefined ? {} : { ids: options.ids }),
+    ...(options.validation === undefined ? {} : { validation: options.validation }),
+  });
 }
 
 /**

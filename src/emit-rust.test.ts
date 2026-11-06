@@ -1,10 +1,16 @@
 import { describe, expect, it } from "vitest";
 
 import { buildModel } from "./build.js";
-import { emitRust, rustString } from "./emit-rust.js";
+import { emitRust, emitRustFixtures, rustString } from "./emit-rust.js";
 import { ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
 import type { JsonObject } from "./schema.js";
 import { schemaSet } from "./schema.js";
+
+const closed = (properties: JsonObject): JsonObject => ({
+  type: "object",
+  properties,
+  additionalProperties: false,
+});
 
 const BASE = "https://example.com/schemas/v1/";
 
@@ -240,6 +246,162 @@ describe("Rust report mode", () => {
   it("reserve Reported in both modes", () => {
     const lib = buildModel(schemaSet({ lib: schema("lib", { $defs: { reported: { type: "string" } } }) }));
     expect(() => emitRust(lib)).toThrow("reserved-name: type name Reported is reserved in Rust");
+  });
+});
+
+describe("Rust constraints", () => {
+  const model = buildModel(
+    schemaSet({
+      common: schema("common", {
+        $defs: {
+          orderId: { type: "string", minLength: 4 },
+          plainId: { type: "string" },
+        },
+      }),
+      lib: schema("lib", {
+        $defs: {
+          item: {
+            type: "object",
+            properties: {
+              name: { type: "string", minLength: 1, maxLength: 5 },
+              count: { type: "integer", minimum: 1, multipleOf: 2 },
+              price: { type: "number", exclusiveMinimum: 0, maximum: 1e21 },
+              ratio: { type: "number", minimum: -3 },
+              tags: { type: "array", items: { type: "string", maxLength: 3 }, maxItems: 2 },
+              byId: {
+                type: "object",
+                propertyNames: { $ref: `${BASE}common.json#/$defs/orderId` },
+                additionalProperties: { type: "integer", maximum: 9 },
+                minProperties: 1,
+              },
+              next: { $ref: "#/$defs/item" },
+            },
+            required: ["name", "count"],
+            additionalProperties: false,
+          },
+          codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 2 },
+          plain: closed({ name: { type: "string" } }),
+        },
+      }),
+    }),
+    { ids: { file: "common", suffix: "Id" } },
+  );
+  const files = emitRust(model);
+  const text = (name: string): string => files.find((f) => f.name === name)?.contents ?? "";
+
+  it("check a struct's fields in schema order, after the whole value decoded", () => {
+    const lib = text("lib.rs");
+    const name = lib.indexOf('helpers::within("name", helpers::check_length(&self.name, Some(1), Some(5)))?;');
+    const count = lib.indexOf(
+      'helpers::within("count", helpers::check_integer(self.count, &[(">=", 1, "1"), ("%", 2, "2")]))?;',
+    );
+    expect(name).toBeGreaterThan(-1);
+    expect(count).toBeGreaterThan(name);
+    expect(lib).toContain(
+      'helpers::within("price", helpers::check_number(value, &[(">", 0.0, "0"), ("<=", 1e+21, "1e+21")]))?;',
+    );
+    expect(lib).toContain('helpers::check_number(value, &[(">=", -3.0, "-3")])');
+    expect(lib).toContain(
+      'helpers::check_items(value, None, Some(2), |item| helpers::check_length(item, None, Some(3)))',
+    );
+    expect(lib).toContain(
+      'helpers::check_entries(value, Some(1), None, |key| key.0.as_str(), helpers::Decode::check, |item| helpers::check_integer(*item, &[("<=", 9, "9")]))',
+    );
+    expect(lib).toContain('helpers::within("next", helpers::Decode::check(value))?;');
+  });
+
+  it("check an id's string", () => {
+    expect(text("common.rs")).toContain("        helpers::check_length(&self.0, Some(4), None)\n");
+  });
+
+  it("write no check for a type without constraints, and no unused helper", () => {
+    const lib = text("lib.rs");
+    const plain = lib.slice(lib.indexOf("impl helpers::Decode for Plain {"));
+    expect(plain.slice(0, plain.indexOf("\n}\n"))).not.toContain("fn check");
+    expect(text("common.rs").slice(text("common.rs").indexOf("for PlainId"))).not.toContain("fn check");
+    const helpers = text("helpers.rs");
+    for (const used of ["fn within", "fn check_length", "fn check_items", "fn check_entries", "fn check_integer", "fn check_number"]) {
+      expect(helpers).toContain(used);
+    }
+    const none = emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: { plain: closed({ a: { type: "string" } }) } }) })));
+    expect(none.map((f) => f.contents).join("\n")).not.toMatch(/fn (within|check_|limit_error|count)\b/);
+  });
+
+});
+
+describe("Rust constrained aliases", () => {
+  const model = buildModel(
+    schemaSet({
+      lib: schema("lib", {
+        $defs: {
+          codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 2 },
+          code: { type: "string", minLength: 3, maxLength: 3 },
+          count: { type: "integer", minimum: 1 },
+          ratio: { type: "number", maximum: 1 },
+          byCode: {
+            type: "object",
+            propertyNames: { $ref: "#/$defs/code" },
+            additionalProperties: { type: "integer" },
+          },
+          codeList: { type: "array", items: { $ref: "#/$defs/code" } },
+          moreCodes: { $ref: "#/$defs/codes" },
+          item: closed({ name: { type: "string", maxLength: 2 } }),
+          itemAlias: { $ref: "#/$defs/item" },
+          names: { type: "array", items: { type: "string" } },
+          holder: closed({ codes: { $ref: "#/$defs/codes" }, more: { $ref: "#/$defs/moreCodes" } }),
+        },
+      }),
+    }),
+  );
+  const lib = emitRust(model).find((f) => f.name === "lib.rs")?.contents ?? "";
+  const registry = emitRustFixtures(model, "crate_name");
+
+  it("make an alias with constraints a newtype whose Decode impl checks them", () => {
+    expect(lib).toContain(
+      "#[derive(Debug, Clone, PartialEq, Eq, Serialize)]\n#[serde(transparent)]\npub struct Codes(pub Vec<String>);\n\n" +
+        "impl helpers::Decode for Codes {\n" +
+        "    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {\n" +
+        "        <Vec<String> as helpers::Decode>::decode_node(node).map(Self)\n    }\n\n" +
+        "    fn check(&self) -> Result<(), helpers::DecodeError> {\n" +
+        "        helpers::check_items(&self.0, None, Some(2), |item| helpers::check_length(item, Some(3), None))\n    }\n}\n",
+    );
+    expect(lib).toContain("pub struct Count(pub i64);");
+    expect(lib).toContain('        helpers::check_integer(self.0, &[(">=", 1, "1")])\n');
+    expect(lib).toContain("pub struct Ratio(pub serde_json::Number);");
+    expect(lib).toContain('        helpers::check_number(&self.0, &[("<=", 1.0, "1")])\n');
+    expect(lib).not.toContain("pub fn decode_");
+  });
+
+  it("order a newtype of a string, so it keys a map, and name its key by the string", () => {
+    expect(lib).toContain(
+      "#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]\n#[serde(transparent)]\npub struct Code(pub String);",
+    );
+    expect(lib).toContain("pub struct ByCode(pub BTreeMap<Code, i64>);");
+    expect(lib).toContain(
+      "helpers::check_entries(&self.0, None, None, |key| key.0.as_str(), helpers::Decode::check, |_| Ok(()))",
+    );
+  });
+
+  it("make an alias whose constraints are only inside it a newtype too, since Vec doesn't check its items", () => {
+    expect(lib).toContain("pub struct CodeList(pub Vec<Code>);");
+    expect(lib).toContain("        helpers::check_items(&self.0, None, None, helpers::Decode::check)\n");
+  });
+
+  it("keep an alias of another declaration and an alias without constraints plain", () => {
+    expect(lib).toContain("pub type MoreCodes = Codes;\n");
+    expect(lib).toContain("pub type ItemAlias = Item;\n");
+    expect(lib).toContain("pub type Names = Vec<String>;\n");
+  });
+
+  it("check a field of a constrained alias through its type", () => {
+    expect(lib).toContain('        helpers::within("codes", helpers::Decode::check(value))?;\n');
+    expect(lib).toContain('        helpers::within("more", helpers::Decode::check(value))?;\n');
+  });
+
+  it("decode every root and def through from_json in the fixture registry", () => {
+    expect(registry).toContain('("lib", Some("codes")) => run::<crate_name::Codes>(json),\n');
+    expect(registry).toContain('("lib", Some("moreCodes")) => run::<crate_name::MoreCodes>(json),\n');
+    expect(registry).not.toContain("encode(crate_name::");
   });
 });
 

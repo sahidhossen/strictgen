@@ -20,10 +20,15 @@ pub enum Failure {
 pub fn round_trip(schema: &str, def: Option<&str>, json: &[u8]) -> Option<Result<Value, Failure>> {
     let result = match (schema, def) {
         ("common", Some("eventId")) => run::<example_basic::EventId>(json),
+        ("common", Some("orderId")) => run::<example_basic::OrderId>(json),
         ("common", Some("timestamp")) => run::<example_basic::Timestamp>(json),
         ("common", Some("userId")) => run::<example_basic::UserId>(json),
         ("event", None) => run::<example_basic::Event>(json),
         ("event", Some("eventType")) => run::<example_basic::EventType>(json),
+        ("order", None) => run::<example_basic::Order>(json),
+        ("order", Some("code")) => run::<example_basic::Code>(json),
+        ("order", Some("codes")) => run::<example_basic::Codes>(json),
+        ("order", Some("line")) => run::<example_basic::Line>(json),
         ("payment-method", None) => run::<example_basic::PaymentMethod>(json),
         ("payment-method", Some("bankAccount")) => run::<example_basic::BankAccount>(json),
         ("payment-method", Some("card")) => run::<example_basic::Card>(json),
@@ -38,6 +43,10 @@ pub fn round_trip(schema: &str, def: Option<&str>, json: &[u8]) -> Option<Result
 }
 
 fn run<T: Decode + serde::Serialize>(json: &[u8]) -> Result<Value, Failure> {
-    let decoded = T::from_json(json).map_err(Failure::Decode)?;
+    encode(T::from_json(json))
+}
+
+fn encode<T: serde::Serialize>(decoded: Result<T, DecodeError>) -> Result<Value, Failure> {
+    let decoded = decoded.map_err(Failure::Decode)?;
     serde_json::to_value(decoded).map_err(|error| Failure::Encode(error.to_string()))
 }

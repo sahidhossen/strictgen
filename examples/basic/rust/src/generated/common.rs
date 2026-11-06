@@ -18,6 +18,23 @@ impl helpers::Decode for EventId {
     }
 }
 
+/// The ID of an order, like `ord_5h1c`, 4 to 12 characters.
+///
+/// Schema: `common.json#/$defs/orderId`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct OrderId(pub String);
+
+impl helpers::Decode for OrderId {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_length(&self.0, Some(4), Some(12))
+    }
+}
+
 /// An RFC 3339 date and time in UTC.
 ///
 /// Schema: `common.json#/$defs/timestamp`.

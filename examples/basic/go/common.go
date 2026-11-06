@@ -14,6 +14,21 @@ func (v *EventId) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
 
 func (v *EventId) decode(n *node) *DecodeError { return decodeStringInto(n, v) }
 
+// OrderId is generated from common.json#/$defs/orderId.
+//
+// The ID of an order, like `ord_5h1c`, 4 to 12 characters.
+type OrderId string
+
+// UnmarshalJSON decodes the id from a JSON string.
+func (v *OrderId) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *OrderId) decode(n *node) *DecodeError { return decodeStringInto(n, v) }
+
+// check checks the constraints of a decoded OrderId.
+func (v OrderId) check() *DecodeError {
+	return checkLength(string(v), 4, 12)
+}
+
 // Timestamp is generated from common.json#/$defs/timestamp.
 //
 // An RFC 3339 date and time in UTC.

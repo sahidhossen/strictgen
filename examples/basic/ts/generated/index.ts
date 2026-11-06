@@ -2,6 +2,7 @@
 
 export * from "./common.js";
 export * from "./event.js";
+export * from "./order.js";
 export * from "./payment-method.js";
 export * from "./subscription.js";
 export * from "./user.js";

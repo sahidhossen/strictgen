@@ -256,7 +256,10 @@ export function explain(
   }
   let model: Model;
   try {
-    model = buildModel(schemas, config.ids === undefined ? {} : { ids: config.ids });
+    model = buildModel(schemas, {
+      ...(config.ids === undefined ? {} : { ids: config.ids }),
+      validation: config.validation,
+    });
   } catch (error) {
     if (!(error instanceof CodegenError)) throw error;
     return { location, decls: [], failure: failureOf(error), targets: [] };

@@ -1,4 +1,4 @@
-import { codeName, ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
+import { codeName, COUNT_UNITS, ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
 
 /** The name of the built in type for any JSON value except `null`. */
 export const GO_NON_NULL = "NonNullJson";
@@ -71,6 +71,9 @@ func decodeReport[T any](data []byte, decode func(*node) (T, *DecodeError)) (Rep
 		return Reported[T]{}, err
 	}
 	v, err := decode(n)
+	if err == nil {
+		err = checkValue(v)
+	}
 	if err != nil {
 		return Reported[T]{}, err
 	}
@@ -133,7 +136,8 @@ func (n *node) pathTo(at int) string {
 `;
 
 /** unmarshal and decodeRoot in strict mode. */
-const ROOT_STRICT = String.raw`// unmarshal parses data once and decodes it into v, for UnmarshalJSON.
+const ROOT_STRICT = String.raw`// unmarshal parses data once and decodes it into v, for UnmarshalJSON, then checks the
+// constraints of the whole value.
 func unmarshal[T any, PT interface {
 	*T
 	nodeDecoder
@@ -142,18 +146,25 @@ func unmarshal[T any, PT interface {
 	if err == nil {
 		err = v.decode(n)
 	}
+	if err == nil {
+		err = checkValue(v)
+	}
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// decodeRoot parses data once and decodes it with decode.
+// decodeRoot parses data once and decodes it with decode, then checks the constraints of the
+// whole value.
 func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, error) {
 	var v T
 	n, err := parse(data)
 	if err == nil {
 		v, err = decode(n)
+	}
+	if err == nil {
+		err = checkValue(v)
 	}
 	if err != nil {
 		var zero T
@@ -163,18 +174,23 @@ func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, er
 }`;
 
 /** unmarshal and decodeRoot in report mode, which give the unknown keys to the hook. */
-const ROOT_REPORT = String.raw`// unmarshal parses data once and decodes it into v, for UnmarshalJSON. The paths of the
-// unknown keys go to the hook.
+const ROOT_REPORT = String.raw`// unmarshal parses data once and decodes it into v, for UnmarshalJSON, then checks the
+// constraints of the whole value. The paths of the unknown keys go to the hook.
 func unmarshal[T any, PT interface {
 	*T
 	nodeDecoder
 }](data []byte, v PT) error {
-	_, err := decodeReport(data, func(n *node) (struct{}, *DecodeError) { return struct{}{}, v.decode(n) })
+	_, err := decodeReport(data, func(n *node) (struct{}, *DecodeError) {
+		if err := v.decode(n); err != nil {
+			return struct{}{}, err
+		}
+		return struct{}{}, checkValue(v)
+	})
 	return err
 }
 
-// decodeRoot parses data once and decodes it with decode. The paths of the unknown keys go to
-// the hook.
+// decodeRoot parses data once and decodes it with decode, then checks the constraints of the
+// whole value. The paths of the unknown keys go to the hook.
 func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, error) {
 	r, err := decodeReport(data, decode)
 	return r.Value, err
@@ -1249,6 +1265,170 @@ func (v *${GO_NON_NULL}) decode(n *node) *DecodeError {
 	}
 	*v = ${GO_NON_NULL}(bytes.Clone(n.raw))
 	return nil
+}
+
+// checker is a generated type whose values have constraints. They are checked once the whole
+// value has decoded, so a structure error anywhere comes first, in the same order as Rust and
+// TypeScript: a value's own constraints before the values inside it, fields in schema order,
+// items by index and map keys in code point order.
+type checker interface {
+	check() *DecodeError
+}
+
+// checkValue checks the constraints of v when its type has any, like the branch a tagged union
+// holds.
+func checkValue(v any) *DecodeError {
+	if c, ok := v.(checker); ok {
+		return c.check()
+	}
+	return nil
+}
+
+// count shows n things, like "1 character" or "3 items".
+func count(n int, one, many string) string {
+	if n == 1 {
+		return "1 " + one
+	}
+	return strconv.Itoa(n) + " " + many
+}
+
+// checkCount checks a count of things against a minimum and a maximum, each -1 when absent.
+func checkCount(n, min, max int, one, many string) *DecodeError {
+	if min >= 0 && n < min {
+		return fail(CodeTooShort, "at least "+count(min, one, many), count(n, one, many))
+	}
+	if max >= 0 && n > max {
+		return fail(CodeTooLong, "at most "+count(max, one, many), count(n, one, many))
+	}
+	return nil
+}
+
+// checkLength checks the length of a string in code points, like Rust and TypeScript count it.
+func checkLength(text string, min, max int) *DecodeError {
+	return checkCount(utf8.RuneCountInString(text), min, max, "${COUNT_UNITS.length[0]}", "${COUNT_UNITS.length[1]}")
+}
+
+// checkItems checks the number of items of an array, then each item with item, if not nil.
+func checkItems[T any](items []T, min, max int, item func(T) *DecodeError) *DecodeError {
+	if err := checkCount(len(items), min, max, "${COUNT_UNITS.items[0]}", "${COUNT_UNITS.items[1]}"); err != nil {
+		return err
+	}
+	if item == nil {
+		return nil
+	}
+	for i, v := range items {
+		if err := item(v); err != nil {
+			return err.at(strconv.Itoa(i))
+		}
+	}
+	return nil
+}
+
+// checkEntries checks the number of keys of a map, then, in code point order, each key with key
+// and its value with value, each if not nil, at the key's path.
+func checkEntries[K ~string, V any](m map[K]V, min, max int, key func(K) *DecodeError, value func(V) *DecodeError) *DecodeError {
+	if err := checkCount(len(m), min, max, "${COUNT_UNITS.keys[0]}", "${COUNT_UNITS.keys[1]}"); err != nil {
+		return err
+	}
+	if key == nil && value == nil {
+		return nil
+	}
+	for _, k := range slices.Sorted(maps.Keys(m)) {
+		if key != nil {
+			if err := key(k); err != nil {
+				return err.at(string(k))
+			}
+		}
+		if value != nil {
+			if err := value(m[k]); err != nil {
+				return err.at(string(k))
+			}
+		}
+	}
+	return nil
+}
+
+// limit is one bound of an integer or a number: op is >=, >, <= or <, or % for a multiple of
+// an integer, and text is the bound as errors show it.
+type limit[T int64 | float64] struct {
+	op    string
+	bound T
+	text  string
+}
+
+// outside returns the error for v when it is outside l, with found showing v.
+func outside[T int64 | float64](v T, l limit[T], found string) *DecodeError {
+	switch {
+	case l.op == ">=" && v < l.bound, l.op == ">" && v <= l.bound:
+		return fail(CodeTooSmall, l.op+" "+l.text, found)
+	case l.op == "<=" && v > l.bound, l.op == "<" && v >= l.bound:
+		return fail(CodeTooLarge, l.op+" "+l.text, found)
+	}
+	return nil
+}
+
+// checkInt checks an integer against each limit in order.
+func checkInt(v int64, limits ...limit[int64]) *DecodeError {
+	found := strconv.FormatInt(v, 10)
+	for _, l := range limits {
+		if l.op == "%" {
+			if v%l.bound != 0 {
+				return fail(CodeNotMultipleOf, "a multiple of "+l.text, found)
+			}
+			continue
+		}
+		if err := outside(v, l, found); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkNumber checks a number against each limit in order. It compares the nearest float64 to
+// the number as spelled, like Rust and TypeScript.
+func checkNumber(v json.Number, limits ...limit[float64]) *DecodeError {
+	f, err := strconv.ParseFloat(string(v), 64)
+	if err != nil {
+		return fail(CodeWrongType, "a number", string(v))
+	}
+	for _, l := range limits {
+		if err := outside(f, l, numberText(f)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// numberText writes a float64 as JavaScript does, like Rust and TypeScript errors show it: the
+// shortest digits that read back as the same float, without an exponent from 1e-6 up to 1e21,
+// and with -0 kept.
+func numberText(f float64) string {
+	text := strconv.FormatFloat(f, 'e', -1, 64)
+	sign := ""
+	if text[0] == '-' {
+		sign, text = "-", text[1:]
+	}
+	mantissa, exponent, _ := strings.Cut(text, "e")
+	digits := strings.Replace(mantissa, ".", "", 1)
+	e, _ := strconv.Atoi(exponent)
+	// The number is 0.digits times 10 to the n.
+	n, k := e+1, len(digits)
+	switch {
+	case k <= n && n <= 21:
+		return sign + digits + strings.Repeat("0", n-k)
+	case 0 < n && n <= 21:
+		return sign + digits[:n] + "." + digits[n:]
+	case -6 < n && n <= 0:
+		return sign + "0." + strings.Repeat("0", -n) + digits
+	}
+	head := digits[:1]
+	if k > 1 {
+		head += "." + digits[1:]
+	}
+	if n-1 < 0 {
+		return sign + head + "e-" + strconv.Itoa(1-n)
+	}
+	return sign + head + "e+" + strconv.Itoa(n-1)
 }
 `;
 }

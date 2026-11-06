@@ -1128,3 +1128,209 @@ describe("one file per schema", () => {
     ]);
   });
 });
+
+describe("validation constraints", () => {
+  const entries: JsonObject = {
+    note: { type: "string", minLength: 1, maxLength: 5, pattern: "^n", format: "date" },
+    count: {
+      type: "integer",
+      minimum: 0,
+      exclusiveMinimum: -1,
+      maximum: 10,
+      exclusiveMaximum: 11,
+      multipleOf: 2,
+    },
+    ratio: { type: "number", minimum: -0, exclusiveMaximum: 1.5 },
+    tags: { type: "array", items: { type: "string", maxLength: 3 }, minItems: 1, maxItems: 4 },
+    labels: {
+      type: "object",
+      propertyNames: { type: "string", maxLength: 2 },
+      additionalProperties: { type: "string" },
+      minProperties: 1,
+      maxProperties: 3,
+    },
+    noLimits: { type: "array", items: { type: "integer" }, uniqueItems: false },
+  };
+  const model = build(defs(entries));
+  const typeOf = (name: string): unknown => {
+    const decl = find(model, name);
+    return decl.kind === "alias" ? decl.type : decl;
+  };
+
+  it("reads minLength and maxLength, and keeps pattern and format", () => {
+    expect(typeOf("Note")).toEqual({
+      kind: "string",
+      pattern: "^n",
+      format: "date",
+      minLength: 1,
+      maxLength: 5,
+    });
+  });
+
+  it("reads the bounds and multipleOf of an integer", () => {
+    expect(typeOf("Count")).toEqual({
+      kind: "integer",
+      minimum: 0,
+      exclusiveMinimum: -1,
+      maximum: 10,
+      exclusiveMaximum: 11,
+      multipleOf: 2,
+    });
+  });
+
+  it("reads the bounds of a number, -0 as 0", () => {
+    const ratio = typeOf("Ratio") as { minimum: number };
+    expect(ratio).toEqual({ kind: "number", minimum: 0, exclusiveMaximum: 1.5 });
+    expect(Object.is(ratio.minimum, 0)).toBe(true);
+  });
+
+  it("reads minItems and maxItems, and the item's own limits", () => {
+    expect(typeOf("Tags")).toEqual({
+      kind: "array",
+      items: { kind: "string", maxLength: 3 },
+      minItems: 1,
+      maxItems: 4,
+    });
+    expect(typeOf("NoLimits")).toEqual({ kind: "array", items: { kind: "integer" } });
+  });
+
+  it("reads minProperties and maxProperties on a map, and the key's limits", () => {
+    expect(typeOf("Labels")).toEqual({
+      kind: "map",
+      key: { kind: "string", maxLength: 2 },
+      value: { kind: "string" },
+      minProperties: 1,
+      maxProperties: 3,
+    });
+  });
+
+  it("keeps an id's constraints", () => {
+    const ids = build({
+      common: schema("common", { $defs: { orderId: { type: "string", minLength: 4 } } }),
+    });
+    expect(find(ids, "OrderId")).toMatchObject({
+      kind: "id",
+      type: { kind: "string", minLength: 4 },
+    });
+  });
+
+  it("leaves constraints out with validation off, but keeps pattern and format", () => {
+    const off = buildModel(schemaSet(defs(entries)), { validation: false });
+    expect(find(off, "Note")).toMatchObject({
+      type: { kind: "string", pattern: "^n", format: "date" },
+    });
+    for (const name of ["Count", "Ratio", "Tags", "Labels"]) {
+      const decl = find(off, name);
+      expect(JSON.stringify(decl)).not.toMatch(/min|max|multiple/i);
+    }
+  });
+
+  it("still fails on a bad constraint with validation off", () => {
+    expect(() =>
+      buildModel(schemaSet(defs({ x: { type: "string", minLength: -1 } })), { validation: false }),
+    ).toThrow("invalid-constraint: minLength must be a whole number");
+  });
+
+  it.each<[string, JsonObject, string]>([
+    [
+      "a string limit on an integer",
+      { x: { type: "integer", maxLength: 3 } },
+      'lib.json#/$defs/x/maxLength: misplaced-keyword: maxLength doesn\'t apply to an integer. Hint: use it beside "type": "string"',
+    ],
+    [
+      "a number limit on a string",
+      { x: { type: "string", minimum: 3 } },
+      'lib.json#/$defs/x/minimum: misplaced-keyword: minimum doesn\'t apply to a string. Hint: use it beside "type": "integer" or "number"',
+    ],
+    [
+      "a limit beside $ref",
+      { y: { type: "string" }, x: { $ref: "#/$defs/y", maxLength: 3 } },
+      "lib.json#/$defs/x/maxLength: misplaced-keyword: maxLength doesn't apply beside $ref. Hint: put it on the def the $ref names",
+    ],
+    [
+      "a limit beside enum",
+      { x: { enum: ["a", "bb"], maxLength: 1 } },
+      "lib.json#/$defs/x/maxLength: misplaced-keyword: maxLength doesn't apply beside enum. Hint: remove it, the enum lists every value",
+    ],
+    [
+      "a limit without a type",
+      { x: { minLength: 1 } },
+      'lib.json#/$defs/x/minLength: misplaced-keyword: minLength doesn\'t apply without a type. Hint: add a "type", like "type": "string"',
+    ],
+    [
+      "key counts on a closed object",
+      { x: { type: "object", properties: { a: { type: "string" } }, additionalProperties: false, minProperties: 1 } },
+      'lib.json#/$defs/x/minProperties: misplaced-keyword: minProperties doesn\'t apply to an object with named properties. Hint: list the keys it needs in "required"; key counts only apply to maps, objects with "additionalProperties" and no "properties"',
+    ],
+    [
+      "a limit in an allOf part of an object",
+      {
+        base: { type: "object", properties: { a: { type: "string" } } },
+        x: { type: "object", allOf: [{ $ref: "#/$defs/base" }, { maxProperties: 1 }], unevaluatedProperties: false },
+      },
+      'lib.json#/$defs/x/allOf/1/maxProperties: misplaced-keyword: maxProperties doesn\'t apply to an allOf part of an object. Hint: list the keys the object needs in "required" instead',
+    ],
+    [
+      "multipleOf on a number",
+      { x: { type: "number", multipleOf: 0.5 } },
+      'lib.json#/$defs/x/multipleOf: unsupported-constraint: multipleOf on a number can give different results in each language, since floats round. Hint: use "type": "integer" with a multipleOf, or remove it',
+    ],
+    [
+      "uniqueItems, not checked yet",
+      { x: { type: "array", items: { type: "string" }, uniqueItems: true } },
+      "lib.json#/$defs/x/uniqueItems: unsupported-constraint: uniqueItems is not checked yet. Hint: remove it, strictgen doesn't check it in any language yet",
+    ],
+    [
+      "contains, outside the subset",
+      { x: { type: "array", items: { type: "string" }, contains: { const: "a" } } },
+      "lib.json#/$defs/x/contains: unsupported-keyword: unsupported keyword contains",
+    ],
+    [
+      "a negative length",
+      { x: { type: "string", minLength: -1 } },
+      "lib.json#/$defs/x/minLength: invalid-constraint: minLength must be a whole number from 0 to 9007199254740991",
+    ],
+    [
+      "a fractional count",
+      { x: { type: "array", items: { type: "string" }, maxItems: 1.5 } },
+      "lib.json#/$defs/x/maxItems: invalid-constraint: maxItems must be a whole number from 0 to 9007199254740991",
+    ],
+    [
+      "a fractional bound on an integer",
+      { x: { type: "integer", minimum: 0.5 } },
+      "lib.json#/$defs/x/minimum: invalid-constraint: minimum of an integer must be a whole number from -9007199254740991 to 9007199254740991. Hint: every language holds a bound in that range exactly",
+    ],
+    [
+      "an integer bound past the safe range",
+      { x: { type: "integer", maximum: 9223372036854775807 } },
+      "lib.json#/$defs/x/maximum: invalid-constraint: maximum of an integer must be a whole number",
+    ],
+    [
+      "a boolean exclusiveMinimum, from an older draft",
+      { x: { type: "number", minimum: 0, exclusiveMinimum: true } },
+      'lib.json#/$defs/x/exclusiveMinimum: invalid-constraint: exclusiveMinimum must be a number. Hint: give the bound itself, like "exclusiveMinimum": 0',
+    ],
+    [
+      "a zero multipleOf",
+      { x: { type: "integer", multipleOf: 0 } },
+      "lib.json#/$defs/x/multipleOf: invalid-constraint: multipleOf of an integer must be a whole number from 1 to 9007199254740991",
+    ],
+    [
+      "a minimum above the maximum",
+      { x: { type: "string", minLength: 3, maxLength: 2 } },
+      "lib.json#/$defs/x/minLength: invalid-constraint: minLength 3 and maxLength 2 leave no value that fits",
+    ],
+    [
+      "exclusive bounds that meet",
+      { x: { type: "number", exclusiveMinimum: 1, maximum: 1 } },
+      "lib.json#/$defs/x/exclusiveMinimum: invalid-constraint: exclusiveMinimum 1 and maximum 1 leave no value that fits",
+    ],
+    [
+      "a non-string pattern",
+      { x: { type: "string", pattern: 1 } },
+      "lib.json#/$defs/x/pattern: invalid-constraint: pattern must be a string",
+    ],
+  ])("fails on %s", (_, body, message) => {
+    expect(failure(defs(body)).message).toContain(message);
+  });
+});

@@ -1,4 +1,4 @@
-import { ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
+import { COUNT_UNITS, ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
 
 /** The name of the built in type for any JSON value except `null`. */
 export const RUST_NON_NULL = "NonNullJson";
@@ -18,22 +18,24 @@ const CODE_CONSTANTS = ERROR_CODES.map(
 const CODE_TITLES = ERROR_CODES.map((c) => `        "${c.code}" => "${c.title}",\n`).join("");
 
 /** The text-reading methods of the Decode trait in strict mode. */
-const FROM_JSON_STRICT = String.raw`    /// Decodes JSON text, given as a str or as bytes.
+const FROM_JSON_STRICT = String.raw`    /// Decodes JSON text, given as a str or as bytes, then checks its constraints.
     ///
     /// # Errors
     ///
-    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
+    /// A [DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.
     fn from_json(json: impl AsRef<[u8]>) -> Result<Self, DecodeError> {
-        Self::decode_node(&parse(json.as_ref())?)
+        let value = Self::decode_node(&parse(json.as_ref())?)?;
+        value.check()?;
+        Ok(value)
     }`;
 
 /** The text-reading methods of the Decode trait in report mode. */
 const FROM_JSON_REPORT = String.raw`    /// Decodes JSON text, given as a str or as bytes. Unknown keys are accepted, and their paths
-    /// go to the hook set with [set_unknown_key_hook].
+    /// go to the hook set with [set_unknown_key_hook]. Then its constraints are checked.
     ///
     /// # Errors
     ///
-    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
+    /// A [DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.
     fn from_json(json: impl AsRef<[u8]>) -> Result<Self, DecodeError> {
         reported(json.as_ref()).map(|decoded| decoded.value)
     }
@@ -43,7 +45,7 @@ const FROM_JSON_REPORT = String.raw`    /// Decodes JSON text, given as a str or
     ///
     /// # Errors
     ///
-    /// A [DecodeError] when the text isn't JSON or doesn't fit the type.
+    /// A [DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.
     fn report_from_json(json: impl AsRef<[u8]>) -> Result<Reported<Self>, DecodeError> {
         reported(json.as_ref())
     }`;
@@ -120,6 +122,7 @@ fn reported<T: Decode>(data: &[u8]) -> Result<Reported<T>, DecodeError> {
     let result = T::decode_node(&root);
     let mut offsets = collecting.finish();
     let value = result?;
+    value.check()?;
     // Offsets sort the keys into input order.
     offsets.sort_unstable();
     let unknown: Vec<String> = offsets.into_iter().map(|at| path_to(&root, at)).collect();
@@ -660,17 +663,29 @@ impl<'a> Parser<'a> {
 
 ${report ? `${REPORT_CORE.trimStart()}\n` : ""}/// A type strictgen generates, which decodes itself from JSON strictly: ${report ? "missing" : "unknown keys, missing"}
 /// required keys, explicit nulls for optional keys, a key given twice and values of the wrong
-/// type fail with a [DecodeError], the same one Go and TypeScript report.${report ? "\n/// Unknown keys are accepted and reported." : ""}
+/// type fail with a [DecodeError], the same one Go and TypeScript report.${report ? "\n/// Unknown keys are accepted and reported." : ""} Once the whole
+/// value has decoded, its constraints, like a maximum length, are checked in the order Go and
+/// TypeScript check them.
 pub trait Decode: Sized {
 ${report ? FROM_JSON_REPORT : FROM_JSON_STRICT}
 
-    /// Decodes a parsed value.
+    /// Decodes a parsed value, without checking its constraints.
     ///
     /// # Errors
     ///
     /// A [DecodeError] when the value doesn't fit the type.
     #[doc(hidden)]
     fn decode_node(node: &Node<'_>) -> Result<Self, DecodeError>;
+
+    /// Checks the constraints of a decoded value: its own, then those of the values inside it.
+    ///
+    /// # Errors
+    ///
+    /// A [DecodeError] for the first constraint the value breaks.
+    #[doc(hidden)]
+    fn check(&self) -> Result<(), DecodeError> {
+        Ok(())
+    }
 }
 
 /// A JSON string.
@@ -729,12 +744,26 @@ fn json_value(node: &Node<'_>) -> Result<serde_json::Value, DecodeError> {
     })
 }
 
-/// A finite JSON number, read by serde_json.
+/// A finite JSON number. An integer that fits a u64 or an i64 stays one, as serde_json reads it.
+/// Any other number, -0 included, is the nearest f64, read by Rust's own parser, which rounds
+/// correctly where serde_json's default parser can be a step off, so constraints compare the
+/// same value as in Go and TypeScript.
 fn number(node: &Node<'_>) -> Result<serde_json::Number, DecodeError> {
     if !matches!(node.kind, Kind::Number) {
         return Err(mismatch("a number", node));
     }
-    node.raw.parse().map_err(|_| invalid(node.at, "a number out of range"))
+    let raw = node.raw;
+    if let Ok(value) = raw.parse::<u64>() {
+        return Ok(value.into());
+    }
+    // -0 parses as the i64 0, which would lose its sign.
+    if let Some(value) = raw.parse::<i64>().ok().filter(|&value| value != 0) {
+        return Ok(value.into());
+    }
+    raw.parse::<f64>()
+        .ok()
+        .and_then(serde_json::Number::from_f64)
+        .ok_or_else(|| invalid(node.at, "a number out of range"))
 }
 
 impl Decode for String {
@@ -773,6 +802,10 @@ impl Decode for serde_json::Value {
 impl<T: Decode> Decode for Box<T> {
     fn decode_node(node: &Node<'_>) -> Result<Self, DecodeError> {
         T::decode_node(node).map(Box::new)
+    }
+
+    fn check(&self) -> Result<(), DecodeError> {
+        T::check(self)
     }
 }
 
@@ -1027,3 +1060,184 @@ pub(super) fn attempt<T>(decode: impl FnOnce() -> Result<T, DecodeError>) -> Res
     result
 }
 `;
+
+/** One constraint check helper: its text, and the other parts it calls. */
+export interface RustCheckPart {
+  readonly needs: readonly string[];
+  readonly text: string;
+}
+
+/**
+ * The constraint checks, one part per helper, keyed by the helper's name. emitRust includes a
+ * part when the generated code calls the helper, with the parts it needs, so the module has no
+ * dead code. The checks run once the whole value has decoded, in the order src/checks.ts sets.
+ */
+export const RUST_HELPERS_CHECKS: Readonly<Record<string, RustCheckPart>> = {
+  within: {
+    needs: [],
+    text: String.raw`/// Moves the error of a check under an object key, so it has the key's path.
+pub(super) fn within(key: &str, result: Result<(), DecodeError>) -> Result<(), DecodeError> {
+    result.map_err(|error| error.at(key))
+}
+`,
+  },
+  check_count: {
+    needs: [],
+    text: String.raw`/// Shows n things, like "1 character" or "3 items".
+fn count(n: usize, one: &str, many: &str) -> String {
+    if n == 1 { format!("1 {one}") } else { format!("{n} {many}") }
+}
+
+/// Checks a count of things against a minimum and a maximum.
+fn check_count(n: usize, min: Option<usize>, max: Option<usize>, one: &str, many: &str) -> Result<(), DecodeError> {
+    if let Some(min) = min.filter(|&min| n < min) {
+        return Err(DecodeError::new(
+            DecodeError::TOO_SHORT,
+            Some(format!("at least {}", count(min, one, many))),
+            Some(count(n, one, many)),
+        ));
+    }
+    if let Some(max) = max.filter(|&max| n > max) {
+        return Err(DecodeError::new(
+            DecodeError::TOO_LONG,
+            Some(format!("at most {}", count(max, one, many))),
+            Some(count(n, one, many)),
+        ));
+    }
+    Ok(())
+}
+`,
+  },
+  check_length: {
+    needs: ["check_count"],
+    text: String.raw`/// Checks the length of a string in code points, like Go and TypeScript count it.
+pub(super) fn check_length(text: &str, min: Option<usize>, max: Option<usize>) -> Result<(), DecodeError> {
+    check_count(text.chars().count(), min, max, "${COUNT_UNITS.length[0]}", "${COUNT_UNITS.length[1]}")
+}
+`,
+  },
+  check_items: {
+    needs: ["check_count"],
+    text: String.raw`/// Checks the number of items of an array, then each item with item.
+pub(super) fn check_items<T>(
+    items: &[T],
+    min: Option<usize>,
+    max: Option<usize>,
+    item: impl Fn(&T) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
+    check_count(items.len(), min, max, "${COUNT_UNITS.items[0]}", "${COUNT_UNITS.items[1]}")?;
+    for (i, value) in items.iter().enumerate() {
+        item(value).map_err(|error| error.at(&i.to_string()))?;
+    }
+    Ok(())
+}
+`,
+  },
+  check_entries: {
+    needs: ["check_count"],
+    text: String.raw`/// Checks the number of keys of a map, then, in key order, which is code point order, each key
+/// with key and its value with value, at the key's path, which name gives.
+pub(super) fn check_entries<K, V>(
+    map: &BTreeMap<K, V>,
+    min: Option<usize>,
+    max: Option<usize>,
+    name: impl Fn(&K) -> &str,
+    key: impl Fn(&K) -> Result<(), DecodeError>,
+    value: impl Fn(&V) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
+    check_count(map.len(), min, max, "${COUNT_UNITS.keys[0]}", "${COUNT_UNITS.keys[1]}")?;
+    for (k, v) in map {
+        key(k).map_err(|error| error.at(name(k)))?;
+        value(v).map_err(|error| error.at(name(k)))?;
+    }
+    Ok(())
+}
+`,
+  },
+  limit_error: {
+    needs: [],
+    text: String.raw`/// The error for a value outside a limit: op is >=, >, <= or <, or % for a multiple, and text
+/// is the bound as errors show it.
+fn limit_error(op: &str, text: &str, found: String) -> DecodeError {
+    let (code, expected) = match op {
+        ">=" | ">" => (DecodeError::TOO_SMALL, format!("{op} {text}")),
+        "<=" | "<" => (DecodeError::TOO_LARGE, format!("{op} {text}")),
+        _ => (DecodeError::NOT_MULTIPLE_OF, format!("a multiple of {text}")),
+    };
+    DecodeError::new(code, Some(expected), Some(found))
+}
+`,
+  },
+  check_integer: {
+    needs: ["limit_error"],
+    text: String.raw`/// Checks an integer against each limit in order, given as (op, bound, text).
+pub(super) fn check_integer(value: i64, limits: &[(&str, i64, &str)]) -> Result<(), DecodeError> {
+    for &(op, bound, text) in limits {
+        let outside = match op {
+            ">=" => value < bound,
+            ">" => value <= bound,
+            "<=" => value > bound,
+            "<" => value >= bound,
+            _ => value % bound != 0,
+        };
+        if outside {
+            return Err(limit_error(op, text, value.to_string()));
+        }
+    }
+    Ok(())
+}
+`,
+  },
+  check_number: {
+    needs: ["limit_error"],
+    text: String.raw`/// Checks a number against each limit in order, given as (op, bound, text). It compares the f64
+/// serde_json reads, the nearest f64 to the number as spelled, as Go and TypeScript do. Without
+/// serde_json's float_roundtrip feature, a rare number with many digits reads one step off.
+pub(super) fn check_number(value: &serde_json::Number, limits: &[(&str, f64, &str)]) -> Result<(), DecodeError> {
+    let Some(number) = value.as_f64() else {
+        return Err(DecodeError::new(DecodeError::WRONG_TYPE, Some("a number".to_owned()), Some(value.to_string())));
+    };
+    for &(op, bound, text) in limits {
+        let outside = match op {
+            ">=" => number < bound,
+            ">" => number <= bound,
+            "<=" => number > bound,
+            _ => number >= bound,
+        };
+        if outside {
+            return Err(limit_error(op, text, number_text(number)));
+        }
+    }
+    Ok(())
+}
+
+/// Writes an f64 as JavaScript does, as Go and TypeScript errors show it: the shortest digits
+/// that read back as the same f64, without an exponent from 1e-6 up to 1e21, and -0 kept.
+fn number_text(number: f64) -> String {
+    let text = format!("{number:e}");
+    let (sign, text) = text.strip_prefix('-').map_or(("", text.as_str()), |rest| ("-", rest));
+    let (mantissa, exponent) = text.split_once('e').unwrap_or((text, "0"));
+    let digits = mantissa.replace('.', "");
+    // The number is 0.digits times 10 to the n.
+    let n = exponent.parse::<i64>().unwrap_or(0) + 1;
+    let k = i64::try_from(digits.len()).unwrap_or(i64::MAX);
+    let zeros = |count: i64| "0".repeat(usize::try_from(count).unwrap_or(0));
+    if k <= n && n <= 21 {
+        return format!("{sign}{digits}{}", zeros(n - k));
+    }
+    if 0 < n && n <= 21 {
+        let (head, tail) = digits.split_at(usize::try_from(n).unwrap_or(0));
+        return format!("{sign}{head}.{tail}");
+    }
+    if -6 < n && n <= 0 {
+        return format!("{sign}0.{}{digits}", zeros(-n));
+    }
+    let (first, rest) = digits.split_at(1);
+    let point = if rest.is_empty() { String::new() } else { format!(".{rest}") };
+    let exponent = n - 1;
+    let exponent_sign = if exponent < 0 { '-' } else { '+' };
+    format!("{sign}{first}{point}e{exponent_sign}{}", exponent.abs())
+}
+`,
+  },
+};

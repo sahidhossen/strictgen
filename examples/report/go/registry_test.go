@@ -19,6 +19,7 @@ func fixtureDecoders() map[string]func([]byte) (any, []string, error) {
 		"order/note":       asAny(decodeType[Note]),
 		"order/payment":    asAny(unionPayment),
 		"order/pickup":     asAny(decodeType[Pickup]),
+		"order/tags":       asAny(decodeType[Tags]),
 	}
 }
 
@@ -49,5 +50,6 @@ func unmarshalers() []json.Unmarshaler {
 		new(PaymentInvoice),
 		new(PaymentInvoiceType),
 		new(Pickup),
+		new(Tags),
 	}
 }

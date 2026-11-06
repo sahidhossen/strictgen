@@ -1,9 +1,12 @@
 import type {
   Decl,
   Field,
+  IntegerType,
   Model,
+  NumberType,
   Rest,
   Source,
+  StringType,
   StructDecl,
   TaggedVariant,
   TypeExpr,
@@ -30,23 +33,26 @@ import {
 export const ANNOTATIONS = new Set(["description", "$comment", "title", "default", "examples"]);
 /** Keywords allowed only at a schema file's root. */
 const ROOT_KEYWORDS = new Set(["$schema", "$id", "$defs"]);
-/** Value rules the types don't carry. A validator checks them, not the generated types. */
-const CONSTRAINTS = new Set([
-  "pattern",
-  "minLength",
-  "maxLength",
+/** The constraint keywords each kind of value takes. src/checks.ts says how decoders check them. */
+const STRING_CONSTRAINTS = ["minLength", "maxLength", "pattern"];
+const NUMBER_CONSTRAINTS = [
   "minimum",
-  "maximum",
   "exclusiveMinimum",
+  "maximum",
   "exclusiveMaximum",
   "multipleOf",
-  "minItems",
-  "maxItems",
-  "uniqueItems",
-  "minProperties",
-  "maxProperties",
-  "contains",
+];
+const ARRAY_CONSTRAINTS = ["minItems", "maxItems", "uniqueItems"];
+const MAP_CONSTRAINTS = ["minProperties", "maxProperties"];
+/** Every constraint keyword. One beside a type it doesn't apply to fails generation. */
+const CONSTRAINTS = new Set([
+  ...STRING_CONSTRAINTS,
+  ...NUMBER_CONSTRAINTS,
+  ...ARRAY_CONSTRAINTS,
+  ...MAP_CONSTRAINTS,
 ]);
+/** The largest integer every language holds exactly, TypeScript's `Number.MAX_SAFE_INTEGER`. */
+const SAFE = Number.MAX_SAFE_INTEGER;
 /** Keywords that shape a type. Each is handled below, or rejected where it doesn't fit. */
 const STRUCTURAL = new Set([
   "type",
@@ -88,11 +94,18 @@ export interface IdRule {
 export interface BuildOptions {
   /** Selects the ID defs. Left out, no def becomes an ID type. */
   readonly ids?: IdRule;
+  /**
+   * Puts the constraints, like `maxLength`, in the model, so decoders check them. Defaults to
+   * true. When false, constraints are still read and a bad one still fails generation, but
+   * the model leaves them out. `pattern` and `format` stay, since they type TypeScript strings.
+   */
+  readonly validation?: boolean;
 }
 
 interface Ctx {
   readonly set: SchemaSet;
   readonly ids: IdRule | undefined;
+  readonly validation: boolean;
   /** Type name per def key string, like `payment#cardPayment` to `CardPayment`. */
   readonly names: ReadonlyMap<string, string>;
   /** Def key strings that some allOf names as a base. */
@@ -124,6 +137,7 @@ export function buildModel(set: SchemaSet, options: BuildOptions = {}): Model {
   const ctx: Ctx = {
     set,
     ids: options.ids,
+    validation: options.validation ?? true,
     names: nameDefs(set),
     bases: allOfBases(set),
     decls: new Map(),
@@ -243,14 +257,15 @@ function declareDef(ctx: Ctx, key: DefKey): void {
   const type = typeOf(ctx, schema, loc, name, source);
   const base = { name, doc: docOf(schema), path: where(loc), schema: ctx.file, source };
   if (isIdDef(key, ctx.ids)) {
-    if (type.kind !== "string")
-      fail(
+    if (type.kind !== "string") {
+      return fail(
         loc,
         "type-mismatch",
         "an id must be a string",
         'give it "type": "string", or rename it so the ids suffix doesn\'t match',
       );
-    add(ctx, { ...base, kind: "id" });
+    }
+    add(ctx, { ...base, kind: "id", type });
     return;
   }
   if (type.kind === "ref" && type.name === name) return;
@@ -345,20 +360,36 @@ function typeOf(
 ): TypeExpr {
   const schema = schemaObject(value, loc);
   checkKeywords(schema, loc, source !== undefined && source.def === undefined);
-  if (schema.$ref !== undefined) return refType(ctx, schema, loc);
+  if (schema.$ref !== undefined) {
+    noConstraints(schema, loc, "beside $ref", "put it on the def the $ref names");
+    return refType(ctx, schema, loc);
+  }
   const keys = structural(schema);
-  if (keys.length === 0) return { kind: "any" };
+  if (keys.length === 0) {
+    noConstraints(schema, loc, "without a type", 'add a "type", like "type": "string"');
+    return { kind: "any" };
+  }
   if (schema.not !== undefined && keys.length === 1) {
-    if (isNullConst(schema.not)) return { kind: "nonNull" };
+    if (isNullConst(schema.not)) {
+      noConstraints(schema, loc, "without a type", 'add a "type", like "type": "string"');
+      return { kind: "nonNull" };
+    }
     return fail(
       at(loc, "not"),
       "unsupported-not",
       'a schema with only not must be { "not": { "const": null } }',
     );
   }
-  if (schema.const !== undefined) return constType(ctx, schema, loc, name, source);
-  if (schema.enum !== undefined) return enumType(ctx, schema, loc, name, source);
+  if (schema.const !== undefined) {
+    noConstraints(schema, loc, "beside const", "remove it, the const is the only value");
+    return constType(ctx, schema, loc, name, source);
+  }
+  if (schema.enum !== undefined) {
+    noConstraints(schema, loc, "beside enum", "remove it, the enum lists every value");
+    return enumType(ctx, schema, loc, name, source);
+  }
   if (schema.oneOf !== undefined && schema.type === undefined) {
+    noConstraints(schema, loc, "beside oneOf", "put it on the branches it applies to");
     only(schema, loc, ["oneOf"]);
     const branches = arrayAt(schema.oneOf, at(loc, "oneOf")).map((b, i) => ({
       schema: b,
@@ -387,11 +418,14 @@ function typeOf(
           'remove "format", or check the shape with "pattern"',
         );
       }
-      return stringType(schema);
+      return stringType(ctx, schema, loc);
     case "integer":
     case "number":
+      only(schema, loc, ["type"]);
+      return numberType(ctx, schema, loc, schema.type);
     case "boolean":
       only(schema, loc, ["type"]);
+      noConstraints(schema, loc, "to a boolean");
       return { kind: schema.type };
     case "array":
       return arrayType(ctx, schema, loc, name, undefined);
@@ -523,17 +557,32 @@ function arrayType(
 ): TypeExpr {
   only(schema, loc, ["type", "items", "allOf"]);
   if (schema.allOf !== undefined) {
-    // Array rules like `contains` inside allOf, as in a workflow's statuses.
     arrayAt(schema.allOf, at(loc, "allOf")).forEach((entry, i) => {
       const entryLoc = at(loc, "allOf", i);
       const fragment = schemaObject(entry, entryLoc);
       checkKeywords(fragment, entryLoc, false);
       only(fragment, entryLoc, ["type"]);
+      noConstraints(fragment, entryLoc, "in an allOf entry", 'move it beside "items"');
       if (fragment.type !== undefined && fragment.type !== "array")
         fail(at(entryLoc, "type"), "type-mismatch", "expected type array");
     });
   }
-  if (lifted !== undefined) return { kind: "array", items: lifted };
+  limitsOnly(schema, loc, ARRAY_CONSTRAINTS, "to an array");
+  if (schema.uniqueItems !== undefined && schema.uniqueItems !== false) {
+    fail(
+      at(loc, "uniqueItems"),
+      "unsupported-constraint",
+      "uniqueItems is not checked yet",
+      "remove it, strictgen doesn't check it in any language yet",
+    );
+  }
+  const minItems = count(schema, loc, "minItems");
+  const maxItems = count(schema, loc, "maxItems");
+  ordered(loc, "minItems", minItems, "maxItems", maxItems, true);
+  const limits = ctx.validation
+    ? { ...defined("minItems", minItems), ...defined("maxItems", maxItems) }
+    : {};
+  if (lifted !== undefined) return { kind: "array", items: lifted, ...limits };
   if (schema.items === undefined)
     return fail(
       loc,
@@ -541,7 +590,11 @@ function arrayType(
       "an array needs items",
       'add "items", like "items": { "type": "string" }',
     );
-  return { kind: "array", items: typeOf(ctx, schema.items, at(loc, "items"), `${name}Item`) };
+  return {
+    kind: "array",
+    items: typeOf(ctx, schema.items, at(loc, "items"), `${name}Item`),
+    ...limits,
+  };
 }
 
 function objectType(
@@ -555,6 +608,13 @@ function objectType(
     schema.properties === undefined && schema.allOf === undefined && schema.oneOf === undefined;
   if (isMap && (schema.propertyNames !== undefined || isObject(schema.additionalProperties))) {
     only(schema, loc, ["type", "propertyNames", "additionalProperties"]);
+    limitsOnly(schema, loc, MAP_CONSTRAINTS, "to a map");
+    const minProperties = count(schema, loc, "minProperties");
+    const maxProperties = count(schema, loc, "maxProperties");
+    ordered(loc, "minProperties", minProperties, "maxProperties", maxProperties, true);
+    const limits = ctx.validation
+      ? { ...defined("minProperties", minProperties), ...defined("maxProperties", maxProperties) }
+      : {};
     const values = schema.additionalProperties;
     if (!isObject(values))
       return fail(
@@ -571,8 +631,14 @@ function objectType(
       kind: "map",
       key,
       value: typeOf(ctx, values, at(loc, "additionalProperties"), `${name}Value`),
+      ...limits,
     };
   }
+  noConstraints(schema, loc, "to an object with named properties", (key) =>
+    MAP_CONSTRAINTS.includes(key)
+      ? 'list the keys it needs in "required"; key counts only apply to maps, objects with "additionalProperties" and no "properties"'
+      : constraintHint(key),
+  );
   return hoist(ctx, name, loc, () => structDecl(ctx, name, schema, loc, source));
 }
 
@@ -589,13 +655,185 @@ function keyType(ctx: Ctx, value: Json, loc: Loc, name: string): TypeExpr {
   if (schema.enum !== undefined) return typeOf(ctx, schema, loc, name);
   only(schema, loc, ["type"]);
   if (schema.type !== "string") fail(loc, "unsupported-map-key", "map keys must be strings");
-  return stringType(schema);
+  return stringType(ctx, schema, loc);
 }
 
-/** A string, keeping its `pattern` when it has one. */
-function stringType(schema: JsonObject): TypeExpr {
-  if (typeof schema.pattern !== "string") return { kind: "string" };
-  return { kind: "string", pattern: schema.pattern };
+/** A string, with its `pattern`, `format` and length limits when it has them. */
+function stringType(ctx: Ctx, schema: JsonObject, loc: Loc): StringType {
+  limitsOnly(schema, loc, STRING_CONSTRAINTS, "to a string");
+  if (schema.pattern !== undefined && typeof schema.pattern !== "string")
+    fail(at(loc, "pattern"), "invalid-constraint", "pattern must be a string");
+  const minLength = count(schema, loc, "minLength");
+  const maxLength = count(schema, loc, "maxLength");
+  ordered(loc, "minLength", minLength, "maxLength", maxLength, true);
+  return {
+    kind: "string",
+    ...(typeof schema.pattern === "string" ? { pattern: schema.pattern } : {}),
+    ...(typeof schema.format === "string" ? { format: schema.format } : {}),
+    ...(ctx.validation
+      ? { ...defined("minLength", minLength), ...defined("maxLength", maxLength) }
+      : {}),
+  };
+}
+
+/** An integer or a number, with its bounds and, for an integer, `multipleOf`. */
+function numberType(
+  ctx: Ctx,
+  schema: JsonObject,
+  loc: Loc,
+  kind: "integer" | "number",
+): IntegerType | NumberType {
+  const integer = kind === "integer";
+  limitsOnly(schema, loc, NUMBER_CONSTRAINTS, integer ? "to an integer" : "to a number");
+  if (!integer && schema.multipleOf !== undefined) {
+    fail(
+      at(loc, "multipleOf"),
+      "unsupported-constraint",
+      "multipleOf on a number can give different results in each language, since floats round",
+      'use "type": "integer" with a multipleOf, or remove it',
+    );
+  }
+  const minimum = bound(schema, loc, "minimum", integer);
+  const exclusiveMinimum = bound(schema, loc, "exclusiveMinimum", integer);
+  const maximum = bound(schema, loc, "maximum", integer);
+  const exclusiveMaximum = bound(schema, loc, "exclusiveMaximum", integer);
+  for (const [low, lowValue] of [
+    ["minimum", minimum],
+    ["exclusiveMinimum", exclusiveMinimum],
+  ] as const) {
+    for (const [high, highValue] of [
+      ["maximum", maximum],
+      ["exclusiveMaximum", exclusiveMaximum],
+    ] as const) {
+      ordered(loc, low, lowValue, high, highValue, low === "minimum" && high === "maximum");
+    }
+  }
+  const bounds = ctx.validation
+    ? {
+        ...defined("minimum", minimum),
+        ...defined("exclusiveMinimum", exclusiveMinimum),
+        ...defined("maximum", maximum),
+        ...defined("exclusiveMaximum", exclusiveMaximum),
+      }
+    : {};
+  if (!integer) return { kind: "number", ...bounds };
+  const multipleOf = schema.multipleOf;
+  if (
+    multipleOf !== undefined &&
+    (typeof multipleOf !== "number" || !Number.isSafeInteger(multipleOf) || multipleOf <= 0)
+  ) {
+    fail(
+      at(loc, "multipleOf"),
+      "invalid-constraint",
+      `multipleOf of an integer must be a whole number from 1 to ${String(SAFE)}`,
+    );
+  }
+  return {
+    kind: "integer",
+    ...bounds,
+    ...(ctx.validation && typeof multipleOf === "number" ? { multipleOf } : {}),
+  };
+}
+
+/** `{ [key]: value }`, or nothing when value is undefined, for optional model fields. */
+function defined<K extends string>(key: K, value: number | undefined): { [P in K]?: number } {
+  return value === undefined ? {} : ({ [key]: value } as { [P in K]?: number });
+}
+
+/** A count limit, like `minLength`: a whole number from 0 up, or undefined when absent. */
+function count(schema: JsonObject, loc: Loc, key: string): number | undefined {
+  const value = schema[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 0) {
+    return fail(
+      at(loc, key),
+      "invalid-constraint",
+      `${key} must be a whole number from 0 to ${String(SAFE)}`,
+    );
+  }
+  return value;
+}
+
+/**
+ * A bound, like `minimum`: a finite number, and for an integer a safe integer, which every
+ * language holds exactly. `-0` reads as `0`.
+ */
+function bound(schema: JsonObject, loc: Loc, key: string, integer: boolean): number | undefined {
+  const value = schema[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== "number") {
+    return fail(
+      at(loc, key),
+      "invalid-constraint",
+      `${key} must be a number`,
+      typeof value === "boolean" ? `give the bound itself, like "${key}": 0` : undefined,
+    );
+  }
+  if (integer && !Number.isSafeInteger(value)) {
+    return fail(
+      at(loc, key),
+      "invalid-constraint",
+      `${key} of an integer must be a whole number from -${String(SAFE)} to ${String(SAFE)}`,
+      "every language holds a bound in that range exactly",
+    );
+  }
+  return value === 0 ? 0 : value;
+}
+
+/** Fails when a lower limit is above an upper one, or equal to it when either is exclusive. */
+function ordered(
+  loc: Loc,
+  low: string,
+  lowValue: number | undefined,
+  high: string,
+  highValue: number | undefined,
+  inclusive: boolean,
+): void {
+  if (lowValue === undefined || highValue === undefined) return;
+  if (inclusive ? lowValue <= highValue : lowValue < highValue) return;
+  fail(
+    at(loc, low),
+    "invalid-constraint",
+    `${low} ${String(lowValue)} and ${high} ${String(highValue)} leave no value that fits`,
+  );
+}
+
+/** The usual place for a constraint keyword, for the hint when it is somewhere else. */
+function constraintHint(key: string): string {
+  if (STRING_CONSTRAINTS.includes(key)) return 'use it beside "type": "string"';
+  if (NUMBER_CONSTRAINTS.includes(key)) return 'use it beside "type": "integer" or "number"';
+  if (ARRAY_CONSTRAINTS.includes(key)) return 'use it beside "type": "array"';
+  return 'use it on a map, an object with "additionalProperties" and no "properties"';
+}
+
+/** Fails on the first constraint keyword of schema that allowed doesn't list. */
+function limitsOnly(schema: JsonObject, loc: Loc, allowed: readonly string[], where: string): void {
+  for (const key of Object.keys(schema)) {
+    if (CONSTRAINTS.has(key) && !allowed.includes(key))
+      fail(at(loc, key), "misplaced-keyword", `${key} doesn't apply ${where}`, constraintHint(key));
+  }
+}
+
+/**
+ * Fails on the first constraint keyword of schema, which doesn't apply `where`, like beside
+ * $ref. The hint says where it goes, or what `hint` gives.
+ */
+function noConstraints(
+  schema: JsonObject,
+  loc: Loc,
+  where: string,
+  hint: string | ((key: string) => string) = constraintHint,
+): void {
+  for (const key of Object.keys(schema)) {
+    if (CONSTRAINTS.has(key)) {
+      fail(
+        at(loc, key),
+        "misplaced-keyword",
+        `${key} doesn't apply ${where}`,
+        typeof hint === "string" ? hint : hint(key),
+      );
+    }
+  }
 }
 
 const STRUCT_KEYWORDS = [
@@ -822,6 +1060,11 @@ function checkFragment(fragment: JsonObject, loc: Loc): void {
     "else",
     "unevaluatedProperties",
   ]);
+  noConstraints(fragment, loc, "to an allOf part of an object", (key) =>
+    MAP_CONSTRAINTS.includes(key)
+      ? 'list the keys the object needs in "required" instead'
+      : "put it on the property it limits",
+  );
   if (fragment.type !== undefined && fragment.type !== "object")
     fail(at(loc, "type"), "type-mismatch", "expected type object");
 }
@@ -837,10 +1080,14 @@ function conditional(schema: JsonObject, loc: Loc): Conditional {
     "unevaluatedProperties",
     "allOf",
   ]);
+  noConstraints(schema, loc, "beside if", "put it on the property it limits");
   const branches: { schema: JsonObject; loc: Loc }[] = [];
   for (const key of ["then", "else"] as const) {
-    if (schema[key] !== undefined)
-      branches.push({ schema: schemaObject(schema[key], at(loc, key)), loc: at(loc, key) });
+    if (schema[key] !== undefined) {
+      const branch = schemaObject(schema[key], at(loc, key));
+      noConstraints(branch, at(loc, key), `in ${key}`, "put it on the property it limits");
+      branches.push({ schema: branch, loc: at(loc, key) });
+    }
   }
   return { branches };
 }
@@ -870,6 +1117,9 @@ function liftItems(
             `conditional property ${key} is not declared on the object`,
             `add ${key} to the object's "properties"`,
           );
+        if (isObject(value)) {
+          noConstraints(value, propLoc, "in a conditional property", "declare it on the object's property");
+        }
         if (
           isObject(value) &&
           value.items !== undefined &&
@@ -910,6 +1160,7 @@ function requiredOnly(value: Json, loc: Loc, props: ReadonlyMap<string, Prop>): 
     const branch = schemaObject(entry, branchLoc);
     checkKeywords(branch, branchLoc, false);
     only(branch, branchLoc, ["properties", "required"]);
+    noConstraints(branch, branchLoc, "in a branch that only requires keys", "put it on the property it limits");
     if (branch.properties !== undefined) {
       for (const [key, v] of Object.entries(
         schemaObject(branch.properties, at(branchLoc, "properties")),

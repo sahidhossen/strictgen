@@ -120,5 +120,6 @@ export function mainOptions(config: Config): MainOptions {
     header: config.header,
     ...(config.idBase === undefined ? {} : { idBase: config.idBase }),
     ...(config.ids === undefined ? {} : { ids: config.ids }),
+    validation: config.validation,
   };
 }

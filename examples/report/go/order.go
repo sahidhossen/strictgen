@@ -38,7 +38,7 @@ func (v Attributes) MarshalJSON() ([]byte, error) {
 //
 // Who delivers the order.
 type Carrier struct {
-	// The carrier's name.
+	// The carrier's name, at most 20 characters.
 	Name string `json:"name"`
 }
 
@@ -51,6 +51,14 @@ func (v *Carrier) decode(n *node) *DecodeError {
 	return decodeObject(n, func(d *objectDecoder) {
 		required(d, "name", &out.Name, decodeString)
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded Carrier.
+func (v Carrier) check() *DecodeError {
+	if err := checkLength(v.Name, -1, 20); err != nil {
+		return err.at("name")
+	}
+	return nil
 }
 
 // Courier is generated from order.json#/$defs/courier.
@@ -73,6 +81,14 @@ func (v *Courier) decode(n *node) *DecodeError {
 		required(d, "carrier", &out.Carrier, decodeType[Carrier])
 		required(d, "trackingCode", &out.TrackingCode, decodeString)
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded Courier.
+func (v Courier) check() *DecodeError {
+	if err := v.Carrier.check(); err != nil {
+		return err.at("carrier")
+	}
+	return nil
 }
 
 // Customer is generated from order.json#/$defs/customer.
@@ -175,13 +191,24 @@ func (v *Delivery) decode(n *node) *DecodeError {
 	)
 }
 
+// check checks the constraints of a decoded Delivery.
+func (v Delivery) check() *DecodeError {
+	if v.Courier != nil {
+		return (*v.Courier).check()
+	}
+	if v.Pickup != nil {
+		return (*v.Pickup).check()
+	}
+	return nil
+}
+
 // Line is generated from order.json#/$defs/line.
 //
 // One item of the order.
 type Line struct {
 	// The item's stock keeping unit.
 	Sku string `json:"sku"`
-	// How many were ordered.
+	// How many were ordered, at least 1.
 	Quantity int64 `json:"quantity"`
 }
 
@@ -195,6 +222,14 @@ func (v *Line) decode(n *node) *DecodeError {
 		required(d, "sku", &out.Sku, decodeString)
 		required(d, "quantity", &out.Quantity, decodeInt)
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded Line.
+func (v Line) check() *DecodeError {
+	if err := checkInt(v.Quantity, limit[int64]{">=", 1, "1"}); err != nil {
+		return err.at("quantity")
+	}
+	return nil
 }
 
 // Note is generated from order.json#/$defs/note.
@@ -251,6 +286,19 @@ func (v *Order) decode(n *node) *DecodeError {
 		optional(d, "notes", &out.Notes, decodeMap(decodeString, decodeType[Note]))
 		optional(d, "attributes", &out.Attributes, decodeType[Attributes])
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded Order.
+func (v Order) check() *DecodeError {
+	if err := checkItems(v.Lines, -1, -1, func(item Line) *DecodeError { return item.check() }); err != nil {
+		return err.at("lines")
+	}
+	if v.Delivery != nil {
+		if err := (*v.Delivery).check(); err != nil {
+			return err.at("delivery")
+		}
+	}
+	return nil
 }
 
 // MarshalJSON fails when a required slice, map, union or pointer is nil, which would encode as null.
@@ -391,4 +439,34 @@ func (v *Pickup) decode(n *node) *DecodeError {
 		required(d, "carrier", &out.Carrier, decodeType[Carrier])
 		required(d, "location", &out.Location, decodeString)
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded Pickup.
+func (v Pickup) check() *DecodeError {
+	if err := v.Carrier.check(); err != nil {
+		return err.at("carrier")
+	}
+	return nil
+}
+
+// Tags is generated from order.json#/$defs/tags.
+//
+// At most three tags of at most 10 characters each.
+type Tags []string
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Tags) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Tags) decode(n *node) *DecodeError {
+	x, err := decodeSlice(decodeString)(n)
+	if err != nil {
+		return err
+	}
+	*v = Tags(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Tags.
+func (v Tags) check() *DecodeError {
+	return checkItems([]string(v), -1, 3, func(item string) *DecodeError { return checkLength(item, -1, 10) })
 }

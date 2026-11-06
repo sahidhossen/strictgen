@@ -57,7 +57,7 @@ impl helpers::Decode for Attributes {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Carrier {
-    /// The carrier's name.
+    /// The carrier's name, at most 20 characters.
     pub name: String,
 }
 
@@ -69,6 +69,11 @@ impl helpers::Decode for Carrier {
         };
         object.finish(&[])?;
         Ok(value)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within("name", helpers::check_length(&self.name, None, Some(20)))?;
+        Ok(())
     }
 }
 
@@ -93,6 +98,11 @@ impl helpers::Decode for Courier {
         };
         object.finish(&[])?;
         Ok(value)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within("carrier", helpers::Decode::check(&self.carrier))?;
+        Ok(())
     }
 }
 
@@ -194,6 +204,13 @@ impl helpers::Decode for Delivery {
         }
         Err(helpers::mismatch("Delivery", node))
     }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        match self {
+            Self::Courier(value) => helpers::Decode::check(value),
+            Self::Pickup(value) => helpers::Decode::check(value),
+        }
+    }
 }
 
 /// One item of the order.
@@ -204,7 +221,7 @@ impl helpers::Decode for Delivery {
 pub struct Line {
     /// The item's stock keeping unit.
     pub sku: String,
-    /// How many were ordered.
+    /// How many were ordered, at least 1.
     pub quantity: i64,
 }
 
@@ -217,6 +234,14 @@ impl helpers::Decode for Line {
         };
         object.finish(&[])?;
         Ok(value)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within(
+            "quantity",
+            helpers::check_integer(self.quantity, &[(">=", 1, "1")]),
+        )?;
+        Ok(())
     }
 }
 
@@ -280,6 +305,17 @@ impl helpers::Decode for Order {
         };
         object.finish(&[])?;
         Ok(value)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within(
+            "lines",
+            helpers::check_items(&self.lines, None, None, helpers::Decode::check),
+        )?;
+        if let Some(value) = &self.delivery {
+            helpers::within("delivery", helpers::Decode::check(value))?;
+        }
+        Ok(())
     }
 }
 
@@ -452,5 +488,29 @@ impl helpers::Decode for Pickup {
         };
         object.finish(&[])?;
         Ok(value)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within("carrier", helpers::Decode::check(&self.carrier))?;
+        Ok(())
+    }
+}
+
+/// At most three tags of at most 10 characters each.
+///
+/// Schema: `order.json#/$defs/tags`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Tags(pub Vec<String>);
+
+impl helpers::Decode for Tags {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <Vec<String> as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_items(&self.0, None, Some(3), |item| {
+            helpers::check_length(item, None, Some(10))
+        })
     }
 }

@@ -12,9 +12,9 @@ export interface Attributes {
 }
 
 /**
- * Decodes parsed JSON as Attributes. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Attributes. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeAttributes(json: unknown, path = ""): Attributes {
   return h.report(json, path, readAttributes);
@@ -80,29 +80,29 @@ export function encodeAttributesToJson(value: Attributes): string {
 
 /** Who delivers the order. */
 export interface Carrier {
-  /** The carrier's name. */
+  /** The carrier's name, at most 20 characters. */
   name: string;
 }
 
 /**
- * Decodes parsed JSON as Carrier. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Carrier, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeCarrier(json: unknown, path = ""): Carrier {
-  return h.report(json, path, readCarrier);
+  return h.report(json, path, (json, path) => h.checked(json, path, readCarrier));
 }
 
 /** Like decodeCarrier, but returns the value with the paths of its unknown keys, in input order. */
 export function reportCarrier(json: unknown, path = ""): h.Reported<Carrier> {
-  return h.reported(json, path, readCarrier);
+  return h.reported(json, path, (json, path) => h.checked(json, path, readCarrier));
 }
 
-/** Decodes Carrier, the unknown keys going to the decode that runs. */
+/** Decodes Carrier, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
 function readCarrier(json: unknown, path: string): Carrier {
   const o = h.object(json, path);
   const value: Carrier = {
-    name: h.required(o, "name", path, h.decodeString),
+    name: h.required(o, "name", path, h.length(h.decodeString, undefined, 20)),
   };
   h.closed(o, path, ["name"]);
   return value;
@@ -129,7 +129,7 @@ export function tryDecodeCarrierFromJson(text: string): h.DecodeResult<Carrier> 
 
 /** Like decodeCarrierFromJson, but returns the value with the paths of its unknown keys, in input order. */
 export function reportCarrierFromJson(text: string): h.Reported<Carrier> {
-  return h.reportFromJson(text, readCarrier);
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readCarrier));
 }
 
 /**
@@ -159,20 +159,20 @@ export interface Courier {
 }
 
 /**
- * Decodes parsed JSON as Courier. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Courier, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeCourier(json: unknown, path = ""): Courier {
-  return h.report(json, path, readCourier);
+  return h.report(json, path, (json, path) => h.checked(json, path, readCourier));
 }
 
 /** Like decodeCourier, but returns the value with the paths of its unknown keys, in input order. */
 export function reportCourier(json: unknown, path = ""): h.Reported<Courier> {
-  return h.reported(json, path, readCourier);
+  return h.reported(json, path, (json, path) => h.checked(json, path, readCourier));
 }
 
-/** Decodes Courier, the unknown keys going to the decode that runs. */
+/** Decodes Courier, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
 function readCourier(json: unknown, path: string): Courier {
   const o = h.object(json, path);
   const value: Courier = {
@@ -204,7 +204,7 @@ export function tryDecodeCourierFromJson(text: string): h.DecodeResult<Courier> 
 
 /** Like decodeCourierFromJson, but returns the value with the paths of its unknown keys, in input order. */
 export function reportCourierFromJson(text: string): h.Reported<Courier> {
-  return h.reportFromJson(text, readCourier);
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readCourier));
 }
 
 /**
@@ -231,9 +231,9 @@ export function encodeCourierToJson(value: Courier): string {
 export type Customer = CustomerEmail | CustomerPhone;
 
 /**
- * Decodes parsed JSON as Customer. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Customer. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeCustomer(json: unknown, path = ""): Customer {
   return h.report(json, path, readCustomer);
@@ -299,9 +299,9 @@ export interface CustomerEmail {
 }
 
 /**
- * Decodes parsed JSON as CustomerEmail. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as CustomerEmail. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeCustomerEmail(json: unknown, path = ""): CustomerEmail {
   return h.report(json, path, readCustomerEmail);
@@ -377,9 +377,9 @@ export interface CustomerPhone {
 }
 
 /**
- * Decodes parsed JSON as CustomerPhone. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as CustomerPhone. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeCustomerPhone(json: unknown, path = ""): CustomerPhone {
   return h.report(json, path, readCustomerPhone);
@@ -449,20 +449,20 @@ export function encodeCustomerPhoneToJson(value: CustomerPhone): string {
 export type Delivery = Courier | Pickup;
 
 /**
- * Decodes parsed JSON as Delivery. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Delivery, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeDelivery(json: unknown, path = ""): Delivery {
-  return h.report(json, path, readDelivery);
+  return h.report(json, path, (json, path) => h.checked(json, path, readDelivery));
 }
 
 /** Like decodeDelivery, but returns the value with the paths of its unknown keys, in input order. */
 export function reportDelivery(json: unknown, path = ""): h.Reported<Delivery> {
-  return h.reported(json, path, readDelivery);
+  return h.reported(json, path, (json, path) => h.checked(json, path, readDelivery));
 }
 
-/** Decodes Delivery, the unknown keys going to the decode that runs. */
+/** Decodes Delivery, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
 function readDelivery(json: unknown, path: string): Delivery {
   return h.untagged<Delivery>(json, path, "Delivery", [decodeCourier, decodePickup]);
 }
@@ -488,7 +488,7 @@ export function tryDecodeDeliveryFromJson(text: string): h.DecodeResult<Delivery
 
 /** Like decodeDeliveryFromJson, but returns the value with the paths of its unknown keys, in input order. */
 export function reportDeliveryFromJson(text: string): h.Reported<Delivery> {
-  return h.reportFromJson(text, readDelivery);
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readDelivery));
 }
 
 /**
@@ -511,30 +511,30 @@ export function encodeDeliveryToJson(value: Delivery): string {
 export interface Line {
   /** The item's stock keeping unit. */
   sku: string;
-  /** How many were ordered. */
+  /** How many were ordered, at least 1. */
   quantity: number;
 }
 
 /**
- * Decodes parsed JSON as Line. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Line, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeLine(json: unknown, path = ""): Line {
-  return h.report(json, path, readLine);
+  return h.report(json, path, (json, path) => h.checked(json, path, readLine));
 }
 
 /** Like decodeLine, but returns the value with the paths of its unknown keys, in input order. */
 export function reportLine(json: unknown, path = ""): h.Reported<Line> {
-  return h.reported(json, path, readLine);
+  return h.reported(json, path, (json, path) => h.checked(json, path, readLine));
 }
 
-/** Decodes Line, the unknown keys going to the decode that runs. */
+/** Decodes Line, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
 function readLine(json: unknown, path: string): Line {
   const o = h.object(json, path);
   const value: Line = {
     sku: h.required(o, "sku", path, h.decodeString),
-    quantity: h.required(o, "quantity", path, h.decodeInteger),
+    quantity: h.required(o, "quantity", path, h.limits(h.decodeInteger, [[">=", 1, "1"]])),
   };
   h.closed(o, path, ["sku", "quantity"]);
   return value;
@@ -561,7 +561,7 @@ export function tryDecodeLineFromJson(text: string): h.DecodeResult<Line> {
 
 /** Like decodeLineFromJson, but returns the value with the paths of its unknown keys, in input order. */
 export function reportLineFromJson(text: string): h.Reported<Line> {
-  return h.reportFromJson(text, readLine);
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readLine));
 }
 
 /**
@@ -591,9 +591,9 @@ export interface Note {
 }
 
 /**
- * Decodes parsed JSON as Note. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Note. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeNote(json: unknown, path = ""): Note {
   return h.report(json, path, readNote);
@@ -672,20 +672,20 @@ export interface Order {
 }
 
 /**
- * Decodes parsed JSON as Order. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Order, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodeOrder(json: unknown, path = ""): Order {
-  return h.report(json, path, readOrder);
+  return h.report(json, path, (json, path) => h.checked(json, path, readOrder));
 }
 
 /** Like decodeOrder, but returns the value with the paths of its unknown keys, in input order. */
 export function reportOrder(json: unknown, path = ""): h.Reported<Order> {
-  return h.reported(json, path, readOrder);
+  return h.reported(json, path, (json, path) => h.checked(json, path, readOrder));
 }
 
-/** Decodes Order, the unknown keys going to the decode that runs. */
+/** Decodes Order, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
 function readOrder(json: unknown, path: string): Order {
   const o = h.object(json, path);
   const value: Order = {
@@ -722,7 +722,7 @@ export function tryDecodeOrderFromJson(text: string): h.DecodeResult<Order> {
 
 /** Like decodeOrderFromJson, but returns the value with the paths of its unknown keys, in input order. */
 export function reportOrderFromJson(text: string): h.Reported<Order> {
-  return h.reportFromJson(text, readOrder);
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readOrder));
 }
 
 /**
@@ -754,9 +754,9 @@ export function encodeOrderToJson(value: Order): string {
 export type Payment = PaymentCard | PaymentInvoice;
 
 /**
- * Decodes parsed JSON as Payment. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Payment. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodePayment(json: unknown, path = ""): Payment {
   return h.report(json, path, readPayment);
@@ -825,9 +825,9 @@ export interface PaymentCard {
 }
 
 /**
- * Decodes parsed JSON as PaymentCard. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as PaymentCard. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodePaymentCard(json: unknown, path = ""): PaymentCard {
   return h.report(json, path, readPaymentCard);
@@ -896,9 +896,9 @@ export function encodePaymentCardToJson(value: PaymentCard): string {
 export type PaymentCardType = "card";
 
 /**
- * Decodes parsed JSON as PaymentCardType. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as PaymentCardType. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodePaymentCardType(json: unknown, path = ""): PaymentCardType {
   return h.report(json, path, readPaymentCardType);
@@ -961,9 +961,9 @@ export interface PaymentInvoice {
 }
 
 /**
- * Decodes parsed JSON as PaymentInvoice. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as PaymentInvoice. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodePaymentInvoice(json: unknown, path = ""): PaymentInvoice {
   return h.report(json, path, readPaymentInvoice);
@@ -1032,9 +1032,9 @@ export function encodePaymentInvoiceToJson(value: PaymentInvoice): string {
 export type PaymentInvoiceType = "invoice";
 
 /**
- * Decodes parsed JSON as PaymentInvoiceType. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as PaymentInvoiceType. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodePaymentInvoiceType(json: unknown, path = ""): PaymentInvoiceType {
   return h.report(json, path, readPaymentInvoiceType);
@@ -1098,20 +1098,20 @@ export interface Pickup {
 }
 
 /**
- * Decodes parsed JSON as Pickup. Unknown keys are accepted and their paths go to the hook
- * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON
- * Pointer of the first problem, under `path` when given.
+ * Decodes parsed JSON as Pickup, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
  */
 export function decodePickup(json: unknown, path = ""): Pickup {
-  return h.report(json, path, readPickup);
+  return h.report(json, path, (json, path) => h.checked(json, path, readPickup));
 }
 
 /** Like decodePickup, but returns the value with the paths of its unknown keys, in input order. */
 export function reportPickup(json: unknown, path = ""): h.Reported<Pickup> {
-  return h.reported(json, path, readPickup);
+  return h.reported(json, path, (json, path) => h.checked(json, path, readPickup));
 }
 
-/** Decodes Pickup, the unknown keys going to the decode that runs. */
+/** Decodes Pickup, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
 function readPickup(json: unknown, path: string): Pickup {
   const o = h.object(json, path);
   const value: Pickup = {
@@ -1143,7 +1143,7 @@ export function tryDecodePickupFromJson(text: string): h.DecodeResult<Pickup> {
 
 /** Like decodePickupFromJson, but returns the value with the paths of its unknown keys, in input order. */
 export function reportPickupFromJson(text: string): h.Reported<Pickup> {
-  return h.reportFromJson(text, readPickup);
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readPickup));
 }
 
 /**
@@ -1164,4 +1164,66 @@ export function encodePickup(value: Pickup): unknown {
  */
 export function encodePickupToJson(value: Pickup): string {
   return h.toJson(encodePickup(value));
+}
+
+/** At most three tags of at most 10 characters each. */
+export type Tags = string[];
+
+/**
+ * Decodes parsed JSON as Tags, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
+ */
+export function decodeTags(json: unknown, path = ""): Tags {
+  return h.report(json, path, (json, path) => h.checked(json, path, readTags));
+}
+
+/** Like decodeTags, but returns the value with the paths of its unknown keys, in input order. */
+export function reportTags(json: unknown, path = ""): h.Reported<Tags> {
+  return h.reported(json, path, (json, path) => h.checked(json, path, readTags));
+}
+
+/** Decodes Tags, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
+function readTags(json: unknown, path: string): Tags {
+  return h.array(h.length(h.decodeString, undefined, 10), undefined, 3)(json, path);
+}
+
+/** Like decodeTags, but returns the DecodeError instead of throwing it. */
+export function tryDecodeTags(json: unknown): h.DecodeResult<Tags> {
+  return h.attempt(decodeTags, json);
+}
+
+/**
+ * Reads JSON text as Tags, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeTagsFromJson(text: string): Tags {
+  return h.fromJson(text, decodeTags);
+}
+
+/** Like decodeTagsFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeTagsFromJson(text: string): h.DecodeResult<Tags> {
+  return h.attemptJson(decodeTags, text);
+}
+
+/** Like decodeTagsFromJson, but returns the value with the paths of its unknown keys, in input order. */
+export function reportTagsFromJson(text: string): h.Reported<Tags> {
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readTags));
+}
+
+/**
+ * Encodes Tags as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeTags(value: Tags): unknown {
+  return h.encodeArray(h.encodeString)(value);
+}
+
+/**
+ * Encodes Tags as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeTags.
+ */
+export function encodeTagsToJson(value: Tags): string {
+  return h.toJson(encodeTags(value));
 }

@@ -17,6 +17,9 @@ export const RULES = {
   "misplaced-keyword": "the keyword is supported, but not in this position",
   "unsupported-type": "type must be one of object, array, string, integer, number or boolean",
   "unsupported-format": "only the date-time and date formats are supported",
+  "unsupported-constraint":
+    "the constraint can't be checked the same way in every language, or isn't checked yet",
+  "invalid-constraint": "a constraint's value is out of range, or its limits can't both hold",
   "unsupported-not": "not may only exclude null, or a pattern or values beside a string type",
   "unsupported-const": "a const must be a string, an integer or a boolean, matching its type",
   "unsupported-enum": "enum values must be unique strings",

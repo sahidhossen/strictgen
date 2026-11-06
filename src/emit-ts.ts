@@ -1,3 +1,4 @@
+import { Checks, limitsOf } from "./checks.js";
 import type { EmittedFile } from "./common.js";
 import { bySchema, commentHeader, compare, DEFAULT_HEADER, declTypes, imports } from "./common.js";
 import type { ReadMode } from "./config.js";
@@ -47,6 +48,8 @@ interface Ctx {
   readonly decls: ReadonlyMap<string, Decl>;
   /** True in report mode. */
   readonly report: boolean;
+  /** Which values have constraints to check. */
+  readonly checks: Checks;
   /** The generated functions of declarations a file calls, like `decodeUserId`. */
   readonly calls: Set<string>;
 }
@@ -64,6 +67,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   const report = options.read === "report";
   if (report && !decoders) throw new Error("report mode needs the decoders");
   const decls = new Map(model.decls.map((d) => [d.name, d]));
+  const checks = new Checks(model.decls);
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name) || TS_RESERVED.has(decl.name)) {
       throw new CodegenError(
@@ -82,7 +86,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
         `a schema named ${schema} clashes with ${schema}.ts`,
         "rename the schema file",
       );
-    const ctx: Ctx = { decls, report, calls: new Set() };
+    const ctx: Ctx = { decls, report, checks, calls: new Set() };
     const body = own.map((decl) => declaration(ctx, decl, decoders)).join("\n");
     const what = decoders ? "Types and decoders" : "Types";
     const head = `${header}\n\n/** ${what} for \`${schema}.json\`. */\n\n`;
@@ -184,27 +188,43 @@ function castFunction(name: string): string {
   );
 }
 
-/** `decodeX`, `tryDecodeX` and `encodeX` for one declaration, and in report mode `reportX`. */
+/**
+ * `decodeX`, `tryDecodeX` and `encodeX` for one declaration, and in report mode `reportX`. A type
+ * with constraints decodes through `h.checked`, which checks them once the structure of the whole
+ * value fits, so a structure error anywhere comes first, as in Rust and Go.
+ */
 function functions(ctx: Ctx, decl: Decl): string {
   const name = decl.name;
+  const checked = ctx.checks.decl(name);
+  // What a whole decode runs: readX, through h.checked when the type has constraints.
+  const whole = checked ? `(json, path) => h.checked(json, path, read${name})` : `read${name}`;
+  const constraints = checked ? ", then checks its constraints" : "";
   const decode = ctx.report
-    ? `/**\n * Decodes parsed JSON as ${name}. Unknown keys are accepted and their paths go to the hook\n` +
-      ` * set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at the JSON\n` +
-      ` * Pointer of the first problem, under \`path\` when given.\n */\n` +
+    ? `/**\n * Decodes parsed JSON as ${name}${constraints}. Unknown keys are accepted and their paths go\n` +
+      ` * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at\n` +
+      ` * the JSON Pointer of the first problem, under \`path\` when given.\n */\n` +
       `export function decode${name}(json: unknown, path = ""): ${name} {\n` +
-      `  return h.report(json, path, read${name});\n}\n\n` +
+      `  return h.report(json, path, ${whole});\n}\n\n` +
       `/** Like decode${name}, but returns the value with the paths of its unknown keys, in input order. */\n` +
       `export function report${name}(json: unknown, path = ""): h.Reported<${name}> {\n` +
-      `  return h.reported(json, path, read${name});\n}\n\n` +
-      `/** Decodes ${name}, the unknown keys going to the decode that runs. */\n` +
+      `  return h.reported(json, path, ${whole});\n}\n\n` +
+      `/** Decodes ${name}, the unknown keys going to the decode that runs${checked ? ", constraints checked while h.checked asks for it" : ""}. */\n` +
       `function read${name}(json: unknown, path: string): ${name} {\n${decodeBody(ctx, decl)}}\n\n`
-    : `/**\n * Decodes parsed JSON as ${name}, strictly. Throws a DecodeError at the JSON Pointer of\n` +
-      ` * the first problem, under \`path\` when given.\n */\n` +
-      `export function decode${name}(json: unknown, path = ""): ${name} {\n${decodeBody(ctx, decl)}}\n\n`;
+    : checked
+      ? `/** Decodes the structure of ${name}, checking constraints only while h.checked asks for it. */\n` +
+        `function read${name}(json: unknown, path: string): ${name} {\n${decodeBody(ctx, decl)}}\n\n` +
+        `/**\n * Decodes parsed JSON as ${name}, strictly, then checks its constraints. Throws a DecodeError\n` +
+        ` * at the JSON Pointer of the first problem, under \`path\` when given: the first structure\n` +
+        ` * error, else the first constraint the value breaks.\n */\n` +
+        `export function decode${name}(json: unknown, path = ""): ${name} {\n` +
+        `  return h.checked(json, path, read${name});\n}\n\n`
+      : `/**\n * Decodes parsed JSON as ${name}, strictly. Throws a DecodeError at the JSON Pointer of\n` +
+        ` * the first problem, under \`path\` when given.\n */\n` +
+        `export function decode${name}(json: unknown, path = ""): ${name} {\n${decodeBody(ctx, decl)}}\n\n`;
   const fromJsonReport = ctx.report
     ? `/** Like decode${name}FromJson, but returns the value with the paths of its unknown keys, in input order. */\n` +
       `export function report${name}FromJson(text: string): h.Reported<${name}> {\n` +
-      `  return h.reportFromJson(text, read${name});\n}\n\n`
+      `  return h.reportFromJson(text, ${whole});\n}\n\n`
     : "";
   return (
     decode +
@@ -248,8 +268,16 @@ function decodeBody(ctx: Ctx, decl: Decl): string {
       return decodeStruct(ctx, decl);
     case "enum":
       return `  return h.enumValue(json, path, [${decl.values.map((v) => JSON.stringify(v)).join(", ")}] as const);\n`;
-    case "id":
-      return `  return h.decodeString(json, path) as ${decl.name};\n`;
+    case "id": {
+      // An id is a branded string, so its pattern types nothing.
+      const { minLength, maxLength } = decl.type;
+      const string = decoder(ctx, {
+        kind: "string",
+        ...(minLength === undefined ? {} : { minLength }),
+        ...(maxLength === undefined ? {} : { maxLength }),
+      });
+      return `  return ${string}(json, path) as ${decl.name};\n`;
+    }
     case "alias":
       return `  return ${decoder(ctx, decl.type)}(json, path);\n`;
     case "tagged": {
@@ -350,7 +378,12 @@ function encodeStruct(ctx: Ctx, decl: StructDecl): string {
   return `  const out = h.encodeObject(value);\n${lines.join("")}  return out;\n`;
 }
 
-/** An expression for the decoder of a type, a `Decoder<T>`. */
+/** `undefined` or the number, for an optional limit argument. */
+function limit(value: number | undefined): string {
+  return value === undefined ? "undefined" : String(value);
+}
+
+/** An expression for the decoder of a type, a `Decoder<T>`, which checks its constraints. */
 function decoder(ctx: Ctx, type: TypeExpr): string {
   switch (type.kind) {
     case "ref":
@@ -358,12 +391,18 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
       return `decode${type.name}`;
     case "string": {
       const text = stringType(type.pattern);
-      return text === "string" ? "h.decodeString" : `h.family<${text}>()`;
+      const base = text === "string" ? "h.decodeString" : `h.family<${text}>()`;
+      if (type.minLength === undefined && type.maxLength === undefined) return base;
+      return `h.length(${base}, ${limit(type.minLength)}, ${limit(type.maxLength)})`;
     }
     case "integer":
-      return "h.decodeInteger";
-    case "number":
-      return "h.decodeNumber";
+    case "number": {
+      const base = type.kind === "integer" ? "h.decodeInteger" : "h.decodeNumber";
+      const limits = limitsOf(type).map(
+        (l) => `[${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)}]`,
+      );
+      return limits.length === 0 ? base : `h.limits(${base}, [${limits.join(", ")}])`;
+    }
     case "boolean":
       return "h.decodeBoolean";
     case "literal":
@@ -372,10 +411,18 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
       return "h.decodeAny";
     case "nonNull":
       return "h.decodeNonNull";
-    case "array":
-      return `h.array(${decoder(ctx, type.items)})`;
-    case "map":
-      return `h.map(${decoder(ctx, type.key)}, ${decoder(ctx, type.value)})`;
+    case "array": {
+      const items = decoder(ctx, type.items);
+      if (type.minItems === undefined && type.maxItems === undefined) return `h.array(${items})`;
+      return `h.array(${items}, ${limit(type.minItems)}, ${limit(type.maxItems)})`;
+    }
+    case "map": {
+      const key = decoder(ctx, type.key);
+      const value = decoder(ctx, type.value);
+      if (type.minProperties === undefined && type.maxProperties === undefined)
+        return `h.map(${key}, ${value})`;
+      return `h.map(${key}, ${value}, ${limit(type.minProperties)}, ${limit(type.maxProperties)})`;
+    }
     default:
       return unreachable(type);
   }

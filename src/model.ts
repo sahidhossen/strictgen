@@ -4,16 +4,19 @@
  * language gets a name for them. Emitters never look at the schemas.
  */
 
-/** A type used by a field, an alias, a map or an array. Compound types are always a `ref`. */
+/**
+ * A type used by a field, an alias, a map or an array. Compound types are always a `ref`.
+ *
+ * Strings, integers, numbers, arrays and maps carry the constraints their schema gives them,
+ * which decoders check once the structure of the whole value has decoded, in the order
+ * src/checks.ts defines. A constraint is absent when the schema doesn't set it, or when the
+ * config turns validation off.
+ */
 export type TypeExpr =
   | { readonly kind: "ref"; readonly name: string }
-  /**
-   * A string. `pattern` is the schema's `pattern` when it has one, which no decoder checks yet.
-   * TypeScript types a fixed prefix or suffix family by it, like `order.${string}`.
-   */
-  | { readonly kind: "string"; readonly pattern?: string }
-  | { readonly kind: "integer" }
-  | { readonly kind: "number" }
+  | StringType
+  | IntegerType
+  | NumberType
   | { readonly kind: "boolean" }
   /** An integer or boolean `const`, like `schemaVersion`. */
   | { readonly kind: "literal"; readonly value: number | boolean }
@@ -21,8 +24,59 @@ export type TypeExpr =
   | { readonly kind: "any" }
   /** Any JSON value except `null` at the top (`jsonValue`, `nonNullValue`). */
   | { readonly kind: "nonNull" }
-  | { readonly kind: "array"; readonly items: TypeExpr }
-  | { readonly kind: "map"; readonly key: TypeExpr; readonly value: TypeExpr };
+  | ArrayType
+  | MapType;
+
+/** A string. Its length limits count Unicode code points. */
+export interface StringType {
+  readonly kind: "string";
+  /**
+   * The schema's `pattern`, which no decoder checks yet. TypeScript types a fixed prefix or
+   * suffix family by it, like `order.${string}`. Kept when validation is off.
+   */
+  readonly pattern?: string;
+  /** The schema's `format`, `date-time` or `date`, which no decoder checks yet. */
+  readonly format?: string;
+  readonly minLength?: number;
+  readonly maxLength?: number;
+}
+
+/** The bounds of an integer or a number, each inclusive or exclusive. */
+export interface Bounds {
+  readonly minimum?: number;
+  readonly exclusiveMinimum?: number;
+  readonly maximum?: number;
+  readonly exclusiveMaximum?: number;
+}
+
+/** An integer. Its bounds and `multipleOf` are safe integers, which every language holds exactly. */
+export interface IntegerType extends Bounds {
+  readonly kind: "integer";
+  /** A positive safe integer. */
+  readonly multipleOf?: number;
+}
+
+/** A number. A value and a bound compare as the nearest 64-bit floats in every language. */
+export interface NumberType extends Bounds {
+  readonly kind: "number";
+}
+
+/** An array, with limits on its number of items. */
+export interface ArrayType {
+  readonly kind: "array";
+  readonly items: TypeExpr;
+  readonly minItems?: number;
+  readonly maxItems?: number;
+}
+
+/** A JSON object used as a map, with limits on its number of keys. */
+export interface MapType {
+  readonly kind: "map";
+  readonly key: TypeExpr;
+  readonly value: TypeExpr;
+  readonly minProperties?: number;
+  readonly maxProperties?: number;
+}
 
 /** One property of a struct. */
 export interface Field {
@@ -119,6 +173,8 @@ export interface AliasDecl extends DeclBase {
  */
 export interface IdDecl extends DeclBase {
   readonly kind: "id";
+  /** The string, with the constraints of the id's schema. */
+  readonly type: StringType;
 }
 
 export type Decl = StructDecl | EnumDecl | TaggedDecl | UntaggedDecl | AliasDecl | IdDecl;

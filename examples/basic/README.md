@@ -7,7 +7,7 @@ Five schemas and what strictgen generates from them.
 | `strictgen.json` | The config: where the schemas are and which targets to write |
 | `schemas/` | A webhook event envelope (`event.json`), a user with a contact that is an email or a phone, exactly one (`user.json`), a payment method picked by its `type` key (`payment-method.json`), a webhook subscription whose keys are keywords in Rust, Go or TypeScript (`subscription.json`) and shared IDs (`common.json`) |
 | `rust/src/generated/` | The Rust types, a module per schema. `rust/` is a crate that depends on `serde` and `serde_json` only. `tests/fixtures.rs` and `tests/errors.rs` are written by hand |
-| `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go`, `codes_test.go` and `encode_test.go` are written by hand |
+| `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go`, `aliases_test.go`, `codes_test.go` and `encode_test.go` are written by hand |
 | `ts/generated/` | The TypeScript types and their decoders, with `helpers.ts`, which they share |
 | `fixtures/` | JSON documents each language must accept (`valid/`) or reject (`invalid/`) |
 

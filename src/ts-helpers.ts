@@ -1,4 +1,4 @@
-import { codeName, ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
+import { codeName, COUNT_UNITS, ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
 
 /** The ErrorCode constants, one per code, with their doc comments. */
 const CODE_CONSTANTS = ERROR_CODES.map(
@@ -132,6 +132,14 @@ const UNTAGGED_MARK = String.raw`
 /** In report mode, untagged drops the unknown keys of a variant that failed. */
 const UNTAGGED_ROLLBACK = String.raw`
       if (unknown !== undefined) unknown.length = mark;`;
+
+/** In report mode, fits notes how many unknown keys there were before its trial. */
+const FITS_MARK = String.raw`
+  const mark = unknown?.length ?? 0;`;
+
+/** In report mode, fits drops the unknown keys of its trial, which the real decode notes again. */
+const FITS_ROLLBACK = String.raw`
+    if (unknown !== undefined) unknown.length = mark;`;
 
 const CLOSED_STRICT = String.raw`/** Fails on the first key, in input order, that is not one of keys, at that key's path. */
 export function closed(o: Readonly<Record<string, unknown>>, path: string, keys: readonly string[]): void {
@@ -876,12 +884,106 @@ export function decodeNonNull(json: unknown, path: string): NonNullable<unknown>
   return decodeAny(json, path) as NonNullable<unknown>;
 }
 
-/** A decoder of a JSON array whose items decode with item. */
-export function array<T>(item: Decoder<T>): Decoder<T[]> {
+/**
+ * What decoding does with constraints. 0 outside the decoding of a type with constraints;
+ * 1 while checked decodes one, checking constraints as it goes; 2 while checked decodes its
+ * structure alone, to find a structure error that comes first.
+ */
+let phase: 0 | 1 | 2 = 0;
+
+/**
+ * Decodes with read, the structure decoder of a type with constraints, so the error is the one
+ * Rust and Go report: the first structure error in the whole value, else the first constraint
+ * the value breaks. Constraints are checked as read goes, a value's own before the values inside
+ * it, fields in schema order, items by index and map keys in code point order. When that fails,
+ * read runs again on the structure alone, and a structure error it finds comes first. A nested
+ * call, for a type inside the value, just reads.
+ */
+export function checked<T>(json: unknown, path: string, read: Decoder<T>): T {
+  if (phase !== 0) return read(json, path);
+  phase = 1;
+  try {
+    return read(json, path);
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    phase = 2;
+    read(json, path);
+    throw error;
+  } finally {
+    phase = 0;
+  }
+}
+
+/** True while constraints are checked, so not while checked reads the structure alone. */
+function checking(): boolean {
+  return phase !== 2;
+}
+
+/** Shows n things, like "1 character" or "3 items". */
+function count(n: number, one: string, many: string): string {
+  return n === 1 ? "1 " + one : String(n) + " " + many;
+}
+
+/** Checks a count of things against a minimum and a maximum, each undefined when absent. */
+function checkCount(path: string, n: number, min: number | undefined, max: number | undefined, one: string, many: string): void {
+  if (min !== undefined && n < min) {
+    throw new DecodeError(path, ErrorCode.TooShort, "at least " + count(min, one, many), count(n, one, many));
+  }
+  if (max !== undefined && n > max) {
+    throw new DecodeError(path, ErrorCode.TooLong, "at most " + count(max, one, many), count(n, one, many));
+  }
+}
+
+/** The length of a string in code points, as Rust and Go count it, not in UTF-16 units. */
+function codePoints(text: string): number {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const unit = text.charCodeAt(i);
+    if (isHigh(unit) && i + 1 < text.length && isLow(text.charCodeAt(i + 1))) i++;
+    n++;
+  }
+  return n;
+}
+
+/** A decoder of a string, with decode, whose length in code points is within min and max. */
+export function length<T extends string>(decode: Decoder<T>, min: number | undefined, max: number | undefined): Decoder<T> {
+  return (json, path) => {
+    const value = decode(json, path);
+    if (checking()) checkCount(path, codePoints(value), min, max, "${COUNT_UNITS.length[0]}", "${COUNT_UNITS.length[1]}");
+    return value;
+  };
+}
+
+/** One bound: >=, >, <= or <, or % for a multiple of an integer, the bound and its text. */
+export type Limit = readonly [">=" | ">" | "<=" | "<" | "%", number, string];
+
+/** A decoder of an integer or a number, with decode, within each of limits, checked in order. */
+export function limits(decode: Decoder<number>, list: readonly Limit[]): Decoder<number> {
+  return (json, path) => {
+    const value = decode(json, path);
+    if (!checking()) return value;
+    for (const [op, bound, text] of list) {
+      if ((op === ">=" && value < bound) || (op === ">" && value <= bound)) {
+        throw new DecodeError(path, ErrorCode.TooSmall, op + " " + text, numberText(value));
+      }
+      if ((op === "<=" && value > bound) || (op === "<" && value >= bound)) {
+        throw new DecodeError(path, ErrorCode.TooLarge, op + " " + text, numberText(value));
+      }
+      if (op === "%" && value % bound !== 0) {
+        throw new DecodeError(path, ErrorCode.NotMultipleOf, "a multiple of " + text, numberText(value));
+      }
+    }
+    return value;
+  };
+}
+
+/** A decoder of a JSON array whose items decode with item, with between min and max of them. */
+export function array<T>(item: Decoder<T>, min?: number, max?: number): Decoder<T[]> {
   return (json, path) => {
     if (!guard(path, () => Array.isArray(json))) throw mismatch(path, "an array", json);
     const items = json as readonly unknown[];
     const length = guard(path, () => items.length);
+    if (checking()) checkCount(path, length, min, max, "${COUNT_UNITS.items[0]}", "${COUNT_UNITS.items[1]}");
     const out: T[] = [];
     for (let i = 0; i < length; i++) {
       const itemPath = at(path, i);
@@ -938,8 +1040,10 @@ export function optional<K extends string, T>(
 ${report ? CLOSED_REPORT : CLOSED_STRICT}
 
 /**
- * Decodes the members of o not named in skip, in input order, keys with key and values with
- * value. A key that fails fails at its own path, like the value under it.
+ * Decodes the members of o not named in skip, keys with key and values with value. A key that
+ * fails fails at its own path, like the value under it. They decode in input order, or, while
+ * checked checks constraints, in code point order, the order Rust and Go check them in. The map
+ * keeps the input order either way.
  */
 function members<K extends string, V>(
   o: Readonly<Record<string, unknown>>,
@@ -948,12 +1052,18 @@ function members<K extends string, V>(
   key: Decoder<K>,
   value: Decoder<V>,
 ): Record<K, V> {
-  const out = {} as Record<K, V>;
-  for (const name of guard(path, () => keysOf(o))) {
-    if (skip.includes(name)) continue;
+  const names = guard(path, () => keysOf(o)).filter((name) => !skip.includes(name));
+  const order = phase === 1 ? [...names].sort(byCodePoint) : names;
+  const decoded = new Map<string, readonly [K, V]>();
+  for (const name of order) {
     const memberPath = at(path, name);
-    const decoded = key(name, memberPath);
-    put(out, decoded, value(guard(memberPath, () => o[name]), memberPath));
+    const k = key(name, memberPath);
+    decoded.set(name, [k, value(guard(memberPath, () => o[name]), memberPath)]);
+  }
+  const out = {} as Record<K, V>;
+  for (const name of names) {
+    const entry = decoded.get(name);
+    if (entry !== undefined) put(out, entry[0], entry[1]);
   }
   return out;
 }
@@ -969,9 +1079,18 @@ export function rest<K extends string, V>(
   return members(o, path, named, key, value);
 }
 
-/** A decoder of a JSON object used as a map, keys decoding with key and values with value. */
-export function map<K extends string, V>(key: Decoder<K>, value: Decoder<V>): Decoder<Record<K, V>> {
-  return (json, path) => members(object(json, path), path, [], key, value);
+/**
+ * A decoder of a JSON object used as a map, keys decoding with key and values with value, with
+ * between min and max keys.
+ */
+export function map<K extends string, V>(key: Decoder<K>, value: Decoder<V>, min?: number, max?: number): Decoder<Record<K, V>> {
+  return (json, path) => {
+    const o = object(json, path);
+    if (checking() && (min !== undefined || max !== undefined)) {
+      checkCount(path, guard(path, () => keysOf(o)).length, min, max, "${COUNT_UNITS.keys[0]}", "${COUNT_UNITS.keys[1]}");
+    }
+    return members(o, path, [], key, value);
+  };
 }
 
 /**
@@ -1001,10 +1120,16 @@ export function tagged<T>(
 /**
  * Decodes an untagged union: tries the variants in order, the same order as Rust and Go, and
  * returns the first that decodes. When none does, it fails at the union's path with
- * wrong_type, or null_not_allowed for null, expected naming the union.
+ * wrong_type, or null_not_allowed for null, expected naming the union. Constraints never pick
+ * the variant: while checked checks them, the first variant whose structure fits is decoded
+ * again with its constraints, and an error there is the union's.
  */
 export function untagged<T>(json: unknown, path: string, name: string, variants: readonly Decoder<T>[]): T {
-  for (const variant of variants) {${report ? UNTAGGED_MARK : ""}
+  for (const variant of variants) {
+    if (phase === 1) {
+      if (fits(variant, json, path)) return variant(json, path);
+      continue;
+    }${report ? UNTAGGED_MARK : ""}
     try {
       return variant(json, path);
     } catch (error) {
@@ -1012,6 +1137,21 @@ export function untagged<T>(json: unknown, path: string, name: string, variants:
     }
   }
   throw mismatch(path, name, json);
+}
+
+/** True when the structure of json fits decode, constraints left out. */
+function fits<T>(decode: Decoder<T>, json: unknown, path: string): boolean {
+  const saved = phase;${report ? FITS_MARK : ""}
+  phase = 2;
+  try {
+    decode(json, path);
+    return true;
+  } catch (error) {
+    if (!(error instanceof DecodeError)) throw error;
+    return false;
+  } finally {
+    phase = saved;${report ? FITS_ROLLBACK : ""}
+  }
 }
 
 /** Runs encode, turning anything it throws but an EncodeError into one, at path "". */
