@@ -6,6 +6,55 @@ package types
 
 import "encoding/json"
 
+// Billing is generated from order.json#/$defs/billing.
+//
+// How a repeat order pays: the same choice as a payment.
+type Billing = Payment
+
+// DecodeBillingFromLlm reads the JSON text a model gave for a provider-ready schema of Billing.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeBillingFromLlm(data []byte) (Billing, error) {
+	return decodeLlm(CleanLLMJSON(data), true, unionPayment)
+}
+
+// Boxes is generated from order.json#/$defs/boxes.
+//
+// How many boxes to pack.
+type Boxes int64
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Boxes) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Boxes) decode(n *node) *DecodeError {
+	x, err := decodeInt(n)
+	if err != nil {
+		return err
+	}
+	*v = Boxes(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Boxes.
+func (v Boxes) check() *DecodeError {
+	return checkInt(int64(v), limit[int64]{">=", 1, "1"}, limit[int64]{"<=", 9, "9"})
+}
+
+// DecodeBoxesFromLlm reads the JSON text a model gave for a provider-ready schema of Boxes.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeBoxesFromLlm(data []byte) (Boxes, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Boxes])
+}
+
 // Card is generated from order.json#/$defs/card.
 //
 // A card payment.
@@ -33,6 +82,16 @@ func (v Card) check() *DecodeError {
 		return err.at("last4")
 	}
 	return nil
+}
+
+// DecodeCardFromLlm reads the JSON text a model gave for a provider-ready schema of Card.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeCardFromLlm(data []byte) (Card, error) {
+	return decodeLlm(CleanLLMJSON(data), false, decodeType[Card])
 }
 
 // CardMethod is generated from order.json#/$defs/card/properties/method.
@@ -95,6 +154,17 @@ func (v Contact) check() *DecodeError {
 	return nil
 }
 
+// DecodeContactFromLlm reads the JSON text a model gave for a provider-ready schema of Contact.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeContactFromLlm(data []byte) (Contact, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Contact])
+}
+
 // Customer is generated from order.json#/$defs/customer.
 //
 // Who orders.
@@ -137,6 +207,16 @@ func (v Customer) check() *DecodeError {
 	return nil
 }
 
+// DecodeCustomerFromLlm reads the JSON text a model gave for a provider-ready schema of Customer.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeCustomerFromLlm(data []byte) (Customer, error) {
+	return decodeLlm(CleanLLMJSON(data), false, decodeType[Customer])
+}
+
 // Invoice is generated from order.json#/$defs/invoice.
 //
 // Payment by invoice.
@@ -172,6 +252,16 @@ func (v Invoice) check() *DecodeError {
 		}
 	}
 	return nil
+}
+
+// DecodeInvoiceFromLlm reads the JSON text a model gave for a provider-ready schema of Invoice.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeInvoiceFromLlm(data []byte) (Invoice, error) {
+	return decodeLlm(CleanLLMJSON(data), false, decodeType[Invoice])
 }
 
 // InvoiceMethod is generated from order.json#/$defs/invoice/properties/method.
@@ -241,6 +331,16 @@ func (v Line) check() *DecodeError {
 		}
 	}
 	return nil
+}
+
+// DecodeLineFromLlm reads the JSON text a model gave for a provider-ready schema of Line.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeLineFromLlm(data []byte) (Line, error) {
+	return decodeLlm(CleanLLMJSON(data), false, decodeType[Line])
 }
 
 // OrderRequest is generated from order.json#.
@@ -317,6 +417,16 @@ func (v OrderRequest) MarshalJSON() ([]byte, error) {
 	return encodeRequired(plain(v), []string{"lines", "payment"}, v.Lines != nil, v.Payment != nil)
 }
 
+// DecodeOrderRequestFromLlm reads the JSON text a model gave for a provider-ready schema of OrderRequest.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeOrderRequestFromLlm(data []byte) (OrderRequest, error) {
+	return decodeLlm(CleanLLMJSON(data), false, decodeType[OrderRequest])
+}
+
 // OrderRequestPriority is generated from order.json#/properties/priority.
 //
 // How urgent it is.
@@ -368,6 +478,78 @@ func unionPayment(n *node) (Payment, *DecodeError) {
 func (Card) isPayment()    {}
 func (Invoice) isPayment() {}
 
+// DecodePaymentFromLlm reads the JSON text a model gave for a provider-ready schema of Payment.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodePaymentFromLlm(data []byte) (Payment, error) {
+	return decodeLlm(CleanLLMJSON(data), true, unionPayment)
+}
+
+// Picks is generated from order.json#/$defs/picks.
+//
+// Lines to pick first.
+type Picks []Line
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Picks) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Picks) decode(n *node) *DecodeError {
+	x, err := decodeSlice(decodeType[Line])(n)
+	if err != nil {
+		return err
+	}
+	*v = Picks(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Picks.
+func (v Picks) check() *DecodeError {
+	return checkItems([]Line(v), -1, 3, func(item Line) *DecodeError { return item.check() })
+}
+
+// DecodePicksFromLlm reads the JSON text a model gave for a provider-ready schema of Picks.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodePicksFromLlm(data []byte) (Picks, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Picks])
+}
+
+// Remark is generated from order.json#/$defs/remark.
+//
+// A remark for the driver.
+type Remark string
+
+// UnmarshalJSON decodes strictly.
+func (v *Remark) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Remark) decode(n *node) *DecodeError {
+	x, err := decodeString(n)
+	if err != nil {
+		return err
+	}
+	*v = Remark(x)
+	return nil
+}
+
+// DecodeRemarkFromLlm reads the JSON text a model gave for a provider-ready schema of Remark.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeRemarkFromLlm(data []byte) (Remark, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Remark])
+}
+
 // Sku is generated from order.json#/$defs/sku.
 //
 // A stock keeping unit, like AB-1234.
@@ -388,4 +570,86 @@ func (v *Sku) decode(n *node) *DecodeError {
 // check checks the constraints of a decoded Sku.
 func (v Sku) check() *DecodeError {
 	return checkString(string(v), -1, -1, patterns[0].check)
+}
+
+// DecodeSkuFromLlm reads the JSON text a model gave for a provider-ready schema of Sku.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeSkuFromLlm(data []byte) (Sku, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Sku])
+}
+
+// Status is generated from order.json#/$defs/status.
+//
+// Where an order is.
+type Status string
+
+// Values of Status.
+const (
+	// StatusNew is "new".
+	StatusNew Status = "new"
+	// StatusPaid is "paid".
+	StatusPaid Status = "paid"
+	// StatusSent is "sent".
+	StatusSent Status = "sent"
+)
+
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v Status) MarshalText() ([]byte, error) {
+	return encodeEnum(v, StatusNew, StatusPaid, StatusSent)
+}
+
+// UnmarshalJSON fails on a value the type doesn't list.
+func (v *Status) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Status) decode(n *node) *DecodeError {
+	return decodeEnum(n, v, StatusNew, StatusPaid, StatusSent)
+}
+
+// DecodeStatusFromLlm reads the JSON text a model gave for a provider-ready schema of Status.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeStatusFromLlm(data []byte) (Status, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Status])
+}
+
+// Stock is generated from order.json#/$defs/stock.
+//
+// Units in stock, by stock keeping unit.
+type Stock map[Sku]int64
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Stock) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Stock) decode(n *node) *DecodeError {
+	x, err := decodeMap(decodeType[Sku], decodeInt)(n)
+	if err != nil {
+		return err
+	}
+	*v = Stock(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Stock.
+func (v Stock) check() *DecodeError {
+	return checkEntries(map[Sku]int64(v), 1, 3, func(item Sku) *DecodeError { return item.check() }, func(item int64) *DecodeError { return checkInt(item, limit[int64]{">=", 0, "0"}) })
+}
+
+// DecodeStockFromLlm reads the JSON text a model gave for a provider-ready schema of Stock.
+// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+// a map is read in the shapes the profiles give.
+// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+// Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer
+// of the first problem in the model's payload, whose Compact form is made for asking the model
+// to retry.
+func DecodeStockFromLlm(data []byte) (Stock, error) {
+	return decodeLlm(CleanLLMJSON(data), true, decodeType[Stock])
 }

@@ -1055,7 +1055,10 @@ export function optional<K extends string, T>(
 ): { [P in K]?: T } {
   const out = {};
   const keyPath = at(path, key);
-  if (has(o, key, path)) put(out, key, decode(guard(keyPath, () => o[key]), keyPath));
+  if (has(o, key, path)) {
+    const json = guard(keyPath, () => o[key]);
+    if (llm === 0 || json !== null) put(out, key, decode(json, keyPath));
+  }
   return out;
 }
 
@@ -1112,12 +1115,140 @@ export function rest<K extends string, V>(
  */
 export function map<K extends string, V>(key: Decoder<K>, value: Decoder<V>, min?: number, max?: number): Decoder<Record<K, V>> {
   return (json, path) => {
+    if (llm !== 0) {
+      const list = guard(path, () => Array.isArray(json));
+      if (list && (llm & ENTRIES) !== 0) return entries(json as readonly unknown[], path, key, value, min, max);
+      if (list || (llm & OBJECTS) === 0 || !guard(path, () => isObject(json))) {
+        throw mismatch(path, LLM_MAP_EXPECTED, json);
+      }
+    }
     const o = object(json, path);
     if (checking() && (min !== undefined || max !== undefined)) {
       checkCount(path, guard(path, () => keysOf(o)).length, min, max, "key", "keys");
     }
     return members(o, path, [], key, value);
   };
+}
+
+/** A map given as an array of { key, value } entries, in llm. */
+const ENTRIES = 1;
+
+/** A map given as a JSON object, in llm. */
+const OBJECTS = 2;
+
+/** The map shapes the configured LLM profiles give: entries or objects, told apart by their JSON type. */
+const LLM_MAPS = 3;
+
+/** What a map expects in an LLM decode, for a value in neither shape. */
+const LLM_MAP_EXPECTED = "an array or an object";
+
+/**
+ * While an LLM decode runs: the map shapes it reads, LLM_MAPS, and 0 outside one. An LLM decode
+ * reads null for an optional key as absent, and collects no unknown keys, so an unknown key
+ * fails in every read mode.
+ */
+let llm = 0;
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema, strictly, and decodes it with
+ * decode, which undoes the projection: null for an optional key is absent, and a map is read in
+ * the shapes the profiles give. Errors have the paths of the model's payload.
+ */
+export function fromLlm<T>(text: string, decode: Decoder<T>): T {
+  const saved = llm;
+  llm = LLM_MAPS;
+  try {
+    return fromJson(text, decode);
+  } finally {
+    llm = saved;
+  }
+}
+
+/** Runs read on text and returns its DecodeError instead of throwing it. */
+export function attemptText<T>(read: (text: string) => T, text: string): DecodeResult<T> {
+  try {
+    return { ok: true, value: read(text) };
+  } catch (error) {
+    if (error instanceof DecodeError) return { ok: false, error };
+    throw error;
+  }
+}
+
+/**
+ * A decoder of a type that isn't an object, which a provider-ready schema wraps as
+ * { "value": ... }: an object with exactly that key, whose value decodes with decode. The object
+ * and its value decode as one, through checked, so a structure error in the object comes before
+ * a constraint the value breaks.
+ */
+export function unwrapped<T>(decode: Decoder<T>): Decoder<T> {
+  const read: Decoder<T> = (json, path) => {
+    const o = object(json, path);
+    const value = required(o, "value", path, decode);
+    closed(o, path, ["value"]);
+    return value;
+  };
+  return (json, path) => checked(json, path, read);
+}
+
+/**
+ * Decodes a map an LLM gave as an array of { "key": ..., "value": ... } entries, with between min
+ * and max of them, counted as keys. Each entry is an object with exactly those keys, read like a
+ * struct, the key at /i/key and the value at /i/value. A key given twice fails with
+ * duplicate_key at the later entry's key. The entries decode in their order, or, while checked
+ * checks constraints, in the code point order of their keys, the order Rust and Go check the
+ * keys of a map in. The map keeps the order of the entries.
+ */
+function entries<K extends string, V>(
+  items: readonly unknown[],
+  path: string,
+  key: Decoder<K>,
+  value: Decoder<V>,
+  min: number | undefined,
+  max: number | undefined,
+): Record<K, V> {
+  const length = guard(path, () => items.length);
+  if (checking() && (min !== undefined || max !== undefined)) {
+    checkCount(path, length, min, max, "key", "keys");
+  }
+  const out = {} as Record<K, V>;
+  const twice = (keyPath: string, name: string): DecodeError =>
+    new DecodeError(keyPath, ErrorCode.DuplicateKey, undefined, quote(name));
+  if (phase !== 1) {
+    const seen = new Set<string>();
+    for (let i = 0; i < length; i++) {
+      const entryPath = at(path, i);
+      const o = object(guard(entryPath, () => items[i]), entryPath);
+      const k = required(o, "key", entryPath, key);
+      const v = required(o, "value", entryPath, value);
+      closed(o, entryPath, ["key", "value"]);
+      if (seen.has(k)) throw twice(at(entryPath, "key"), k);
+      seen.add(k);
+      put(out, k, v);
+    }
+    return out;
+  }
+  // Checking constraints: the keys as given sort the entries first. A problem with the structure
+  // here only has to fail, since checked then finds the first one by reading the structure alone.
+  const given: { readonly o: Readonly<Record<string, unknown>>; readonly at: string; readonly name: string }[] = [];
+  for (let i = 0; i < length; i++) {
+    const entryPath = at(path, i);
+    const o = object(guard(entryPath, () => items[i]), entryPath);
+    const name = guard(entryPath, () => o["key"]);
+    if (typeof name !== "string") throw mismatch(at(entryPath, "key"), "a string", name);
+    given.push({ o, at: entryPath, name });
+  }
+  const decoded = new Map<string, readonly [K, V]>();
+  for (const entry of [...given].sort((a, b) => byCodePoint(a.name, b.name))) {
+    if (decoded.has(entry.name)) throw twice(at(entry.at, "key"), entry.name);
+    const k = required(entry.o, "key", entry.at, key);
+    decoded.set(entry.name, [k, required(entry.o, "value", entry.at, value)]);
+    closed(entry.o, entry.at, ["key", "value"]);
+  }
+  for (const entry of given) {
+    const pair = decoded.get(entry.name);
+    if (pair !== undefined) put(out, pair[0], pair[1]);
+  }
+  return out;
 }
 
 /**

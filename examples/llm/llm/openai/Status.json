@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "Where an order is.",
+      "type": "string",
+      "enum": [
+        "new",
+        "paid",
+        "sent"
+      ]
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

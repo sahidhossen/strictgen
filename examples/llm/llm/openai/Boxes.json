@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "How many boxes to pack.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

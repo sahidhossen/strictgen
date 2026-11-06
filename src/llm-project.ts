@@ -31,6 +31,7 @@ import type {
   StringType,
   StructDecl,
   TypeExpr,
+  UntaggedDecl,
 } from "./model.js";
 import type { Json, JsonObject, SchemaSet } from "./schema.js";
 import { CodegenError, isObject } from "./schema.js";
@@ -279,6 +280,7 @@ class Projector {
         return withDescription({ anyOf }, text, []);
       }
       case "untagged": {
+        if (this.profile.maps === "entries") this.entriesBesideArray(decl);
         const anyOf = decl.variants.map((v, i) => this.expr(v.type, `${pointer}/anyOf/${String(i)}`, owner, ""));
         return withDescription({ anyOf }, text, []);
       }
@@ -286,6 +288,36 @@ class Projector {
       case "id":
         return this.expr(decl.type, pointer, owner, text);
     }
+  }
+
+  /**
+   * Fails for an untagged union with a map beside an array, for a profile that gives maps as
+   * arrays of entries: both are JSON arrays then, so the decoder, which tries the variants in
+   * order, could read the entries of a map as the array, like an empty map as an empty array.
+   */
+  entriesBesideArray(decl: UntaggedDecl): void {
+    const shapes = decl.variants.map((v) => this.arrayShapes(v.type, new Set()));
+    const map = shapes.findIndex((s) => s.has("map"));
+    const list = shapes.findIndex((s, i) => s.has("list") && i !== map);
+    if (map === -1 || list === -1) return;
+    this.unsupported(
+      decl.path,
+      `${decl.name} has a map beside an array, and the profile gives a map as an array of entries, ` +
+        "so a decoder couldn't tell them apart",
+      "give the branches a tag, or use a profile that keeps maps as objects",
+    );
+  }
+
+  /** The kinds of JSON array a type's value can be in the projection: a list, a map's entries, or both. */
+  arrayShapes(type: TypeExpr, seen: Set<string>): Set<"map" | "list"> {
+    if (type.kind === "array") return new Set(["list"]);
+    if (type.kind === "map") return new Set(["map"]);
+    if (type.kind !== "ref" || seen.has(type.name)) return new Set();
+    seen.add(type.name);
+    const decl = this.decls.get(type.name);
+    if (decl?.kind === "alias") return this.arrayShapes(decl.type, seen);
+    if (decl?.kind !== "untagged") return new Set();
+    return new Set(decl.variants.flatMap((v) => [...this.arrayShapes(v.type, seen)]));
   }
 
   struct(decl: StructDecl, pointer: string, doc: string): Node {

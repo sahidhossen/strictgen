@@ -23,7 +23,11 @@ import {
   variantName,
 } from "./naming.js";
 import {
-  RUST_HELPERS_ATTEMPT,
+  rustCheckEntriesWithLlm,
+  rustCoreWithLlm,
+  rustHelpersAttempt,
+  rustLlmSection,
+  rustObjectWithLlm,
   RUST_HELPERS_CHECKS,
   RUST_HELPERS_CONST_BOOL,
   RUST_HELPERS_CONST_INT,
@@ -38,6 +42,8 @@ import {
 import { RUST_CLEANUP } from "./cleanup-helpers.js";
 import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
+import type { LlmMaps } from "./llm-decoders.js";
+import { checkLlmNames, isWrapped, llmTypes, rustLlmName } from "./llm-decoders.js";
 
 /** Name of the built in type for any JSON value except `null`. */
 export const NON_NULL_JSON = RUST_NON_NULL;
@@ -90,6 +96,11 @@ interface Ctx {
   readonly decls: ReadonlyMap<string, Decl>;
   /** True in report mode. */
   readonly report: boolean;
+  /** The types with an LLM decoder, and whether it runs the cleanup step first. Empty without `llm`. */
+  readonly llm: ReadonlySet<string>;
+  /** True when the output has LLM decoders, so untagged variants run through `attempt`. */
+  readonly llmOn: boolean;
+  readonly cleanup: boolean;
   /** Which values have constraints to check. */
   readonly checks: Checks;
   /** The index of each checked pattern in the helpers' table, by the pattern as written. */
@@ -138,6 +149,11 @@ export interface RustOptions {
   readonly read?: ReadMode;
   /** Adds `clean_llm_json`, the LLM cleanup step, to the helpers and re-exports it. */
   readonly cleanup?: boolean;
+  /**
+   * Adds an LLM decoder for every type with a provider-ready schema, reading maps in the shapes
+   * given. It runs the cleanup step first when `cleanup` is on.
+   */
+  readonly llm?: LlmMaps;
 }
 
 /**
@@ -198,9 +214,14 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     }
   }
   const patterns = patternsOf(model.decls);
+  const llm = options.llm;
+  if (llm !== undefined) checkLlmNames(model, "Rust", rustLlmName, () => []);
   const ctx: Ctx = {
     decls: new Map(model.decls.map((d) => [d.name, d])),
     report,
+    llm: new Set(llm === undefined ? [] : llmTypes(model).map((d) => d.name)),
+    llmOn: llm !== undefined,
+    cleanup: options.cleanup === true,
     checks: new Checks(model.decls),
     patterns: new Map(patterns.map((p, i) => [p.source, i])),
   };
@@ -225,18 +246,26 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
   // Only the parts some declaration uses, so the module has no dead code.
   const helpers = [
     `${header}\n\n//! Built in types and decoding functions the generated modules share.\n`,
-    rustHelpersCore(report),
-    usesStruct ? rustHelpersObject(report) : "",
+    llm === undefined ? rustHelpersCore(report) : rustCoreWithLlm(rustHelpersCore(report)),
+    // LLM decoders read the object around a wrapped type and map entries as objects.
+    usesStruct || llm !== undefined
+      ? llm === undefined
+        ? rustHelpersObject(report)
+        : rustObjectWithLlm(rustHelpersObject(report))
+      : "",
     usesRest ? RUST_HELPERS_REST : "",
     usesEnum || usesTagged ? RUST_HELPERS_ONE_OF : "",
     usesEnum ? RUST_HELPERS_ENUM : "",
     usesTagged ? RUST_HELPERS_TAGGED : "",
     literals.has("number") ? RUST_HELPERS_CONST_INT : "",
     literals.has("boolean") ? RUST_HELPERS_CONST_BOOL : "",
-    report && usesUntagged ? RUST_HELPERS_ATTEMPT : "",
-    ...checkParts(contents.map((c) => c.contents)),
+    (report || llm !== undefined) && usesUntagged ? rustHelpersAttempt(report, llm !== undefined) : "",
+    ...checkParts(contents.map((c) => c.contents)).map((part) =>
+      llm !== undefined && part.includes("fn check_entries<") ? rustCheckEntriesWithLlm(part) : part,
+    ),
     patterns.length > 0 ? patternTable(patterns) : "",
     options.cleanup === true ? RUST_CLEANUP : "",
+    llm === undefined ? "" : rustLlmSection(llm, report),
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -370,7 +399,8 @@ function rustModule(
   const uses = [...imports(model, decls)].map(
     ([other, names]) => `use super::${modules.get(other) ?? other}::${importList(names)};\n`,
   );
-  const fromHelpers = [...(typed ? ["self"] : []), ...[...helpers].sort(compare)];
+  const llm = decls.some((d) => ctx.llm.has(d.name));
+  const fromHelpers = [...(typed || llm ? ["self"] : []), ...[...helpers].sort(compare)];
   if (fromHelpers.length === 1 && fromHelpers[0] === "self") uses.push(`use super::${HELPERS};\n`);
   else if (fromHelpers.length > 0)
     uses.push(`use super::${HELPERS}::${importList(fromHelpers)};\n`);
@@ -378,9 +408,39 @@ function rustModule(
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
     `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
-    ...decls.map((decl) => declaration(ctx, decl)),
+    ...decls.map((decl) => declaration(ctx, decl) + (ctx.llm.has(decl.name) ? llmFunction(ctx, decl) : "")),
   ];
   return parts.join("\n");
+}
+
+/**
+ * `decode_x_from_llm`, which reads the JSON text a model gave for the type's provider-ready
+ * schema. It runs the cleanup step first when the cleanup is on.
+ */
+function llmFunction(ctx: Ctx, decl: Decl): string {
+  const name = rustLlmName(decl.name);
+  const lines = [
+    `Reads the JSON text a model gave for a provider-ready schema of \`${decl.name}\`.`,
+    ...(ctx.cleanup
+      ? [
+          "After the cleanup step, it undoes the projection: null for an optional key is absent, and",
+          "a map is read in the shapes the profiles give.",
+        ]
+      : ["It undoes the projection: null for an optional key is absent, and a map is read in the", "shapes the profiles give."]),
+    ...(isWrapped(decl) ? ['The type isn\'t an object, so the schema wraps it, and it is read from the "value" key.'] : []),
+    "Then every constraint of the type is checked.",
+    "",
+    "# Errors",
+    "",
+    "A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose",
+    "compact form is made for asking the model to retry.",
+  ];
+  const text = ctx.cleanup ? `&${HELPERS}::clean_llm_json(text)` : "text";
+  return (
+    `\n${lines.map((l) => (l === "" ? "///\n" : `/// ${l}\n`)).join("")}` +
+    `pub fn ${name}(text: &str) -> Result<${decl.name}, ${HELPERS}::DecodeError> {\n` +
+    `    ${HELPERS}::from_llm(${text}, ${String(isWrapped(decl))})\n}\n`
+  );
 }
 
 function importList(names: readonly string[]): string {
@@ -632,7 +692,8 @@ function untagged(ctx: Ctx, decl: UntaggedDecl): string {
   const lines = variants.map((v) => `    /// A \`${v.text}\`.\n    ${v.name}(${v.type}),\n`);
   const tries = variants.map((v) => {
     const decode = `<${v.type} as ${HELPERS}::Decode>::decode_node(node)`;
-    const run = report ? `${HELPERS}::attempt(|| ${decode})` : decode;
+    // attempt drops what a variant that failed noted: unknown keys, or the entries of LLM maps.
+    const run = report || ctx.llmOn ? `${HELPERS}::attempt(|| ${decode})` : decode;
     return (
       `        if let Ok(value) = ${run} {\n` +
       `            return Ok(Self::${v.name}(value));\n        }\n`

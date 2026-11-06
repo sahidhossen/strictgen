@@ -6,6 +6,8 @@ import { CodegenError } from "./schema.js";
 import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
 import { RENAME_TYPE, TS_RESERVED } from "./naming.js";
 import { TS_CLEANUP } from "./cleanup-helpers.js";
+import type { LlmMaps } from "./llm-decoders.js";
+import { checkLlmNames, isWrapped, llmTypes, tsLlmName } from "./llm-decoders.js";
 import { asciiString, tsHelpersBody } from "./ts-helpers.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -45,6 +47,12 @@ export interface TypeScriptOptions {
   readonly read?: ReadMode;
   /** Adds `cleanLlmJson`, the LLM cleanup step, to the helpers. Needs the decoders. */
   readonly cleanup?: boolean;
+  /**
+   * Adds `decodeXFromLlm` and `tryDecodeXFromLlm` for every type with a provider-ready schema,
+   * reading maps in the shapes given, when the decoders are on. They run the cleanup step first
+   * when `cleanup` is on.
+   */
+  readonly llm?: LlmMaps;
 }
 
 interface Ctx {
@@ -57,6 +65,8 @@ interface Ctx {
   readonly calls: Set<string>;
   /** The index of each checked pattern in the helpers' table, by the pattern as written. */
   readonly patterns: ReadonlyMap<string, number>;
+  /** The types that get an LLM decoder, and whether it runs the cleanup step first. */
+  readonly llm: { readonly types: ReadonlySet<string>; readonly cleanup: boolean } | undefined;
 }
 
 /**
@@ -73,6 +83,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   if (report && !decoders) throw new Error("report mode needs the decoders");
   const cleanup = options.cleanup === true;
   if (cleanup && !decoders) throw new Error("the cleanup step needs the decoders");
+  const llm = decoders && options.llm !== undefined ? options.llm : undefined;
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   const checks = new Checks(model.decls);
   const patterns = patternsOf(model.decls);
@@ -87,6 +98,8 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
       );
     }
   }
+  if (llm !== undefined) checkLlmNames(model, "TypeScript", tsLlmName, functionNames);
+  const llmCtx = llm === undefined ? undefined : { types: new Set(llmTypes(model).map((d) => d.name)), cleanup };
   const files = [...bySchema(model)].map(([schema, own]) => {
     if (schema === "index" || schema === "helpers")
       throw new CodegenError(
@@ -95,7 +108,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
         `a schema named ${schema} clashes with ${schema}.ts`,
         "rename the schema file",
       );
-    const ctx: Ctx = { decls, report, checks, calls: new Set(), patterns: indexes };
+    const ctx: Ctx = { decls, report, checks, calls: new Set(), patterns: indexes, llm: llmCtx };
     const body = own.map((decl) => declaration(ctx, decl, decoders)).join("\n");
     const what = decoders ? "Types and decoders" : "Types";
     const head = `${header}\n\n/** ${what} for \`${schema}.json\`. */\n\n`;
@@ -121,7 +134,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   }
   return [
     ...files,
-    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report, patterns)}${cleanup ? TS_CLEANUP : ""}` }] : []),
+    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report, patterns, llm)}${cleanup ? TS_CLEANUP : ""}` }] : []),
     { name: "index.ts", contents: `${header}\n\n${index.join("")}` },
   ];
 }
@@ -259,7 +272,60 @@ function functions(ctx: Ctx, decl: Decl): string {
     `/**\n * Encodes ${name} as JSON text, keys in the order Rust and Go write them.\n` +
     ` * Throws an EncodeError like encode${name}.\n */\n` +
     `export function encode${name}ToJson(value: ${name}): string {\n` +
-    `  return h.toJson(encode${name}(value));\n}\n`
+    `  return h.toJson(encode${name}(value));\n}\n` +
+    (ctx.llm?.types.has(name) === true ? llmFunctions(ctx, decl, whole) : "")
+  );
+}
+
+/** The names the TypeScript output generates for a type, besides its LLM decoders. */
+function functionNames(decl: Decl): string[] {
+  const n = decl.name;
+  return [
+    ...["decode", "tryDecode", "report", "read", "encode"].flatMap((verb) => [`${verb}${n}`, `${verb}${n}FromJson`]),
+    `encode${n}ToJson`,
+    `as${n}`,
+  ];
+}
+
+/**
+ * `decodeXFromLlm` and `tryDecodeXFromLlm`, which read the JSON text a model gave for the type's
+ * provider-ready schema. `whole` is what a whole decode of the type runs.
+ */
+function llmFunctions(ctx: Ctx, decl: Decl, whole: string): string {
+  const name = decl.name;
+  const fn = tsLlmName(name);
+  // In report mode, decodeX collects unknown keys; an LLM decode is strict, so it reads directly.
+  const plain = ctx.report ? whole : `decode${name}`;
+  const decode = isWrapped(decl) ? `h.unwrapped(${ctx.report ? `read${name}` : `decode${name}`})` : plain;
+  const cleanup = ctx.llm?.cleanup === true;
+  const text = cleanup ? "h.cleanLlmJson(text)" : "text";
+  const head = cleanup
+    ? [
+        ` * Reads the JSON text a model gave for a provider-ready schema of ${name}. After the cleanup step,`,
+        " * it undoes the projection: null for an optional key is absent, and a map is read in the",
+        " * shapes the profiles give.",
+      ]
+    : [
+        ` * Reads the JSON text a model gave for a provider-ready schema of ${name}, and undoes the`,
+        " * projection: null for an optional key is absent, and a map is read in the shapes the",
+        " * profiles give.",
+      ];
+  const lines = [
+    ...head,
+    ...(isWrapped(decl) ? [' * The type isn\'t an object, so the schema wraps it, and it is read from the "value" key.'] : []),
+    " * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of",
+    " * the first problem in the model's payload, whose compact form is made for asking the model to",
+    " * retry.",
+  ];
+  const call = `  return h.fromLlm(${text}, ${decode});\n`;
+  return (
+    `\n/**\n${lines.join("\n")}\n */\n` +
+    `export function ${fn}(text: string): ${name} {\n` +
+    (call.length <= WIDTH + 1 ? call : `  return h.fromLlm(\n    ${text},\n    ${decode},\n  );\n`) +
+    `}\n\n` +
+    `/** Like ${fn}, but returns the DecodeError instead of throwing it. */\n` +
+    `export function try${fn.charAt(0).toUpperCase()}${fn.slice(1)}(text: string): h.DecodeResult<${name}> {\n` +
+    `  return h.attemptText(${fn}, text);\n}\n`
   );
 }
 

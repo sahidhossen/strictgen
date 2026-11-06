@@ -27,6 +27,7 @@ Only unknown keys change. In both modes:
 - JSON syntax is checked: a key given twice, invalid syntax and nesting past the depth limit fail, inside an unknown key's value too
 - An exactly-one choice, like a customer reachable by email or by phone, still fails on a value with both. A key that a sibling branch names is not unknown
 - Encoders are strict. A value never holds the unknown keys, so an encoder never writes them, and a value with a key its type doesn't name fails to encode as before
+- LLM decoders are strict, since a provider-ready schema closes every object: an unknown key fails, and the hook is never called ([llm.md](llm.md#decoders))
 
 The value of an unknown key is not decoded: only the key's path is reported.
 

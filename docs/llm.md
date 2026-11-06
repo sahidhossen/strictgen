@@ -1,6 +1,6 @@
 # LLM structured output
 
-LLM providers take a JSON Schema for structured output, but only a subset of it, and each provider has its own subset and limits. strictgen projects every type into a schema one provider accepts, from the real schema, and lists what the projection had to leave out, so a decoder can check it instead. It also has a cleanup step for the syntax mistakes models often make in JSON.
+LLM providers take a JSON Schema for structured output, but only a subset of it, and each provider has its own subset and limits. strictgen projects every type into a schema one provider accepts, from the real schema, and lists what the projection had to leave out. An LLM decoder in every language reads what the model sends back, undoes the projection and checks it all. A cleanup step fixes the syntax mistakes models often make in JSON.
 
 ```json
 {
@@ -13,7 +13,7 @@ LLM providers take a JSON Schema for structured output, but only a subset of it,
 | ------ | ---- |
 | `llm.profiles` | The profiles to write schemas for: a built in one by name, or a profile file by its path, ending in `.json` |
 | `llm.out` | The folder the schemas go to, as `<out>/<profile>/<Type>.json`. strictgen clears it before writing, like the other folders it owns |
-| `llm.cleanup` | Adds the cleanup helper to every configured language. Off by default |
+| `llm.cleanup` | Adds the cleanup helper to every configured language, which the LLM decoders run first. Off by default |
 
 `strictgen generate` writes the schemas with the other targets and `strictgen check` compares them. `strictgen llm --profile openai Order` prints one schema on stdout and what moved to the decoder on stderr, or both as JSON with `--json`. The type is named as the generated code names it, and every schema root and `$defs` entry has one. The profile is a built in one, a path ending in `.json`, or a profile file `llm.profiles` lists whose `name` is the one given. To find it, `strictgen llm` reads only the `name` of each listed file, and checks in full only the file that has it (or, for a file that isn't a JSON object with a name, the file named `<name>.json`), so a broken file for another profile doesn't stop it. `generate` and `check` check every listed profile.
 
@@ -89,6 +89,55 @@ Moved to the decoder:
 ```
 
 With `--json`, each change has a `kind` (`nullable`, `dropped`, `entries`, `wrapped` or `union`), the `pointer`, the model `type` and `field` it belongs to, and for `dropped` the `keyword` and `value`, for `union` the `tag` and the type each tag value decodes as.
+
+## Decoders
+
+With `llm`, every configured language also gets an LLM decoder for every type with a schema, a schema root or a `$defs` entry. It reads the JSON text a model sent for one of the type's provider-ready schemas, undoes the projection, and then checks every constraint of the real type, the ones the schema kept and the ones it left out:
+
+| Language | Function |
+| -------- | -------- |
+| TypeScript | `decodeXFromLlm(text: string): X`, which throws a `DecodeError`, and `tryDecodeXFromLlm(text)`, which returns it |
+| Go | `DecodeXFromLlm(data []byte) (X, error)`, whose error is a `*DecodeError` |
+| Rust | `decode_x_from_llm(text: &str) -> Result<X, DecodeError>`, a function of the generated module, like `decode_order_request_from_llm`. A function rather than a method, so an alias like `pub type Tags = Vec<String>` has one too |
+
+```ts
+const order = decodeOrderRequestFromLlm(reply); // reply: the model's text
+```
+
+Undoing the projection:
+
+- **`null` stands for absent** for an optional field, so the decoded value has no such field. For an optional union, `null` is the extra branch, and the same rule applies. `null` anywhere else, like for a required field, fails as in the normal decoders.
+- **A type that isn't an object** is read from the `value` key of the object around it, which must have exactly that key.
+- **A map** is read in the shapes the configured profiles give: an array of `{ "key": ..., "value": ... }` entries when a profile uses `entries`, a JSON object when one uses `object`. With profiles of both kinds, as with `openai` and `gemini`, the decoder takes either, told apart by the JSON type, so one decoder serves every profile. Each entry is an object with exactly those two keys. A key given twice fails with `duplicate_key` at the later entry's key, like `/labels/3/key`, and `minProperties` and `maxProperties` count the keys.
+- **A tagged union** keeps its JSON shape in the projection, so its tag picks the branch as in the normal decoders.
+
+A value decoded through the LLM path equals the same value decoded normally from its JSON. The decoders reuse the normal ones, so every other rule, like the order in which an untagged union tries its variants, is the same.
+
+An untagged union with a map beside an array, like `oneOf: [array, map]`, fails with `llm-unsupported` for a profile that gives maps as entries: both are JSON arrays then, and the decoder could read an empty map as an empty array. Give the branches a tag, or use a profile that keeps maps as objects.
+
+### Errors
+
+Errors have the shared shape and codes of [error-codes.md](error-codes.md), and the compact form, like `/lines/0/quantity not_multiple_of, expected a multiple of 2, found 3`, is made for sending back to the model so it can retry. Paths are in the terms of the payload the model sent, since that is the text it has to fix: `/value/...` for a wrapped type, and for a map read from entries the entry's index, then `key` for an error of the key itself, like a key that breaks `propertyNames`, or `value` for an error of its value. The order is that of the normal decoders: the first structure error anywhere, else the first constraint the value breaks, with the keys of a map checked in code point order, each key before its value.
+
+```
+/labels/1/key too_long, expected at most 12 characters, found 16 characters
+/value/1/key duplicate_key, found "AB-1234"
+/customer/name null_not_allowed, expected a string
+```
+
+### Strict in every read mode
+
+A provider-ready schema closes every object, so an LLM decoder fails on an unknown key with `unknown_key`, whatever `read` the target has. In report mode the normal decoders still accept unknown keys, and the hook is never called by an LLM decoder.
+
+### Cleanup
+
+With `llm.cleanup`, each LLM decoder runs the cleanup step below on the text first. The normal decoders never run it. Go's decoder doesn't change the slice it is given.
+
+### Shared vectors
+
+`examples/llm/llm-vectors.json` holds more than a thousand payloads in the LLM form, each with the normal JSON of its value or the compact error it must give. The Rust, Go and TypeScript tests run them all and must agree. They come from the payload generator: valid values projected into each map shape, the generator's near misses projected with their paths moved to the payload, and near misses of what only the LLM form has, like the object around a wrapped type and the entries of maps. `pnpm vectors:llm` writes the file again after the example changes, and the TypeScript tests fail while it is out of date.
+
+When the TypeScript target has `"decoders": false`, it has no decoders at all, so no LLM decoders either.
 
 ## Cleanup
 

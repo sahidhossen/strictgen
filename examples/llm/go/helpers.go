@@ -102,6 +102,9 @@ type DecodeError struct {
 	Expected string
 	// Found is what the input has there, like 12.5 or "x", empty when the code has none.
 	Found string
+	// key marks an error of a map key's own check, which an LLM decode gives the path of the
+	// entry's key.
+	key bool
 }
 
 // describe builds a message: the path, then head, then expected and found when they are set.
@@ -137,7 +140,7 @@ func fail(code, expected, found string) *DecodeError {
 
 // at moves the error one level down, under an object key or array index.
 func (e *DecodeError) at(segment string) *DecodeError {
-	return &DecodeError{Path: pointer(segment) + e.Path, Code: e.Code, Expected: e.Expected, Found: e.Found}
+	return &DecodeError{Path: pointer(segment) + e.Path, Code: e.Code, Expected: e.Expected, Found: e.Found, key: e.key}
 }
 
 // pointer returns segment as a JSON Pointer segment, with its slash.
@@ -182,6 +185,8 @@ type node struct {
 	keys   []string         // the keys of an object in input order, each once
 	fields map[string]*node // the members of an object; a key given twice fails to parse
 	items  []*node          // the items of an array
+	at     int              // the byte offset of the value in the input
+	doc    *document        // what the decode of this input shares
 }
 
 // foundOf shows a value as errors do: null, true and false, a number as spelled, a string
@@ -240,12 +245,14 @@ type parser struct {
 	pos  int
 	// path holds the keys and indexes of the values being read, for the path of a failure.
 	path []string
+	// doc is shared by every node of the input.
+	doc *document
 }
 
 // parse parses a whole JSON document. Every failure carries its error code and the JSON
 // Pointer of the value being read, and Found gives the byte offset.
 func parse(data []byte) (*node, *DecodeError) {
-	p := &parser{data: data}
+	p := &parser{data: data, doc: &document{}}
 	if !utf8.Valid(data) {
 		return nil, p.failAt(invalidUTF8At(data), "invalid UTF-8")
 	}
@@ -332,7 +339,7 @@ func (p *parser) value(depth int) (*node, *DecodeError) {
 		if err != nil {
 			return nil, err
 		}
-		return &node{kind: '"', raw: p.data[start:p.pos], text: text}, nil
+		return &node{kind: '"', raw: p.data[start:p.pos], text: text, at: start, doc: p.doc}, nil
 	case 't':
 		return p.literal(start, "true", 't')
 	case 'f':
@@ -352,11 +359,11 @@ func (p *parser) literal(start int, word string, kind byte) (*node, *DecodeError
 		}
 		p.pos++
 	}
-	return &node{kind: kind, raw: p.data[start:p.pos]}, nil
+	return &node{kind: kind, raw: p.data[start:p.pos], at: start, doc: p.doc}, nil
 }
 
 func (p *parser) object(start, depth int) (*node, *DecodeError) {
-	n := &node{kind: '{', fields: map[string]*node{}}
+	n := &node{kind: '{', fields: map[string]*node{}, at: start, doc: p.doc}
 	p.pos++
 	p.space()
 	if p.accept('}') {
@@ -404,7 +411,7 @@ func (p *parser) object(start, depth int) (*node, *DecodeError) {
 }
 
 func (p *parser) array(start, depth int) (*node, *DecodeError) {
-	n := &node{kind: '['}
+	n := &node{kind: '[', at: start, doc: p.doc}
 	p.pos++
 	p.space()
 	if p.accept(']') {
@@ -554,7 +561,7 @@ func (p *parser) number(start int) (*node, *DecodeError) {
 	if _, err := strconv.ParseFloat(string(raw), 64); err != nil {
 		return nil, p.failAt(start, "a number out of range")
 	}
-	return &node{kind: '0', raw: raw}, nil
+	return &node{kind: '0', raw: raw, at: start, doc: p.doc}, nil
 }
 
 // nodeDecoder is a generated type that decodes itself from a parsed node.
@@ -573,7 +580,7 @@ func unmarshal[T any, PT interface {
 		err = v.decode(n)
 	}
 	if err == nil {
-		err = checkValue(v)
+		err = checkValue(v).plain()
 	}
 	if err != nil {
 		return err
@@ -590,13 +597,21 @@ func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, er
 		v, err = decode(n)
 	}
 	if err == nil {
-		err = checkValue(v)
+		err = checkValue(v).plain()
 	}
 	if err != nil {
 		var zero T
 		return zero, err
 	}
 	return v, nil
+}
+
+// document is what one decode of a parsed input shares. An LLM decode sets llm to the map
+// shapes it reads, and notes the offsets of the arrays it read as the entries of a map, in decode
+// order.
+type document struct {
+	llm     int
+	entries []int
 }
 
 // decodeType decodes a generated type, which checks its own shape.
@@ -683,6 +698,14 @@ func decodeMap[K comparable, V any](
 	value func(*node) (V, *DecodeError),
 ) func(*node) (map[K]V, *DecodeError) {
 	return func(n *node) (map[K]V, *DecodeError) {
+		if n.doc != nil && n.doc.llm != 0 {
+			if n.kind == '[' && n.doc.llm&llmEntries != 0 {
+				return decodeEntries(n, key, value)
+			}
+			if n.kind != '{' || n.doc.llm&llmObjects == 0 {
+				return nil, mismatch(llmMapExpected, n)
+			}
+		}
 		if err := expect(n, '{'); err != nil {
 			return nil, err
 		}
@@ -754,18 +777,28 @@ func required[T any](d *objectDecoder, key string, dst *T, decode func(*node) (T
 		d.err = fail(CodeMissingKey, "", "").at(key)
 		return
 	}
-	optionalValue(d, key, dst, decode)
+	readKey(d, key, dst, decode)
 }
 
 // optional reads an optional key into a pointer, which stays nil when the key is absent.
-// An explicit null fails, since only decodeAny accepts it.
+// An explicit null fails, since only decodeAny accepts it, but in an LLM decode, where null
+// stands for absent.
 func optional[T any](d *objectDecoder, key string, dst **T, decode func(*node) (T, *DecodeError)) {
 	optionalValue(d, key, dst, boxed(decode))
 }
 
 // optionalValue reads an optional key into a value whose zero value means absent, like an
-// interface or a json.RawMessage.
+// interface or a json.RawMessage. In an LLM decode, null stands for absent.
 func optionalValue[T any](d *objectDecoder, key string, dst *T, decode func(*node) (T, *DecodeError)) {
+	if n, ok := d.n.fields[key]; ok && d.err == nil && n.kind == 'n' && n.doc != nil && n.doc.llm != 0 {
+		d.used[key] = true
+		return
+	}
+	readKey(d, key, dst, decode)
+}
+
+// readKey reads a key into dst, which keeps its value when the key is absent.
+func readKey[T any](d *objectDecoder, key string, dst *T, decode func(*node) (T, *DecodeError)) {
 	if d.err != nil {
 		return
 	}
@@ -970,13 +1003,22 @@ func branch[U any, T any, PT interface {
 	return any(v).(U), nil
 }
 
-// decodeUntagged tries each variant in order and commits the first one that decodes. When
-// none does, it fails with CodeWrongType, or CodeNullNotAllowed for null, naming the union.
+// decodeUntagged tries each variant in order and commits the first one that decodes. The
+// entries of maps a variant that failed read are dropped, so only the variant used notes its
+// own. When none decodes, it fails with CodeWrongType, or CodeNullNotAllowed for null, naming
+// the union.
 func decodeUntagged(n *node, name string, commit func(), variants ...func(*node) bool) *DecodeError {
 	for _, variant := range variants {
+		mark := 0
+		if n.doc != nil {
+			mark = len(n.doc.entries)
+		}
 		if variant(n) {
 			commit()
 			return nil
+		}
+		if n.doc != nil {
+			n.doc.entries = n.doc.entries[:mark]
 		}
 	}
 	return mismatch(name, n)
@@ -1422,7 +1464,9 @@ func checkEntries[K ~string, V any](m map[K]V, min, max int, key func(K) *Decode
 	for _, k := range slices.Sorted(maps.Keys(m)) {
 		if key != nil {
 			if err := key(k); err != nil {
-				return err.at(string(k))
+				keyErr := err.at(string(k))
+				keyErr.key = true
+				return keyErr
 			}
 		}
 		if value != nil {
@@ -1515,6 +1559,145 @@ func numberText(f float64) string {
 		return sign + head + "e-" + strconv.Itoa(1-n)
 	}
 	return sign + head + "e+" + strconv.Itoa(n-1)
+}
+
+// llmEntries and llmObjects are the map shapes an LLM decode reads, in document.llm: an array of
+// {"key": ..., "value": ...} entries and a JSON object.
+const (
+	llmEntries = 1
+	llmObjects = 2
+)
+
+// llmMaps holds the map shapes the configured LLM profiles give: entries or objects, told apart by their JSON type.
+const llmMaps = 3
+
+// llmMapExpected is what a map expects in an LLM decode, for a value in neither shape.
+const llmMapExpected = "an array or an object"
+
+// decodeEntries decodes a map an LLM gave as an array of {"key": ..., "value": ...} entries, in
+// order. Each entry is an object with exactly those keys, read like a struct, the key at /i/key
+// and the value at /i/value. A key given twice fails with CodeDuplicateKey at the later entry's
+// key. The array's offset is noted, so a constraint error can be given the entry's path.
+func decodeEntries[K comparable, V any](
+	n *node,
+	key func(*node) (K, *DecodeError),
+	value func(*node) (V, *DecodeError),
+) (map[K]V, *DecodeError) {
+	out := make(map[K]V, len(n.items))
+	seen := make(map[string]bool, len(n.items))
+	for i, item := range n.items {
+		var k K
+		var v V
+		err := decodeObject(item, func(d *objectDecoder) {
+			required(d, "key", &k, key)
+			required(d, "value", &v, value)
+		}, func() {})
+		if err != nil {
+			return nil, err.at(strconv.Itoa(i))
+		}
+		name := item.fields["key"].text
+		if seen[name] {
+			return nil, fail(CodeDuplicateKey, "", quote(name)).at("key").at(strconv.Itoa(i))
+		}
+		seen[name] = true
+		out[k] = v
+	}
+	n.doc.entries = append(n.doc.entries, n.at)
+	return out, nil
+}
+
+// decodeLlm parses the JSON text a model gave for a provider-ready schema and decodes it with
+// decode, which undoes the projection: null for an optional key is absent, and maps are read in
+// the shapes the profiles give. A type that isn't an object is read from the "value" key of the
+// object around it, when wrapped is set. Then it checks the constraints of the whole value. Every
+// error has the path of the model's payload.
+func decodeLlm[T any](data []byte, wrapped bool, decode func(*node) (T, *DecodeError)) (T, error) {
+	var zero T
+	root, err := parse(data)
+	if err != nil {
+		return zero, err
+	}
+	root.doc.llm = llmMaps
+	var v T
+	n := root
+	if wrapped {
+		err = decodeObject(root, func(d *objectDecoder) { required(d, "value", &v, decode) }, func() {})
+		n = root.fields["value"]
+	} else {
+		v, err = decode(root)
+	}
+	if err != nil {
+		return zero, err
+	}
+	if err := checkValue(v); err != nil {
+		path := llmPath(n, err)
+		if wrapped {
+			path = "/value" + path
+		}
+		return zero, &DecodeError{Path: path, Code: err.Code, Expected: err.Expected, Found: err.Found}
+	}
+	return v, nil
+}
+
+// llmPath returns the path, in the payload under n, of a constraint error whose path is in the
+// decoded value: under a map read from entries, a key becomes the index of its entry, then key
+// for an error of the key itself, else value.
+func llmPath(n *node, err *DecodeError) string {
+	var out strings.Builder
+	segments := splitPointer(err.Path)
+	for i, segment := range segments {
+		if n != nil && n.kind == '[' && slices.Contains(n.doc.entries, n.at) {
+			j := slices.IndexFunc(n.items, func(item *node) bool { return item.fields["key"].text == segment })
+			if j >= 0 {
+				out.WriteString(pointer(strconv.Itoa(j)))
+				if i == len(segments)-1 && err.key {
+					out.WriteString("/key")
+					return out.String()
+				}
+				out.WriteString("/value")
+				n = n.items[j].fields["value"]
+				continue
+			}
+		}
+		out.WriteString(pointer(segment))
+		switch {
+		case n == nil:
+		case n.kind == '{':
+			n = n.fields[segment]
+		case n.kind == '[':
+			j, bad := strconv.Atoi(segment)
+			if bad != nil || j < 0 || j >= len(n.items) {
+				n = nil
+			} else {
+				n = n.items[j]
+			}
+		default:
+			n = nil
+		}
+	}
+	return out.String()
+}
+
+// splitPointer returns the segments of a JSON Pointer, unescaped.
+func splitPointer(path string) []string {
+	if path == "" {
+		return nil
+	}
+	segments := strings.Split(path[1:], "/")
+	for i, s := range segments {
+		segments[i] = strings.ReplaceAll(strings.ReplaceAll(s, "~1", "/"), "~0", "~")
+	}
+	return segments
+}
+
+// plain returns the error without the mark of a map key's own check, which only LLM decodes read.
+func (e *DecodeError) plain() *DecodeError {
+	if e == nil || !e.key {
+		return e
+	}
+	c := *e
+	c.key = false
+	return &c
 }
 
 // pattern is a pattern a schema checks: compiled once from its portable form, which Rust's

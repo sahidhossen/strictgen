@@ -9,6 +9,8 @@ import {
   UNIQUE_EXPECTED,
   UNIQUE_FOUND,
 } from "./errors.js";
+import type { LlmMaps } from "./llm-decoders.js";
+import { mapBits, mapExpected } from "./llm-decoders.js";
 import type { Pattern } from "./model.js";
 
 /** The ErrorCode constants, one per code, with their doc comments. */
@@ -228,12 +230,174 @@ function patternSection(patterns: readonly Pattern[]): string {
 }
 
 /**
+ * The report section with LLM decoders: a decode inside an LLM decode just reads, so it starts no
+ * collector and an unknown key fails.
+ */
+const REPORT_SECTION_LLM = (() => {
+  const old = "  if (unknown !== undefined) return read(json, path);";
+  if (!REPORT_SECTION.includes(old)) throw new Error("the report section has no collector check");
+  return REPORT_SECTION.replace(
+    old,
+    "  // An LLM decode collects no unknown keys, so they fail.\n  if (unknown !== undefined || llm !== 0) return read(json, path);",
+  );
+})();
+
+/** optional's read of a key that is present, outside LLM decoders. */
+const OPTIONAL_PUT = "put(out, key, decode(guard(keyPath, () => o[key]), keyPath));";
+
+/** optional's read of a key that is present: while an LLM decode runs, null stands for absent. */
+const OPTIONAL_PUT_LLM = String.raw`{
+    const json = guard(keyPath, () => o[key]);
+    if (llm === 0 || json !== null) put(out, key, decode(json, keyPath));
+  }`;
+
+/** While an LLM decode runs, map reads the shapes the profiles give maps in. */
+const MAP_LLM = String.raw`
+    if (llm !== 0) {
+      const list = guard(path, () => Array.isArray(json));
+      if (list && (llm & ENTRIES) !== 0) return entries(json as readonly unknown[], path, key, value, min, max);
+      if (list || (llm & OBJECTS) === 0 || !guard(path, () => isObject(json))) {
+        throw mismatch(path, LLM_MAP_EXPECTED, json);
+      }
+    }`;
+
+/**
+ * The LLM section of `helpers.ts`: the state of an LLM decode, the functions that run one, and
+ * the decoder of maps given as entries. `maps` says which map shapes the profiles give.
+ */
+function llmSection(maps: LlmMaps): string {
+  const shapes = maps.entries && maps.objects ? "entries or objects, told apart by their JSON type" : maps.entries ? "entries" : "objects";
+  return String.raw`
+/** A map given as an array of { key, value } entries, in llm. */
+const ENTRIES = 1;
+
+/** A map given as a JSON object, in llm. */
+const OBJECTS = 2;
+
+/** The map shapes the configured LLM profiles give: ${shapes}. */
+const LLM_MAPS = ${String(mapBits(maps))};
+
+/** What a map expects in an LLM decode, for a value in neither shape. */
+const LLM_MAP_EXPECTED = ${asciiString(mapExpected(maps))};
+
+/**
+ * While an LLM decode runs: the map shapes it reads, LLM_MAPS, and 0 outside one. An LLM decode
+ * reads null for an optional key as absent, and collects no unknown keys, so an unknown key
+ * fails in every read mode.
+ */
+let llm = 0;
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema, strictly, and decodes it with
+ * decode, which undoes the projection: null for an optional key is absent, and a map is read in
+ * the shapes the profiles give. Errors have the paths of the model's payload.
+ */
+export function fromLlm<T>(text: string, decode: Decoder<T>): T {
+  const saved = llm;
+  llm = LLM_MAPS;
+  try {
+    return fromJson(text, decode);
+  } finally {
+    llm = saved;
+  }
+}
+
+/** Runs read on text and returns its DecodeError instead of throwing it. */
+export function attemptText<T>(read: (text: string) => T, text: string): DecodeResult<T> {
+  try {
+    return { ok: true, value: read(text) };
+  } catch (error) {
+    if (error instanceof DecodeError) return { ok: false, error };
+    throw error;
+  }
+}
+
+/**
+ * A decoder of a type that isn't an object, which a provider-ready schema wraps as
+ * { "value": ... }: an object with exactly that key, whose value decodes with decode. The object
+ * and its value decode as one, through checked, so a structure error in the object comes before
+ * a constraint the value breaks.
+ */
+export function unwrapped<T>(decode: Decoder<T>): Decoder<T> {
+  const read: Decoder<T> = (json, path) => {
+    const o = object(json, path);
+    const value = required(o, "value", path, decode);
+    closed(o, path, ["value"]);
+    return value;
+  };
+  return (json, path) => checked(json, path, read);
+}
+
+/**
+ * Decodes a map an LLM gave as an array of { "key": ..., "value": ... } entries, with between min
+ * and max of them, counted as keys. Each entry is an object with exactly those keys, read like a
+ * struct, the key at /i/key and the value at /i/value. A key given twice fails with
+ * duplicate_key at the later entry's key. The entries decode in their order, or, while checked
+ * checks constraints, in the code point order of their keys, the order Rust and Go check the
+ * keys of a map in. The map keeps the order of the entries.
+ */
+function entries<K extends string, V>(
+  items: readonly unknown[],
+  path: string,
+  key: Decoder<K>,
+  value: Decoder<V>,
+  min: number | undefined,
+  max: number | undefined,
+): Record<K, V> {
+  const length = guard(path, () => items.length);
+  if (checking() && (min !== undefined || max !== undefined)) {
+    checkCount(path, length, min, max, "${COUNT_UNITS.keys[0]}", "${COUNT_UNITS.keys[1]}");
+  }
+  const out = {} as Record<K, V>;
+  const twice = (keyPath: string, name: string): DecodeError =>
+    new DecodeError(keyPath, ErrorCode.DuplicateKey, undefined, quote(name));
+  if (phase !== 1) {
+    const seen = new Set<string>();
+    for (let i = 0; i < length; i++) {
+      const entryPath = at(path, i);
+      const o = object(guard(entryPath, () => items[i]), entryPath);
+      const k = required(o, "key", entryPath, key);
+      const v = required(o, "value", entryPath, value);
+      closed(o, entryPath, ["key", "value"]);
+      if (seen.has(k)) throw twice(at(entryPath, "key"), k);
+      seen.add(k);
+      put(out, k, v);
+    }
+    return out;
+  }
+  // Checking constraints: the keys as given sort the entries first. A problem with the structure
+  // here only has to fail, since checked then finds the first one by reading the structure alone.
+  const given: { readonly o: Readonly<Record<string, unknown>>; readonly at: string; readonly name: string }[] = [];
+  for (let i = 0; i < length; i++) {
+    const entryPath = at(path, i);
+    const o = object(guard(entryPath, () => items[i]), entryPath);
+    const name = guard(entryPath, () => o["key"]);
+    if (typeof name !== "string") throw mismatch(at(entryPath, "key"), "a string", name);
+    given.push({ o, at: entryPath, name });
+  }
+  const decoded = new Map<string, readonly [K, V]>();
+  for (const entry of [...given].sort((a, b) => byCodePoint(a.name, b.name))) {
+    if (decoded.has(entry.name)) throw twice(at(entry.at, "key"), entry.name);
+    const k = required(entry.o, "key", entry.at, key);
+    decoded.set(entry.name, [k, required(entry.o, "value", entry.at, value)]);
+    closed(entry.o, entry.at, ["key", "value"]);
+  }
+  for (const entry of given) {
+    const pair = decoded.get(entry.name);
+    if (pair !== undefined) put(out, pair[0], pair[1]);
+  }
+  return out;
+}
+`;
+}
+
+/**
  * The body of the generated `helpers.ts`, which every generated TypeScript file imports as
  * `h`. It has no imports itself, so the output needs no package to install. It is a raw
  * template, so backslashes stand for themselves. `report` adds what report mode needs, and
  * `patterns` are the patterns the decoders check.
  */
-export function tsHelpersBody(report: boolean, patterns: readonly Pattern[] = []): string {
+export function tsHelpersBody(report: boolean, patterns: readonly Pattern[] = [], llm?: LlmMaps): string {
   return String.raw`/**
  * Helpers the generated decoders and encoders share.
  *
@@ -396,7 +560,7 @@ export function attemptJson<T>(decode: Decoder<T>, text: string): DecodeResult<T
     throw error;
   }
 }
-${report ? REPORT_SECTION : ""}
+${report ? (llm === undefined ? REPORT_SECTION : REPORT_SECTION_LLM) : ""}
 /** The values of the escapes other than \u. */
 const ESCAPES = new Map([
   ['"', '"'],
@@ -1232,7 +1396,7 @@ export function optional<K extends string, T>(
 ): { [P in K]?: T } {
   const out = {};
   const keyPath = at(path, key);
-  if (has(o, key, path)) put(out, key, decode(guard(keyPath, () => o[key]), keyPath));
+  if (has(o, key, path)) ${llm === undefined ? OPTIONAL_PUT : OPTIONAL_PUT_LLM}
   return out;
 }
 
@@ -1283,7 +1447,7 @@ export function rest<K extends string, V>(
  * between min and max keys.
  */
 export function map<K extends string, V>(key: Decoder<K>, value: Decoder<V>, min?: number, max?: number): Decoder<Record<K, V>> {
-  return (json, path) => {
+  return (json, path) => {${llm === undefined ? "" : MAP_LLM}
     const o = object(json, path);
     if (checking() && (min !== undefined || max !== undefined)) {
       checkCount(path, guard(path, () => keysOf(o)).length, min, max, "${COUNT_UNITS.keys[0]}", "${COUNT_UNITS.keys[1]}");
@@ -1291,7 +1455,7 @@ export function map<K extends string, V>(key: Decoder<K>, value: Decoder<V>, min
     return members(o, path, [], key, value);
   };
 }
-
+${llm === undefined ? "" : llmSection(llm)}
 /**
  * Decodes a tagged union: reads the tag key first and decodes only the branch it names. A
  * missing tag fails with missing_key, a tag that isn't a string with wrong_type, and a tag no
