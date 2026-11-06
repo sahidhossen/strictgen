@@ -56,6 +56,13 @@ impl helpers::Decode for Event {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Event {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// What happened.
 ///
 /// Schema: `event.json#/$defs/eventType`.
@@ -109,5 +116,12 @@ impl helpers::Decode for EventType {
                 &["user.created", "user.updated", "payment_method.attached"],
             )),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for EventType {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }

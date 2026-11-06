@@ -204,6 +204,10 @@ export function loadCases(root: string, types: ReadonlySet<string>): Case[] {
  * - `go-unmarshal-syntax`: `json.Unmarshal` checks the syntax itself before the generated
  *   decoder runs, so for text that isn't JSON it returns its own `*json.SyntaxError`. Go must do
  *   that through its public entry point in strict mode; its other variants are compared as usual.
+ * - `serde-outer-parse`: `serde_json::from_slice` reads the text around a bridged value itself,
+ *   and checks its syntax and UTF-8 before the serde bridge gets the value's raw text, so for
+ *   text that isn't JSON it returns its own error. Rust must do that, `serde_json.Error` at the
+ *   root, through the `serde` entry; its other entries are compared as usual.
  *
  * Marks that allow the bytes each language writes to differ in one way only, once the canonical
  * bytes are equal. Without a mark, the bytes as written must be equal too:
@@ -220,6 +224,7 @@ export type MarkKind =
   | "ts-unsafe-integer"
   | "ts-no-bytes-api"
   | "go-unmarshal-syntax"
+  | "serde-outer-parse"
   | "number-spelling"
   | "line-separator-escaping"
   | "html-escaping"
@@ -229,6 +234,7 @@ export const MARK_KINDS: readonly MarkKind[] = [
   "ts-unsafe-integer",
   "ts-no-bytes-api",
   "go-unmarshal-syntax",
+  "serde-outer-parse",
   "number-spelling",
   "line-separator-escaping",
   "html-escaping",

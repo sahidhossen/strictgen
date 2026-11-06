@@ -23,8 +23,10 @@ describe("the conformance cases in TypeScript", () => {
       expect(result.variants.map(variantName)).toEqual([
         "strict",
         "strict/registry",
+        "strict/serde",
         "report",
         "report/registry",
+        "report/serde",
         "strict/with-llm",
         "report/with-llm",
         "strict/llm/both:entries",

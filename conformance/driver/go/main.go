@@ -150,7 +150,13 @@ func answer(line []byte) (result, error) {
 	default:
 		return result{}, fmt.Errorf("decoder %q is not supported", req.Decoder)
 	}
-	if req.Entry != "public" && req.Entry != "registry" {
+	switch req.Entry {
+	case "public", "registry":
+	case "serde":
+		// The serde entry is Rust's serde bridge. Go has none, so it compares the bridge with the
+		// shared decoder, which the registry calls.
+		req.Entry = "registry"
+	default:
 		return result{}, fmt.Errorf("entry %q is not supported", req.Entry)
 	}
 	if req.Mode != "strict" && req.Mode != "report" {

@@ -60,6 +60,7 @@ function rustTarget(config: Config, rust: RustConfig): Target {
           header,
           allow: rust.allow,
           read: rust.read,
+          serdeBridge: rust.serdeBridge,
           cleanup: cleanup(config),
           ...llmOption(config),
           publicModules: rust.embedSchemas ? [SCHEMAS_MODULE] : [],

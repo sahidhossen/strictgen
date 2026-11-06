@@ -44,3 +44,10 @@ impl helpers::Decode for Subscription {
         Ok(value)
     }
 }
+
+impl<'de> serde::Deserialize<'de> for Subscription {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}

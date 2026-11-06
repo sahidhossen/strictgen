@@ -1,6 +1,6 @@
 # Conformance suite
 
-The proof that Rust, Go and TypeScript accept and reject exactly the same JSON, report the same first error and the same unknown keys, and encode the same value again. Every case runs through every language in strict and report mode, through each language's public entry points, through the fixture registry and through the LLM decoders. Any difference is a failure, never a skip, and so is a mapping rule or error code without a case.
+The proof that Rust, Go and TypeScript accept and reject exactly the same JSON, report the same first error and the same unknown keys, and encode the same value again. Every case runs through every language in strict and report mode, through each language's public entry points, through the fixture registry, through Rust's serde bridge and through the LLM decoders. Any difference is a failure, never a skip, and so is a mapping rule or error code without a case.
 
 ```bash
 pnpm conformance                    # every case, both read modes, all three languages
@@ -68,7 +68,7 @@ Which rules a case covers is worked out from the case and the model, never tagge
 
 ## What is compared
 
-Each case runs in four variants of the code generated as most users generate it: strict and report mode, each through the public entry point and the fixture registry. The public entry points are Go's `json.Unmarshal` into the type (`DecodeX` for a tagged union) and `Report[T]` (`ReportX`), Rust's `T::from_json` and `T::report_from_json`, and TypeScript's `decodeXFromJson` and `reportXFromJson`. Go's registry calls the shared decoder directly. Rust's and TypeScript's fixture entry points are their public ones. The same public entry points run again in code generated with `llm`, whose helpers differ, for the types it has. For every variant, each language's result is compared with the others and with the expectation:
+Each case runs in six variants of the code generated as most users generate it: strict and report mode, each through the public entry point, the fixture registry and the serde bridge. The public entry points are Go's `json.Unmarshal` into the type (`DecodeX` for a tagged union) and `Report[T]` (`ReportX`), Rust's `T::from_json` and `T::report_from_json`, and TypeScript's `decodeXFromJson` and `reportXFromJson`. Go's registry calls the shared decoder directly. Rust's and TypeScript's fixture entry points are their public ones. The serde entry is Rust's serde bridge ([`docs/serde-bridge.md`](../docs/serde-bridge.md)), on in every Rust package the runner generates: `serde_json::from_slice` into the type, whose `Deserialize` runs the strict decoder on the value's raw text. Its error must be the strict error's compact form, and then the strict error's fields stand for it; any other error is `serde_json.Error`. In report mode, the unknown keys are the paths the hook got. Go and TypeScript have no serde bridge, so they answer it through their registry and public entry points. The same public entry points run again in code generated with `llm`, whose helpers differ, for the types it has. For every variant, each language's result is compared with the others and with the expectation:
 
 - Accept or reject
 - The first error: `path` and `code` with the expectation, and all five fields, `path`, `code`, `expected`, `found` and the message, across the languages
@@ -104,6 +104,7 @@ Marks that hold one language to a stated result instead of comparing it:
 | `ts-unsafe-integer` | TypeScript integers stop at 2^53 - 1, where Rust and Go hold 64 bits. TypeScript must reject the case with `out_of_range_integer` at the mark's `path`, naming its own range |
 | `ts-no-bytes-api` | The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them. TypeScript must reject the case with `invalid_json` at the root; Rust and Go are compared on every field |
 | `go-unmarshal-syntax` | `json.Unmarshal` checks the syntax itself before the generated decoder runs. Through Go's public entry point in strict mode, Go must reject text that isn't JSON with its own `*json.SyntaxError`; its other variants are compared as usual |
+| `serde-outer-parse` | `serde_json::from_slice` checks the syntax and UTF-8 of the text itself before the serde bridge gets the value's raw text. Through the serde entry, in both modes, Rust must reject such text with `serde_json.Error` at the root; its other entries are compared as usual |
 
 Marks that let the bytes as written differ in one way only, once the canonical bytes are equal:
 
@@ -123,7 +124,7 @@ The runner (`src/conformance`) generates every language for `schemas/` into a te
 {"id": 0, "accepted": false, "error": {"path": "/id", "code": "missing_key", "expected": null, "found": null, "message": "/id: missing key"}, "unknown": null, "encoded": null, "encodeError": null}
 ```
 
-The input is hex, since a case may be bytes that aren't UTF-8. `decoder` picks what reads it: `normal`, `llm`, or `cleanup` for the cleanup step, whose result carries the text it returned in `encoded`. `entry` picks the public entry point or the fixture registry, and `package` the generated code: `strict` and `report`, `strict_llm_both`, `report_llm_both`, `strict_llm_entries` and `strict_llm_objects` for code generated with `llm`, and `report_llm_vectors` for `examples/llm`. Cargo keeps its build in `driver/rust/target`, so later runs only rebuild the generated code. The temporary folder is removed when the run ends, fails or is stopped with Ctrl-C.
+The input is hex, since a case may be bytes that aren't UTF-8. `decoder` picks what reads it: `normal`, `llm`, or `cleanup` for the cleanup step, whose result carries the text it returned in `encoded`. `entry` picks the public entry point, the fixture registry or the serde bridge (`serde`), and `package` the generated code: `strict` and `report`, `strict_llm_both`, `report_llm_both`, `strict_llm_entries` and `strict_llm_objects` for code generated with `llm`, and `report_llm_vectors` for `examples/llm`. Cargo keeps its build in `driver/rust/target`, so later runs only rebuild the generated code. The temporary folder is removed when the run ends, fails or is stopped with Ctrl-C.
 
 ## Fuzzing
 

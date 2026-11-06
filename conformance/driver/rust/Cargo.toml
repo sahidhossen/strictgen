@@ -19,4 +19,5 @@ path = "src/main.rs"
 # The schemas use pattern, which the generated code checks with the regex crate.
 regex = "1.10"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["float_roundtrip"] }
+# raw_value for the serde bridge, which the runner turns on in every package.
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }

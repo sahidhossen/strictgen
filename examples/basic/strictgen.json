@@ -5,7 +5,8 @@
   "targets": {
     "rust": {
       "out": "rust/src/generated",
-      "fixtures": { "out": "rust/tests/generated", "crate": "example_basic" }
+      "fixtures": { "out": "rust/tests/generated", "crate": "example_basic" },
+      "serdeBridge": true
     },
     "go": { "out": "go", "package": "types", "shared": true, "fixtures": true },
     "typescript": { "out": "ts/generated" }

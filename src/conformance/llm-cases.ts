@@ -318,7 +318,7 @@ function parse(c: Case): Json | undefined {
 }
 
 /** Marks that take a language out of the comparison, which near misses of the case can't carry. */
-const EXCLUDING: ReadonlySet<string> = new Set(["ts-unsafe-integer", "ts-no-bytes-api", "go-unmarshal-syntax"]);
+const EXCLUDING: ReadonlySet<string> = new Set(["ts-unsafe-integer", "ts-no-bytes-api", "go-unmarshal-syntax", "serde-outer-parse"]);
 
 export interface LlmCaseOptions {
   /** The map shape the payloads give. */

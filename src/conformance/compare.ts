@@ -10,7 +10,7 @@ import { CanonicalError, canonicalize, parseJson, respell, serialize, withoutMem
 import type { Case, Mark, MarkKind, Outcome } from "./cases.js";
 import { expected } from "./cases.js";
 import type { ErrorFields, Language, Result, Variant } from "./protocol.js";
-import { CRASH, GO_SYNTAX_ERROR, LANGUAGES, variantName } from "./protocol.js";
+import { CRASH, GO_SYNTAX_ERROR, LANGUAGES, SERDE_ERROR, variantName } from "./protocol.js";
 import { compactOf } from "./vectors.js";
 
 /** What every language that ran did with one case, in one variant. */
@@ -64,6 +64,18 @@ const EXCLUSIONS: Readonly<
     applies: (v) => v.decoder === "normal" && v.mode === "strict" && v.entry === "public",
     stated: () => `rejected ${GO_SYNTAX_ERROR} at the root`,
   },
+  "serde-outer-parse": {
+    language: "rust",
+    applies: (v) => v.entry === "serde",
+    stated: () => `rejected ${SERDE_ERROR} at the root`,
+  },
+};
+
+/** The code a marked language must reject with at the root, for the marks that state one. */
+const ROOT_CODES: Readonly<Partial<Record<MarkKind, string>>> = {
+  "ts-no-bytes-api": "invalid_json",
+  "go-unmarshal-syntax": GO_SYNTAX_ERROR,
+  "serde-outer-parse": SERDE_ERROR,
 };
 
 /** The spellings each raw-bytes mark allows to differ. */
@@ -122,7 +134,7 @@ function statedFailure(mark: Mark, result: Result): string | undefined {
   const stated = EXCLUSIONS[mark.kind]?.stated(mark);
   if (stated === undefined) return undefined;
   if (mark.kind === "ts-unsafe-integer") return describe(result) === stated ? undefined : stated;
-  const ok = !result.accepted && result.error?.path === "" && result.error.code === (mark.kind === "go-unmarshal-syntax" ? GO_SYNTAX_ERROR : "invalid_json");
+  const ok = !result.accepted && result.error?.path === "" && result.error.code === ROOT_CODES[mark.kind];
   return ok ? undefined : stated;
 }
 

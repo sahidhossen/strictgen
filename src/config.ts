@@ -44,6 +44,11 @@ export interface RustConfig {
   readonly allow: readonly LintAllow[];
   readonly embedSchemas: boolean;
   readonly read: ReadMode;
+  /**
+   * Adds serde's `Deserialize` to every generated type: it takes the value's raw JSON text from
+   * serde_json and decodes it with the strict decoder. Needs serde_json's `raw_value` feature.
+   */
+  readonly serdeBridge: boolean;
 }
 
 export interface GoConfig {
@@ -305,7 +310,7 @@ function readTargets(r: Reader, value: unknown, path: Resolve): Targets {
 
 function readRust(r: Reader, value: unknown, path: Resolve): RustConfig {
   const at = "targets.rust";
-  const o = r.object(value, at, ["out", "fixtures", "allow", "embedSchemas", "read"]);
+  const o = r.object(value, at, ["out", "fixtures", "allow", "embedSchemas", "read", "serdeBridge"]);
   const out = path(r.required(o, at, "out"), `${at}.out`);
   const fixtures = readFixtures(r, o.fixtures, path);
   return {
@@ -314,6 +319,7 @@ function readRust(r: Reader, value: unknown, path: Resolve): RustConfig {
     allow: o.allow === undefined ? DEFAULT_ALLOW : readAllow(r, o.allow),
     embedSchemas: r.boolean(o.embedSchemas, `${at}.embedSchemas`, false),
     read: r.oneOf(o.read, `${at}.read`, READ_MODES, "strict"),
+    serdeBridge: r.boolean(o.serdeBridge, `${at}.serdeBridge`, false),
   };
 }
 

@@ -532,3 +532,97 @@ describe("reserved names", () => {
     );
   });
 });
+
+describe("Rust serde bridge", () => {
+  const tag = (value: string): JsonObject => ({ type: "string", const: value });
+  const model = buildModel(
+    schemaSet({
+      common: schema("common", { $defs: { userId: { type: "string" } } }),
+      lib: schema("lib", {
+        $defs: {
+          item: closed({ name: { type: "string" }, owner: { $ref: `${BASE}common.json#/$defs/userId` } }),
+          color: { type: "string", enum: ["red", "blue"] },
+          card: { ...closed({ type: tag("card"), last4: { type: "string" } }), required: ["type"] },
+          wire: { ...closed({ type: tag("wire") }), required: ["type"] },
+          payment: { oneOf: [{ $ref: "#/$defs/card" }, { $ref: "#/$defs/wire" }] },
+          delivery: { oneOf: [{ $ref: "#/$defs/item" }, { type: "string" }] },
+          code: { type: "string", minLength: 3 },
+          names: { type: "array", items: { type: "string" } },
+          itemAlias: { $ref: "#/$defs/item" },
+        },
+      }),
+    }),
+    { ids: { file: "common", suffix: "Id" } },
+  );
+  const out = (options: Parameters<typeof emitRust>[1] = {}): string =>
+    emitRust(model, options)
+      .map((f) => `// ${f.name}\n${f.contents}`)
+      .join("\n");
+  const helpersOf = (options: Parameters<typeof emitRust>[1]): string =>
+    emitRust(model, options).find((f) => f.name === "helpers.rs")?.contents ?? "";
+  const impl = (name: string): string =>
+    `impl<'de> serde::Deserialize<'de> for ${name} {\n` +
+    "    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.\n" +
+    "    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n" +
+    "        helpers::deserialize_strict(deserializer)\n" +
+    "    }\n}\n";
+  const names = (text: string, pattern: RegExp): string[] => [...text.matchAll(pattern)].map((m) => m[1] ?? "").sort();
+
+  it("leave the output as it was when the bridge is off or left out, in both read modes", () => {
+    for (const read of ["strict", "report"] as const) {
+      expect(out({ read, serdeBridge: false })).toBe(out({ read }));
+      expect(out({ read })).not.toMatch(/Deserialize|deserialize_strict|RawValue/);
+    }
+  });
+
+  it("give every type that implements Decode a Deserialize impl that runs the strict decoder", () => {
+    for (const read of ["strict", "report"] as const) {
+      const text = out({ read, serdeBridge: true });
+      const decoding = names(text, /^impl helpers::Decode for (\w+) \{$/gm);
+      expect(decoding).toEqual(["Card", "CardType", "Code", "Color", "Delivery", "Item", "Payment", "UserId", "Wire", "WireType"]);
+      for (const name of decoding) expect(text).toContain(impl(name));
+      expect(names(text, /^impl<'de> serde::Deserialize<'de> for (\w+) \{$/gm)).toEqual(decoding);
+    }
+  });
+
+  it("give plain type aliases no impl, since Rust allows none on them", () => {
+    const text = out({ serdeBridge: true });
+    expect(text).toContain("pub type Names = Vec<String>;\n");
+    expect(text).toContain("pub type ItemAlias = Item;\n");
+    expect(text).not.toMatch(/Deserialize<'de> for (Names|ItemAlias) /);
+  });
+
+  it("add deserialize_strict to the helpers, which reads the raw value and reports the compact form", () => {
+    const helpers = helpersOf({ serdeBridge: true });
+    expect(helpers).toContain(
+      "pub(super) fn deserialize_strict<'de, T: Decode, D: serde::Deserializer<'de>>(\n    deserializer: D,\n) -> Result<T, D::Error> {\n" +
+        "    let raw = <Box<serde_json::value::RawValue> as serde::Deserialize>::deserialize(deserializer)?;\n" +
+        "    T::from_json(raw.get()).map_err(|error| serde::de::Error::custom(error.compact()))\n}\n",
+    );
+    expect(helpers).toContain("serde's own parsing of\n/// what is around the value is not strict.\n///\n/// # Errors\n");
+  });
+
+  it("say in report mode that unknown keys go to the hook, with paths relative to the value", () => {
+    expect(helpersOf({ read: "report", serdeBridge: true })).toContain(
+      "/// what is around the value is not strict.\n" +
+        "/// Unknown keys are accepted, and their paths, relative to the value, go to the hook set with\n" +
+        "/// [set_unknown_key_hook], as for [Decode::from_json].\n///\n/// # Errors\n",
+    );
+  });
+
+  it("add no helper when no type implements Decode", () => {
+    const plain = buildModel(schemaSet({ lib: schema("lib", { $defs: { names: { type: "array", items: { type: "string" } } } }) }));
+    const text = (bridge: boolean): string =>
+      emitRust(plain, { serdeBridge: bridge })
+        .map((f) => f.contents)
+        .join("\n");
+    expect(text(true)).toBe(text(false));
+    expect(text(true)).not.toContain("deserialize_strict");
+  });
+
+  it("bridge the types beside their LLM decoders", () => {
+    const text = out({ serdeBridge: true, llm: { entries: true, objects: true } });
+    expect(text).toContain(impl("Item"));
+    expect(text).toContain("pub fn decode_item_from_llm(text: &str)");
+  });
+});

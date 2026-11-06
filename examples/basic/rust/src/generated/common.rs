@@ -18,6 +18,13 @@ impl helpers::Decode for EventId {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for EventId {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// The ID of an order, like `ord_5h1c`, 4 to 12 characters.
 ///
 /// Schema: `common.json#/$defs/orderId`.
@@ -32,6 +39,13 @@ impl helpers::Decode for OrderId {
 
     fn check(&self) -> Result<(), helpers::DecodeError> {
         helpers::check_length(&self.0, Some(4), Some(12))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OrderId {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -52,6 +66,13 @@ impl helpers::Decode for Timestamp {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Timestamp {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// The ID of a user, like `usr_8f2k`.
 ///
 /// Schema: `common.json#/$defs/userId`.
@@ -62,5 +83,12 @@ pub struct UserId(pub String);
 impl helpers::Decode for UserId {
     fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
         <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for UserId {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }

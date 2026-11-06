@@ -23,6 +23,13 @@ impl helpers::Decode for Day {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Day {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Different codes of three upper case letters.
 ///
 /// Schema: `shipment.json#/$defs/labelCodes`.
@@ -40,6 +47,13 @@ impl helpers::Decode for LabelCodes {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for LabelCodes {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Up to 1000 characters that aren't white space, then maybe one white space character and up to 250 more. Close to the largest pattern strictgen takes.
 ///
 /// Schema: `shipment.json#/$defs/longWord`.
@@ -54,6 +68,13 @@ impl helpers::Decode for LongWord {
 
     fn check(&self) -> Result<(), helpers::DecodeError> {
         helpers::check_pattern(&self.0, 5)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LongWord {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -79,6 +100,13 @@ impl helpers::Decode for Parcel {
         };
         object.finish()?;
         Ok(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Parcel {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -182,6 +210,13 @@ impl helpers::Decode for Shipment {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Shipment {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Patterns whose meaning differs between regex engines unless strictgen spells it out.
 ///
 /// Schema: `shipment.json#/$defs/text`.
@@ -253,6 +288,13 @@ impl helpers::Decode for Text {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Text {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Two letters, nine digits and two letters, like AB123456789US.
 ///
 /// Schema: `shipment.json#/$defs/trackingNumber`.
@@ -268,5 +310,12 @@ impl helpers::Decode for TrackingNumber {
     fn check(&self) -> Result<(), helpers::DecodeError> {
         helpers::check_length(&self.0, None, Some(13))
             .and_then(|()| helpers::check_pattern(&self.0, 1))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for TrackingNumber {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }

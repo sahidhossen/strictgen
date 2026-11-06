@@ -51,12 +51,15 @@ export type Shape = "entries" | "objects";
  * Which function decodes: `public`, the entry point users call (Go's `json.Unmarshal` into the
  * type, `DecodeX` for a tagged union, `Report[T]` or `ReportX` in report mode; Rust's
  * `T::from_json` and `T::report_from_json`; TypeScript's `decodeXFromJson` and
- * `reportXFromJson`), or `registry`, the fixture registry the generated tests use. Go's registry
- * calls the shared decoder directly; Rust's and TypeScript's fixture entry points are their public
- * ones, so for them both entries run the same function.
+ * `reportXFromJson`), `registry`, the fixture registry the generated tests use, or `serde`,
+ * Rust's serde bridge (`targets.rust.serdeBridge`): `serde_json::from_slice` into the type, whose
+ * `Deserialize` runs the strict decoder on the value's raw text. Go's registry calls the shared
+ * decoder directly; Rust's and TypeScript's fixture entry points are their public ones, so for
+ * them both entries run the same function. Go and TypeScript have no serde bridge, so they answer
+ * `serde` as `registry`, and the bridge is compared with the strict decoder of each.
  */
-export type Entry = "public" | "registry";
-export const ENTRIES: readonly Entry[] = ["public", "registry"];
+export type Entry = "public" | "registry" | "serde";
+export const ENTRIES: readonly Entry[] = ["public", "registry", "serde"];
 
 /**
  * One way of reading a case: a read mode, a decoder and an entry point, and the LLM
@@ -108,6 +111,12 @@ export const CRASH = "crash";
  * `*json.SyntaxError`, before the generated decoder ran.
  */
 export const GO_SYNTAX_ERROR = "json.SyntaxError";
+
+/**
+ * The error code the Rust driver reports for the `serde` entry when serde_json refused the input
+ * itself, before the bridge ran, or with an error that isn't the strict decoder's compact form.
+ */
+export const SERDE_ERROR = "serde_json.Error";
 
 export interface Request {
   readonly id: number;

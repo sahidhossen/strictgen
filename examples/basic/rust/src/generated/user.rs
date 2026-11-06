@@ -31,6 +31,13 @@ impl helpers::Decode for Contact {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Contact {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// How to reach a user: by email or by phone, exactly one of them.
 ///
 /// Schema: `user.json#/$defs/contact`.
@@ -55,6 +62,13 @@ impl helpers::Decode for ContactEmail {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for ContactEmail {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// How to reach a user: by email or by phone, exactly one of them.
 ///
 /// Schema: `user.json#/$defs/contact`.
@@ -76,6 +90,13 @@ impl helpers::Decode for ContactPhone {
         };
         object.finish()?;
         Ok(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for ContactPhone {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -132,6 +153,13 @@ impl helpers::Decode for Role {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Role {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// A user account.
 ///
 /// Schema: `user.json#`.
@@ -175,5 +203,12 @@ impl helpers::Decode for User {
     fn check(&self) -> Result<(), helpers::DecodeError> {
         helpers::within("createdAt", helpers::Decode::check(&self.created_at))?;
         Ok(())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for User {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }

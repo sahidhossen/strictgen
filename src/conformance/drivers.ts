@@ -82,11 +82,14 @@ export function vectorsFolder(conformance: string): string {
   return join(conformance, "..", "examples", "llm");
 }
 
-/** The targets of one package under `out`. */
+/**
+ * The targets of one package under `out`. Rust has the serde bridge in every package, so it
+ * builds beside every other option; the `serde` entry runs it in the packages without `llm`.
+ */
 function targetsOf(name: string, mode: Mode): Record<string, unknown> {
   return {
     typescript: { out: `ts/${name}`, read: mode },
-    rust: { out: `rust/src/${name}`, read: mode },
+    rust: { out: `rust/src/${name}`, read: mode, serdeBridge: true },
     go: { out: `go/${name}`, package: name, fixtures: true, read: mode },
   };
 }
@@ -319,12 +322,15 @@ ${mods}`;
 /** The Rust dispatch: a package and a type name to the generated decoder, the LLM decoder and the cleanup step. */
 function rustDispatch(packages: readonly Package[]): string {
   const normal: string[] = [];
+  const serde: string[] = [];
   const llm: string[] = [];
   const clean: string[] = [];
   for (const p of packages) {
     const macro = p.build.mode === "strict" ? "strict_outcome" : "report_outcome";
     for (const t of [...p.types.keys()].sort()) {
       normal.push(`        (${JSON.stringify(p.name)}, ${JSON.stringify(t)}) => ${macro}!(${p.name}, ${t}, json),\n`);
+      // The serde entry runs only in the packages without llm (suite.ts), so only they get arms.
+      if (!p.llm) serde.push(`        (${JSON.stringify(p.name)}, ${JSON.stringify(t)}) => serde_${macro}!(${p.name}, ${t}, json),\n`);
       if (p.llm) llm.push(`        (${JSON.stringify(p.name)}, ${JSON.stringify(t)}) => llm_outcome!(${p.name}::${rustLlmName(t)}(text)),\n`);
     }
     if (p.cleanup) clean.push(`        ${JSON.stringify(p.name)} => ${p.name}::clean_llm_json(text),\n`);
@@ -344,6 +350,15 @@ use crate::Outcome;
 pub fn decode(package: &str, ty: &str, json: &[u8]) -> Option<Outcome> {
     Some(match (package, ty) {
 ${normal.join("")}        _ => return None,
+    })
+}
+
+/// Decodes \`json\` as the type named \`ty\` of \`package\` through \`serde_json::from_slice\` and the
+/// type's serde bridge, or \`None\` when there is no such type.
+#[allow(clippy::too_many_lines, reason = "one arm per package and type")]
+pub fn serde(package: &str, ty: &str, json: &[u8]) -> Option<Outcome> {
+    Some(match (package, ty) {
+${serde.join("")}        _ => return None,
     })
 }
 

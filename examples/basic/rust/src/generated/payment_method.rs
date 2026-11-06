@@ -32,6 +32,13 @@ impl helpers::Decode for BankAccount {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for BankAccount {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Schema: `payment-method.json#/$defs/bankAccount/properties/type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum BankAccountType {
@@ -73,6 +80,13 @@ impl helpers::Decode for BankAccountType {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for BankAccountType {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// A payment card.
 ///
 /// Schema: `payment-method.json#/$defs/card`.
@@ -103,6 +117,13 @@ impl helpers::Decode for Card {
         };
         object.finish()?;
         Ok(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Card {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -159,6 +180,13 @@ impl helpers::Decode for CardBrand {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for CardBrand {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Schema: `payment-method.json#/$defs/card/properties/type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum CardType {
@@ -200,6 +228,13 @@ impl helpers::Decode for CardType {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for CardType {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// A way to pay, picked by its `type` key.
 ///
 /// Schema: `payment-method.json#`.
@@ -231,6 +266,13 @@ impl helpers::Decode for PaymentMethod {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for PaymentMethod {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// A digital wallet.
 ///
 /// Schema: `payment-method.json#/$defs/wallet`.
@@ -256,6 +298,13 @@ impl helpers::Decode for Wallet {
         };
         object.finish()?;
         Ok(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Wallet {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -307,6 +356,13 @@ impl helpers::Decode for WalletProvider {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for WalletProvider {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Schema: `payment-method.json#/$defs/wallet/properties/type`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum WalletType {
@@ -345,5 +401,12 @@ impl helpers::Decode for WalletType {
             "wallet" => Ok(Self::Wallet),
             other => Err(helpers::not_in_enum(other, &["wallet"])),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WalletType {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
