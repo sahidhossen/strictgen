@@ -143,10 +143,10 @@ Codes are public API: changing one is a major version.
 | `unknown_key` | unknown key | a key the type doesn't name; `path` is the key's own pointer, like `/user/nickname`. In report mode such a key is reported instead, see [read-modes.md](read-modes.md) | | |
 | `missing_key` | missing key | a required key that is absent, at the key's pointer | | |
 | `null_not_allowed` | null not allowed | `null` where the type doesn't take it, like for an optional key | the type | |
-| `wrong_type` | wrong type | a value of another JSON type; for an integer also a fraction, an exponent spelling like `1e2` or `12.0`, and `-0` | the type | the value |
+| `wrong_type` | wrong type | a value of another JSON type, also for a const or an enum, like a string for an integer const; for an integer also a fraction, an exponent spelling like `1e2` or `12.0`, and `-0` | the type | the value |
 | `bad_tag` | bad tag | a tag no branch of a tagged union has, at the tag's pointer | the tags | the tag |
 | `not_in_enum` | not in enum | a string the enum doesn't list | the values | the value |
-| `not_const` | not const | a value other than the const | the const | the value |
+| `not_const` | not const | a value of the const's JSON type other than the const | the const | the value |
 | `too_short` | too short | a string, array or map with fewer code points, items or keys than `minLength`, `minItems` or `minProperties` | the minimum | the count |
 | `too_long` | too long | a string, array or map with more code points, items or keys than `maxLength`, `maxItems` or `maxProperties` | the maximum | the count |
 | `too_small` | too small | a number below its `minimum`, or not above its `exclusiveMinimum` | the bound | the value |
@@ -158,7 +158,7 @@ Codes are public API: changing one is a major version.
 | `out_of_range_integer` | out of range integer | an integer the language can't hold exactly | the range | the value |
 | `invalid_json` | invalid JSON | text that isn't JSON: a syntax error, invalid UTF-8, a lone surrogate, data after the value, a number out of range | | what was found and the byte offset |
 | `duplicate_key` | duplicate key | an object that gives the same key twice, at the key's pointer, or a map an LLM gave as entries with a key twice, at the later entry's key ([llm.md](llm.md#decoders)) | | the key and the byte offset, or for entries the key alone |
-| `too_deep` | too deep | a value inside 128 or more arrays and objects | `at most 127 nested arrays and objects` | the byte offset |
+| `too_deep` | too deep | a value inside more than 127 nested arrays and objects | `at most 127 nested arrays and objects` | the byte offset |
 
 Some cases worth knowing:
 

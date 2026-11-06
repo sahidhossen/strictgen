@@ -3,17 +3,19 @@
 import type { Language, Mode } from "./protocol.js";
 import { LANGUAGES, MODES } from "./protocol.js";
 
-export const USAGE = `usage: pnpm conformance [--mode strict|report|both] [--lang rust,go,ts] [--keep]
+export const USAGE = `usage: pnpm conformance [--mode strict|report|both] [--lang rust,go,ts] [--keep] [--coverage]
 
-  --mode   the read modes to run, both by default
-  --lang   the languages to run, all three by default. Leaving one out is the only way to run
-           without its toolchain: a missing toolchain is an error
-  --keep   keep the temporary folder with the generated code and drivers, and print its path`;
+  --mode      the read modes to run, both by default
+  --lang      the languages to run, all three by default. Leaving one out is the only way to run
+              without its toolchain: a missing toolchain is an error
+  --keep      keep the temporary folder with the generated code and drivers, and print its path
+  --coverage  print how many cases cover each mapping rule and error code, and run nothing`;
 
 export interface Arguments {
   readonly modes: readonly Mode[];
   readonly languages: readonly Language[];
   readonly keep: boolean;
+  readonly coverage: boolean;
 }
 
 /** The parsed arguments, or a usage error. */
@@ -21,6 +23,7 @@ export function parseArguments(args: readonly string[]): Arguments | string {
   let modes: readonly Mode[] = MODES;
   let languages: readonly Language[] = LANGUAGES;
   let keep = false;
+  let coverage = false;
   const seen = new Set<string>();
   for (let i = 0; i < args.length; i++) {
     const arg = args[i] ?? "";
@@ -29,6 +32,10 @@ export function parseArguments(args: readonly string[]): Arguments | string {
     seen.add(name);
     if (name === "--keep" && inline === undefined) {
       keep = true;
+      continue;
+    }
+    if (name === "--coverage" && inline === undefined) {
+      coverage = true;
       continue;
     }
     if (name !== "--mode" && name !== "--lang") return `unknown argument ${arg}`;
@@ -44,5 +51,5 @@ export function parseArguments(args: readonly string[]): Arguments | string {
     if (bad !== undefined) return `--lang takes ${LANGUAGES.join(", ")}, not ${bad}`;
     languages = LANGUAGES.filter((l) => list.includes(l));
   }
-  return { modes, languages, keep };
+  return { modes, languages, keep, coverage };
 }

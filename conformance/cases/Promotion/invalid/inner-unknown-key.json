@@ -1,0 +1,1 @@
+{"code": "SPRING", "reward": {"kind": "capped", "cap": 2000, "reward": {"kind": "percent", "percent": 5, "note": "x"}}}

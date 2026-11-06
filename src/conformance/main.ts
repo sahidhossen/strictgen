@@ -13,9 +13,10 @@ import { CodegenError } from "../schema.js";
 import { parseArguments, USAGE } from "./args.js";
 import { LayoutError } from "./cases.js";
 import { table } from "./compare.js";
-import { ToolchainError } from "./drivers.js";
+import { conformanceModel, ToolchainError } from "./drivers.js";
 import { DriverError, LANGUAGES } from "./protocol.js";
-import { runSuite } from "./suite.js";
+import { coverageLines } from "./coverage.js";
+import { loadSuite, runSuite, withScratch } from "./suite.js";
 
 async function main(args: readonly string[]): Promise<number> {
   const parsed = parseArguments(args);
@@ -26,13 +27,25 @@ async function main(args: readonly string[]): Promise<number> {
   const out = (line: string): void => void process.stdout.write(`${line}\n`);
   const conformance = fileURLToPath(new URL("../../conformance", import.meta.url));
   try {
+    if (parsed.coverage) {
+      const { manifest, coverage: report } = await withScratch(false, async (dir) => Promise.resolve(loadSuite(conformance, conformanceModel(conformance, dir))));
+      for (const line of coverageLines(report, manifest.coverage)) out(line);
+      return 0;
+    }
     const result = await runSuite({ conformance, ...parsed, log: out });
     if (result.kept !== undefined) out(`kept the generated code and drivers in ${result.kept}`);
-    const runs = result.cases.length * result.variants.length;
     out(
       `conformance: ${String(result.cases.length)} cases, ${parsed.modes.join(" and ")} mode, ` +
-        `${parsed.languages.join(", ")}: ${String(runs)} runs per language (${String(result.variants.length)} variants), ${String(result.marks.length)} marked`,
+        `${parsed.languages.join(", ")}: ${String(result.jobs.length)} runs per language (${String(result.variants.length)} variants), ${String(result.marks.length)} marked`,
     );
+    const llm = result.jobs.filter((j) => j.variant.decoder === "llm" && j.variant.vectors !== true).length;
+    const vectors = result.jobs.filter((j) => j.variant.vectors === true).length;
+    out(`  ${String(llm)} runs through the LLM decoders, ${String(vectors)} of the shared vectors of examples/llm`);
+    for (const [variant, skipped] of result.skipped) {
+      const reasons = new Map<string, number>();
+      for (const why of skipped.values()) reasons.set(why, (reasons.get(why) ?? 0) + 1);
+      for (const [why, n] of [...reasons].sort(([a], [b]) => (a < b ? -1 : 1))) out(`  ${variant}: ${String(n)} invalid cases not in the LLM form: ${why}`);
+    }
     if (parsed.languages.length < LANGUAGES.length || parsed.modes.length < 2) {
       out("not every language and mode ran, so marks were not checked for being needed");
     }

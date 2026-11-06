@@ -320,6 +320,53 @@ describe("TypeScript LLM decoders", () => {
   );
 });
 
+describe("the LLM state of the TypeScript helpers", () => {
+  const m = model({ order: ORDER });
+
+  it(
+    "ends with a decode that throws, so the next normal decode takes null for nothing again",
+    async () => {
+      const fn = await load(emitTypeScript(m, { llm: BOTH }));
+      const llm = fn("decodeOrderFromLlm");
+      const normal = fn("decodeOrderFromJson");
+      // Each throws while the LLM decode runs: a wrong type deep in the value, a broken entry, a
+      // constraint after the structure decoded.
+      for (const text of [
+        '{"id":"ab","note":null,"labels":null,"payment":{"kind":"card","last4":5},"contact":null}',
+        '{"id":"ab","labels":[{"key":"a"}]}',
+        '{"id":"a","note":null}',
+      ]) {
+        expect(() => llm(text)).toThrow();
+        expect(outcome(normal, '{"id":"ab","note":null}')).toBe("/note null_not_allowed, expected a string");
+        expect(outcome(normal, '{"id":"ab","labels":[]}')).toBe("/labels wrong_type, expected an object, found an array");
+        expect(outcome(llm, '{"id":"ab","note":null}')).toBe('ok {"id":"ab"}');
+      }
+      // A throw that isn't a DecodeError ends it too: a value that isn't text.
+      expect(() => llm(undefined as unknown as string)).toThrow();
+      expect(outcome(normal, '{"id":"ab","note":null}')).toBe("/note null_not_allowed, expected a string");
+    },
+    COMPILE_TIMEOUT,
+  );
+});
+
+describe("the llm option", () => {
+  const m = model({ order: ORDER });
+  const none: LlmMaps = { entries: false, objects: false };
+
+  it("fails in every emitter when it reads maps in no shape", () => {
+    const message = "the llm option needs a map shape: entries, objects or both";
+    expect(() => emitTypeScript(m, { llm: none })).toThrow(message);
+    expect(() => emitGo(m, { llm: none })).toThrow(message);
+    expect(() => emitRust(m, { llm: none })).toThrow(message);
+    expect(() => emitTypeScript(m, { llm: none, read: "report", cleanup: true })).toThrow(message);
+    for (const maps of [BOTH, ENTRIES, OBJECTS]) {
+      expect(() => emitTypeScript(m, { llm: maps })).not.toThrow();
+      expect(() => emitGo(m, { llm: maps })).not.toThrow();
+      expect(() => emitRust(m, { llm: maps })).not.toThrow();
+    }
+  });
+});
+
 describe("the shared LLM vectors in report mode", () => {
   it(
     "decode the same in TypeScript, since LLM decoders are strict in every read mode",

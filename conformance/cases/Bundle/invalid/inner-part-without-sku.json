@@ -1,0 +1,13 @@
+{
+  "sku": "B-1",
+  "version": 2,
+  "parts": [
+    {
+      "sku": "P-1",
+      "inner": {
+        "sku": "P-2",
+        "inner": {}
+      }
+    }
+  ]
+}

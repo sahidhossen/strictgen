@@ -8,7 +8,7 @@ use std::fmt;
 
 use serde::Serialize;
 
-/// serde_json's recursion limit: a value nested in 128 or more arrays and objects fails, so
+/// serde_json's recursion limit: more than 127 nested arrays and objects fail, so
 /// Rust, Go and TypeScript accept the same documents and decoding stays bounded.
 const MAX_DEPTH: usize = 128;
 
@@ -66,7 +66,7 @@ impl DecodeError {
     pub const INVALID_JSON: &'static str = "invalid_json";
     /// The code for an object that gives the same key twice, at the key's path.
     pub const DUPLICATE_KEY: &'static str = "duplicate_key";
-    /// The code for a value inside 128 or more arrays and objects.
+    /// The code for a value inside more than 127 nested arrays and objects.
     pub const TOO_DEEP: &'static str = "too_deep";
 
     /// The one-line form, made for logs and for asking an LLM to retry, like

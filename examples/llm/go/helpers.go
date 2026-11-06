@@ -17,8 +17,8 @@ import (
 	"unicode/utf8"
 )
 
-// maxDepth is serde_json's recursion limit: a value nested in 128 or more arrays and objects
-// fails, so Go and Rust accept the same documents and decoding stays bounded.
+// maxDepth is serde_json's recursion limit: more than 127 nested arrays and objects
+// fail, so Go and Rust accept the same documents and decoding stays bounded.
 const maxDepth = 128
 
 // foundMax is the number of code points of a string an error shows, before "...".
@@ -62,7 +62,7 @@ const (
 	CodeInvalidJSON = "invalid_json"
 	// CodeDuplicateKey is an object that gives the same key twice, at the key's path.
 	CodeDuplicateKey = "duplicate_key"
-	// CodeTooDeep is a value inside 128 or more arrays and objects.
+	// CodeTooDeep is a value inside more than 127 nested arrays and objects.
 	CodeTooDeep = "too_deep"
 )
 

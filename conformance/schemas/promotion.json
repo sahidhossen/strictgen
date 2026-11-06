@@ -1,0 +1,54 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/promotion.json",
+  "title": "Promotion",
+  "description": "A promotion: a reward that may cap another reward, and a condition that may be the opposite of another condition.",
+  "type": "object",
+  "properties": {
+    "code": { "description": "The code a customer types.", "type": "string", "minLength": 1 },
+    "reward": { "$ref": "#/$defs/reward" },
+    "when": { "$ref": "#/$defs/when" }
+  },
+  "required": ["code", "reward"],
+  "additionalProperties": false,
+  "$defs": {
+    "reward": {
+      "description": "What the customer gets: a percentage off, or another reward with a cap.",
+      "oneOf": [{ "$ref": "#/$defs/capped" }, { "$ref": "#/$defs/percentOff" }]
+    },
+    "capped": {
+      "description": "Another reward, worth at most a number of cents.",
+      "type": "object",
+      "properties": {
+        "kind": { "const": "capped" },
+        "cap": { "description": "The most the reward is worth, in cents.", "type": "integer", "minimum": 1 },
+        "reward": { "$ref": "#/$defs/reward" }
+      },
+      "required": ["kind", "cap", "reward"],
+      "additionalProperties": false
+    },
+    "percentOff": {
+      "description": "A percentage off the order.",
+      "type": "object",
+      "properties": {
+        "kind": { "const": "percent" },
+        "percent": { "description": "The percentage, 1 to 100.", "type": "integer", "minimum": 1, "maximum": 100 }
+      },
+      "required": ["kind", "percent"],
+      "additionalProperties": false
+    },
+    "when": {
+      "description": "When the promotion applies: from an order total in cents, or when another condition doesn't hold.",
+      "oneOf": [{ "type": "integer", "minimum": 0 }, { "$ref": "#/$defs/negation" }]
+    },
+    "negation": {
+      "description": "The opposite of another condition.",
+      "type": "object",
+      "properties": {
+        "unless": { "$ref": "#/$defs/when" }
+      },
+      "required": ["unless"],
+      "additionalProperties": false
+    }
+  }
+}

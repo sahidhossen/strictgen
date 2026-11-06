@@ -7,7 +7,7 @@ import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
 import { RENAME_TYPE, TS_RESERVED } from "./naming.js";
 import { TS_CLEANUP } from "./cleanup-helpers.js";
 import type { LlmMaps } from "./llm-decoders.js";
-import { checkLlmNames, isWrapped, llmTypes, tsLlmName } from "./llm-decoders.js";
+import { checkLlmMaps, checkLlmNames, isWrapped, llmTypes, tsLlmName } from "./llm-decoders.js";
 import { asciiString, tsHelpersBody } from "./ts-helpers.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
@@ -83,6 +83,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   if (report && !decoders) throw new Error("report mode needs the decoders");
   const cleanup = options.cleanup === true;
   if (cleanup && !decoders) throw new Error("the cleanup step needs the decoders");
+  checkLlmMaps(options.llm);
   const llm = decoders && options.llm !== undefined ? options.llm : undefined;
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   const checks = new Checks(model.decls);

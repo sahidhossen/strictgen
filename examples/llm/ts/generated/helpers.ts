@@ -66,7 +66,7 @@ export const ErrorCode = {
   InvalidJson: "invalid_json",
   /** An object that gives the same key twice, at the key's path. */
   DuplicateKey: "duplicate_key",
-  /** A value inside 128 or more arrays and objects. */
+  /** A value inside more than 127 nested arrays and objects. */
   TooDeep: "too_deep",
 } as const;
 
@@ -173,8 +173,8 @@ export function attempt<T>(decode: Decoder<T>, json: unknown): DecodeResult<T> {
 }
 
 /**
- * The deepest nesting the strict reader takes: a value inside MAX_DEPTH or more arrays and
- * objects fails, as in Rust (serde_json's recursion limit) and Go, so reading and decoding stay
+ * The deepest nesting the strict reader takes: more than MAX_DEPTH - 1 nested arrays and
+ * objects fail, as in Rust (serde_json's recursion limit) and Go, so reading and decoding stay
  * bounded however deep the input.
  */
 const MAX_DEPTH = 128;

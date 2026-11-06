@@ -664,8 +664,8 @@ function withLlm(body: string, report: boolean): string {
 export function goHelpersBody(report: boolean, llm?: LlmMaps): string {
   // Nodes hold their offset and document in report mode and for LLM decoders.
   const docked = report || llm !== undefined;
-  const body = String.raw`// maxDepth is serde_json's recursion limit: a value nested in ${String(MAX_DEPTH)} or more arrays and objects
-// fails, so Go and Rust accept the same documents and decoding stays bounded.
+  const body = String.raw`// maxDepth is serde_json's recursion limit: more than ${String(MAX_DEPTH - 1)} nested arrays and objects
+// fail, so Go and Rust accept the same documents and decoding stays bounded.
 const maxDepth = ${String(MAX_DEPTH)}
 
 // foundMax is the number of code points of a string an error shows, before "...".

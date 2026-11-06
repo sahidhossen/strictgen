@@ -1,8 +1,9 @@
 /**
- * Generates every language for the conformance schemas into a temporary folder, once per read
- * mode, builds one Rust and one Go driver binary over them, and runs requests through each:
- * the binaries read a batch over stdin, TypeScript runs in process. Every driver answers in the
- * format of `protocol.ts`.
+ * Generates every language for the conformance schemas into a temporary folder, once per
+ * generated package (a read mode, and the LLM map shapes the code reads, see `packages`), builds
+ * one Rust and one Go driver binary over them, and runs requests through each: the binaries read
+ * a batch over stdin, TypeScript runs in process. Every driver answers in the format of
+ * `protocol.ts`.
  */
 
 import { spawnSync } from "node:child_process";
@@ -16,10 +17,11 @@ import type { Config } from "../config.js";
 import { parseConfig } from "../config.js";
 import { GO_FIXTURES } from "../emit-go.js";
 import { configModel } from "../examples.js";
-import type { Model } from "../model.js";
+import { goLlmName, rustLlmName, tsLlmName } from "../llm-decoders.js";
+import type { Decl, Model } from "../model.js";
 import { configTargets } from "../targets.js";
-import type { ErrorFields, Language, Mode, Request, Result } from "./protocol.js";
-import { CRASH, DriverError, MODES, parseResult, requestLine } from "./protocol.js";
+import type { ErrorFields, Language, Maps, Mode, Request, Result } from "./protocol.js";
+import { CRASH, DriverError, MAPS, MODES, packageName, parseResult, requestLine } from "./protocol.js";
 
 /** How long building one driver may take, a cold Rust build included. */
 export const BUILD_TIMEOUT = 15 * 60_000;
@@ -39,19 +41,83 @@ export class ToolchainError extends Error {
 /** The ID rule of the conformance schemas, as in `examples/basic`. */
 const IDS = { file: "common", suffix: "Id" };
 
-/** The config that generates every language for the conformance schemas in one read mode, under `out`. */
-export function conformanceConfig(conformance: string, out: string, mode: Mode): Config {
+/** The built in profiles that give each set of map shapes. */
+export const MAPS_PROFILES: Readonly<Record<Maps, readonly string[]>> = {
+  both: ["openai", "anthropic", "gemini"],
+  entries: ["openai"],
+  objects: ["gemini"],
+};
+
+/** The folder, under the scratch folder, that holds the schemas the LLM packages are generated from. */
+export const LLM_SCHEMAS = "llm-schemas";
+
+/**
+ * One generated package: what it is generated from and how. `maps` is set for code generated
+ * with `llm`, whose LLM decoders read those map shapes; `vectors` for `examples/llm`, generated
+ * with its own config, cleanup step included.
+ */
+export interface Build {
+  readonly mode: Mode;
+  readonly maps?: Maps;
+  readonly vectors?: true;
+}
+
+/**
+ * Every package a run generates: the normal decoders in both read modes without `llm`, as most
+ * users generate them; with `llm` reading both map shapes in both read modes; with `llm` reading
+ * one shape only; and `examples/llm` in report mode, so its shared vectors run in report mode in
+ * every language.
+ */
+export const BUILDS: readonly Build[] = [
+  ...MODES.map((mode) => ({ mode })),
+  ...MODES.map((mode) => ({ mode, maps: "both" as const })),
+  ...MAPS.filter((m) => m !== "both").map((maps) => ({ mode: "strict" as const, maps })),
+  { mode: "report", vectors: true },
+];
+
+/** The `examples/llm` folder, beside the `conformance` folder. */
+export function vectorsFolder(conformance: string): string {
+  return join(conformance, "..", "examples", "llm");
+}
+
+/** The targets of one package under `out`. */
+function targetsOf(name: string, mode: Mode): Record<string, unknown> {
+  return {
+    typescript: { out: `ts/${name}`, read: mode },
+    rust: { out: `rust/src/${name}`, read: mode },
+    go: { out: `go/${name}`, package: name, fixtures: true, read: mode },
+  };
+}
+
+/**
+ * The config that generates every language for one package under `out`. The LLM packages read
+ * the schemas `writeLlmSchemas` copied, the vectors package `examples/llm` with its own profiles
+ * and cleanup step.
+ */
+export function conformanceConfig(conformance: string, out: string, build: Build | Mode): Config {
+  const b: Build = typeof build === "string" ? { mode: build } : build;
+  const name = packageName({ ...b, decoder: "normal", entry: "public" });
+  const file = join(out, "strictgen.json");
+  if (b.vectors === true) {
+    const folder = vectorsFolder(conformance);
+    const raw = JSON.parse(readFileSync(join(folder, "strictgen.json"), "utf8")) as { llm?: { profiles?: unknown; cleanup?: unknown } };
+    return parseConfig(
+      {
+        schemas: join(folder, "schemas"),
+        targets: targetsOf(name, b.mode),
+        llm: { profiles: raw.llm?.profiles, out: `llm/${name}`, cleanup: raw.llm?.cleanup },
+      },
+      file,
+    );
+  }
   return parseConfig(
     {
-      schemas: join(conformance, "schemas"),
+      schemas: b.maps === undefined ? join(conformance, "schemas") : join(out, LLM_SCHEMAS),
       ids: IDS,
-      targets: {
-        typescript: { out: `ts/${mode}`, read: mode },
-        rust: { out: `rust/src/${mode}`, read: mode },
-        go: { out: `go/${mode}`, package: mode, fixtures: true, read: mode },
-      },
+      targets: targetsOf(name, b.mode),
+      ...(b.maps === undefined ? {} : { llm: { profiles: MAPS_PROFILES[b.maps], out: `llm/${name}` } }),
     },
-    join(out, "strictgen.json"),
+    file,
   );
 }
 
@@ -60,10 +126,40 @@ export function conformanceModel(conformance: string, out: string): Model {
   return configModel(conformanceConfig(conformance, out, "strict")).model;
 }
 
-/** A type a case folder may name: its key in the fixture registry, and whether it is a tagged union. */
+/**
+ * Copies the schemas the LLM packages are generated from to `out`: every conformance schema but
+ * the `excluded` ones, whose types no provider-ready schema can describe.
+ */
+export function writeLlmSchemas(conformance: string, out: string, excluded: ReadonlySet<string>): void {
+  const from = join(conformance, "schemas");
+  const to = join(out, LLM_SCHEMAS);
+  mkdirSync(to, { recursive: true });
+  for (const name of readdirSync(from).sort()) {
+    if (name.endsWith(".json") && !excluded.has(name)) copyFileSync(join(from, name), join(to, name));
+  }
+}
+
+/**
+ * A type a case folder may name: its key in the fixture registry, and the tagged union it is,
+ * itself or through aliases, whose Go functions (`DecodeX`, `ReportX`) decode it.
+ */
 export interface CaseType {
   readonly key: string;
-  readonly tagged: boolean;
+  readonly tagged: string | undefined;
+}
+
+/** The tagged union a declaration is, itself or as an alias of one. */
+function taggedOf(model: Model, decl: Decl): string | undefined {
+  let d: Decl | undefined = decl;
+  const seen = new Set<string>();
+  while (d !== undefined && !seen.has(d.name)) {
+    seen.add(d.name);
+    if (d.kind === "tagged") return d.name;
+    if (d.kind !== "alias" || d.type.kind !== "ref") return undefined;
+    const name: string = d.type.name;
+    d = model.decls.find((x) => x.name === name);
+  }
+  return undefined;
 }
 
 /** The types a case folder may name: those with their own schema root or `$defs` entry. */
@@ -77,12 +173,23 @@ export function caseTypes(model: Model): Map<string, CaseType> {
               d.name,
               {
                 key: d.source.def === undefined ? d.source.schema : `${d.source.schema}/${d.source.def}`,
-                tagged: d.kind === "tagged",
+                tagged: taggedOf(model, d),
               },
             ] as const,
           ],
     ),
   );
+}
+
+/** One generated package, by its name in every language. */
+export interface Package {
+  readonly name: string;
+  readonly build: Build;
+  readonly model: Model;
+  /** The types requests may name, each with an LLM decoder when the package has `llm`. */
+  readonly types: ReadonlyMap<string, CaseType>;
+  readonly llm: boolean;
+  readonly cleanup: boolean;
 }
 
 function write(path: string, contents: string): void {
@@ -91,18 +198,28 @@ function write(path: string, contents: string): void {
 }
 
 /**
- * Writes the generated code of every language and read mode under `out`, with the Go fixture
- * registry as a normal file, so the driver can use it.
+ * Writes the generated code of every language and package under `out`, the provider-ready
+ * schemas of the LLM packages included, with the Go fixture registry as a normal file, so the
+ * driver can use it. The LLM packages leave out the `excluded` schemas.
  */
-export function generateAll(conformance: string, out: string): void {
-  for (const mode of MODES) {
-    const config = conformanceConfig(conformance, out, mode);
+export function generateAll(conformance: string, out: string, excluded: ReadonlySet<string> = new Set()): Package[] {
+  writeLlmSchemas(conformance, out, excluded);
+  return BUILDS.map((build) => {
+    const config = conformanceConfig(conformance, out, build);
     const { schemas, model } = configModel(config);
     for (const file of configTargets(config).flatMap((t) => t.emit(model, schemas))) {
       const path = file.path.endsWith(`/${GO_FIXTURES}`) ? file.path.replace(/_test\.go$/, ".go") : file.path;
       write(join(out, path), file.contents);
     }
-  }
+    return {
+      name: packageName({ ...build, decoder: "normal", entry: "public" }),
+      build,
+      model,
+      types: caseTypes(model),
+      llm: config.llm !== undefined,
+      cleanup: config.llm?.cleanup === true,
+    };
+  });
 }
 
 interface Spawned {
@@ -183,20 +300,64 @@ export function probeToolchain(language: "rust" | "go"): string {
   return result.stdout.trim().split("\n")[0] ?? command;
 }
 
-function rustDispatch(types: readonly string[]): string {
-  const arms = MODES.flatMap((mode) =>
-    types.map((t) => `        (${JSON.stringify(mode)}, ${JSON.stringify(t)}) => crate::run_${mode}::<${mode}::${t}>(json),\n`),
-  );
-  return `//! Written by the conformance runner: maps a read mode and a type name to the generated type.
+/** The Rust library over the generated packages: one module per package. */
+function rustLib(packages: readonly Package[]): string {
+  const mods = packages
+    .map((p) => p.name)
+    .sort()
+    .map((n) => `pub mod ${n};\n`)
+    .join("");
+  return `//! The Rust code strictgen generates for the conformance schemas, one module per package.
+//!
+//! Written by the conformance runner, beside the generated modules, before it builds the crate.
 
-use conformance_driver::{report, strict};
+${mods}`;
+}
+
+/** The Rust dispatch: a package and a type name to the generated decoder, the LLM decoder and the cleanup step. */
+function rustDispatch(packages: readonly Package[]): string {
+  const normal: string[] = [];
+  const llm: string[] = [];
+  const clean: string[] = [];
+  for (const p of packages) {
+    const macro = p.build.mode === "strict" ? "strict_outcome" : "report_outcome";
+    for (const t of [...p.types.keys()].sort()) {
+      normal.push(`        (${JSON.stringify(p.name)}, ${JSON.stringify(t)}) => ${macro}!(${p.name}, ${t}, json),\n`);
+      if (p.llm) llm.push(`        (${JSON.stringify(p.name)}, ${JSON.stringify(t)}) => llm_outcome!(${p.name}::${rustLlmName(t)}(text)),\n`);
+    }
+    if (p.cleanup) clean.push(`        ${JSON.stringify(p.name)} => ${p.name}::clean_llm_json(text),\n`);
+  }
+  const uses = packages
+    .map((p) => p.name)
+    .sort()
+    .join(", ");
+  return `//! Written by the conformance runner: maps a package and a type name to the generated code.
+
+use conformance_driver::{${uses}};
 
 use crate::Outcome;
 
-/// Decodes \`json\` as the type named \`ty\` in \`mode\`, or \`None\` when there is no such type.
-pub fn decode(mode: &str, ty: &str, json: &[u8]) -> Option<Outcome> {
-    Some(match (mode, ty) {
-${arms.join("")}        _ => return None,
+/// Decodes \`json\` as the type named \`ty\` of \`package\`, or \`None\` when there is no such type.
+#[allow(clippy::too_many_lines, reason = "one arm per package and type")]
+pub fn decode(package: &str, ty: &str, json: &[u8]) -> Option<Outcome> {
+    Some(match (package, ty) {
+${normal.join("")}        _ => return None,
+    })
+}
+
+/// Decodes \`text\` with the LLM decoder of the type named \`ty\` of \`package\`, or \`None\`
+/// when the package has no such decoder.
+#[allow(clippy::too_many_lines, reason = "one arm per package and type")]
+pub fn llm(package: &str, ty: &str, text: &str) -> Option<Outcome> {
+    Some(match (package, ty) {
+${llm.join("")}        _ => return None,
+    })
+}
+
+/// Runs the cleanup step of \`package\` on \`text\`, or \`None\` when the package has none.
+pub fn clean(package: &str, text: &str) -> Option<String> {
+    Some(match package {
+${clean.join("")}        _ => return None,
     })
 }
 `;
@@ -206,27 +367,43 @@ ${arms.join("")}        _ => return None,
 function goPublic(mode: Mode, name: string, type: CaseType): string {
   const sig = "func(data []byte) (any, []string, error)";
   if (mode === "strict") {
-    return type.tagged
-      ? `${sig} { v, err := Decode${name}(data); return v, []string{}, err }`
+    return type.tagged !== undefined
+      ? `${sig} { v, err := Decode${type.tagged}(data); return v, []string{}, err }`
       : `${sig} { v := new(${name}); err := json.Unmarshal(data, v); return *v, []string{}, err }`;
   }
-  return type.tagged
-    ? `${sig} { r, err := Report${name}(data); return r.Value, r.Unknown, err }`
+  return type.tagged !== undefined
+    ? `${sig} { r, err := Report${type.tagged}(data); return r.Value, r.Unknown, err }`
     : `${sig} { r, err := Report[${name}](data); return r.Value, r.Unknown, err }`;
 }
 
-function goConform(mode: Mode, types: ReadonlyMap<string, CaseType>): string {
-  const keys = [...types].map(([t, c]) => `\t${JSON.stringify(t)}: ${JSON.stringify(c.key)},\n`).join("");
-  const publics = [...types].map(([t, c]) => `\t${JSON.stringify(t)}: ${goPublic(mode, t, c)},\n`).join("");
-  const unmarshals = mode === "strict" && [...types.values()].some((c) => !c.tagged);
+function byName<T>(entries: Iterable<readonly [string, T]>): (readonly [string, T])[] {
+  return [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function goConform(p: Package): string {
+  const mode = p.build.mode;
+  const types = byName(p.types);
+  const keys = types.map(([t, c]) => `\t${JSON.stringify(t)}: ${JSON.stringify(c.key)},\n`).join("");
+  const publics = types.map(([t, c]) => `\t${JSON.stringify(t)}: ${goPublic(mode, t, c)},\n`).join("");
+  const llms = p.llm
+    ? types.map(([t]) => `\t${JSON.stringify(t)}: func(data []byte) (any, error) { v, err := ${goLlmName(t)}(data); return v, err },\n`).join("")
+    : "";
+  const unmarshals = mode === "strict" && types.some(([, c]) => c.tagged === undefined);
   const registry =
     mode === "report"
       ? `\t\tvalue, unknown, err = decode(data)`
       : `\t\tvalue, err = decode(data)
 \t\tunknown = []string{}`;
+  const clean = p.cleanup
+    ? `func ConformanceClean(data []byte) (out []byte, ok bool) {
+\treturn CleanLLMJSON(data), true
+}`
+    : `func ConformanceClean([]byte) (out []byte, ok bool) {
+\treturn nil, false
+}`;
   return `// Written by the conformance runner.
 
-package ${mode}
+package ${p.name}
 
 import (
 ${unmarshals ? '\t"encoding/json"\n' : ""}\t"errors"
@@ -239,6 +416,10 @@ ${keys}}
 // conformancePublic maps each type a case may name to a decode through its public entry point.
 var conformancePublic = map[string]func(data []byte) (any, []string, error){
 ${publics}}
+
+// conformanceLlm maps each type a case may name to its LLM decoder, when the package has them.
+var conformanceLlm = map[string]func(data []byte) (any, error){
+${llms}}
 
 // ConformanceDecode decodes data as the type named typ, through the public entry point or the
 // fixture registry, and returns the value with the paths of its unknown keys. ok is false when
@@ -270,6 +451,20 @@ ${registry}
 \treturn value, unknown, true, err
 }
 
+// ConformanceLlm decodes data with the LLM decoder of the type named typ. ok is false when the
+// package has no such decoder.
+func ConformanceLlm(typ string, data []byte) (value any, ok bool, err error) {
+\tdecode, found := conformanceLlm[typ]
+\tif !found {
+\t\treturn nil, false, nil
+\t}
+\tvalue, err = decode(data)
+\treturn value, true, err
+}
+
+// ConformanceClean runs the cleanup step on data. ok is false when the package has none.
+${clean}
+
 // ConformanceFields returns the fields of a *DecodeError, and false for any other error.
 func ConformanceFields(err error) (path, code, expected, found string, ok bool) {
 \tvar e *DecodeError
@@ -278,6 +473,25 @@ func ConformanceFields(err error) (path, code, expected, found string, ok bool) 
 \t}
 \treturn e.Path, e.Code, e.Expected, e.Found, true
 }
+`;
+}
+
+/** The Go driver's table of packages, by name. */
+function goPackages(packages: readonly Package[]): string {
+  const sorted = packages.map((p) => p.name).sort();
+  const imports = sorted.map((n) => `\t"conformance/${n}"\n`).join("");
+  const rows = sorted
+    .map((n) => `\t${JSON.stringify(n)}: {${n}.ConformanceDecode, ${n}.ConformanceLlm, ${n}.ConformanceClean, ${n}.ConformanceFields},\n`)
+    .join("");
+  return `// Written by the conformance runner: the generated packages, by name.
+
+package main
+
+import (
+${imports})
+
+var packages = map[string]generated{
+${rows}}
 `;
 }
 
@@ -323,14 +537,15 @@ export function cargoTarget(conformance: string): string {
 }
 
 /** Builds the Rust driver over the code `generateAll` wrote under `out`. */
-export function buildRust(conformance: string, out: string, types: readonly string[]): Driver {
+export function buildRust(conformance: string, out: string, packages: readonly Package[]): Driver {
   const driver = join(conformance, "driver", "rust");
   const crate = join(out, "rust");
-  for (const file of ["Cargo.toml", "Cargo.lock", "src/main.rs", "src/lib.rs"]) {
+  for (const file of ["Cargo.toml", "Cargo.lock", "src/main.rs"]) {
     mkdirSync(dirname(join(crate, file)), { recursive: true });
     copyFileSync(join(driver, file), join(crate, file));
   }
-  write(join(crate, "src", "dispatch.rs"), rustDispatch(types));
+  write(join(crate, "src", "lib.rs"), rustLib(packages));
+  write(join(crate, "src", "dispatch.rs"), rustDispatch(packages));
   const target = cargoTarget(conformance);
   const result = spawn("cargo", ["build", "--locked", "--quiet"], {
     cwd: crate,
@@ -342,11 +557,12 @@ export function buildRust(conformance: string, out: string, types: readonly stri
 }
 
 /** Builds the Go driver over the code `generateAll` wrote under `out`. */
-export function buildGo(conformance: string, out: string, types: ReadonlyMap<string, CaseType>): Driver {
+export function buildGo(conformance: string, out: string, packages: readonly Package[]): Driver {
   const driver = join(conformance, "driver", "go");
   const module = join(out, "go");
   for (const file of ["go.mod", "main.go"]) copyFileSync(join(driver, file), join(module, file));
-  for (const mode of MODES) write(join(module, mode, "conform.go"), goConform(mode, types));
+  for (const p of packages) write(join(module, p.name, "conform.go"), goConform(p));
+  write(join(module, "packages.go"), goPackages(packages));
   const binary = join(out, "bin", process.platform === "win32" ? "conformance-driver.exe" : "conformance-driver");
   const result = spawn("go", ["build", "-o", binary, "."], { cwd: module, env: goEnv(), timeout: BUILD_TIMEOUT });
   check("go build of the Go driver", result, BUILD_TIMEOUT);
@@ -361,22 +577,22 @@ export interface TsModule {
   readonly DecodeError: abstract new (...args: never[]) => Error;
 }
 
-/** Transpiles the TypeScript `generateAll` wrote for one mode, and imports it. */
-async function loadTypeScript(out: string, mode: Mode): Promise<TsModule> {
-  const dir = join(out, "ts", mode);
+/** Transpiles the TypeScript `generateAll` wrote for one package, and imports it. */
+async function loadTypeScript(out: string, name: string): Promise<TsModule> {
+  const dir = join(out, "ts", name);
   writeFileSync(join(out, "package.json"), '{ "type": "module" }\n');
-  for (const name of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
-    const js = ts.transpileModule(readFileSync(join(dir, name), "utf8"), {
+  for (const file of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
+    const js = ts.transpileModule(readFileSync(join(dir, file), "utf8"), {
       compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
     }).outputText;
-    writeFileSync(join(dir, name.replace(/\.ts$/, ".js")), js);
+    writeFileSync(join(dir, file.replace(/\.ts$/, ".js")), js);
   }
   const module = (await import(pathToFileURL(join(dir, "index.js")).href)) as Record<string, unknown>;
-  const value = (name: string): unknown => {
-    if (!(name in module)) throw new DriverError(`the generated TypeScript exports no ${name}`);
-    return module[name];
+  const value = (fn: string): unknown => {
+    if (!(fn in module)) throw new DriverError(`the generated TypeScript of ${name} exports no ${fn}`);
+    return module[fn];
   };
-  return { fn: (name) => value(name) as Fn, DecodeError: value("DecodeError") as TsModule["DecodeError"] };
+  return { fn: (fn) => value(fn) as Fn, DecodeError: value("DecodeError") as TsModule["DecodeError"] };
 }
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
@@ -385,13 +601,16 @@ function hexBytes(hex: string): Uint8Array {
   return new Uint8Array(Buffer.from(hex, "hex"));
 }
 
-/** Runs one request through the generated TypeScript, as the binaries do. */
-export function runTs(modules: Readonly<Record<Mode, TsModule>>, request: Request): Result {
-  if (request.decoder !== "normal") throw new DriverError(`decoder ${request.decoder} is not supported`);
+/** Runs one request through the generated TypeScript, as the binaries do. `modules` are by package name. */
+export function runTs(modules: Readonly<Record<string, TsModule>>, request: Request): Result {
   // decodeXFromJson and reportXFromJson are the public entry points, and what the fixture tests
   // call, so both entries decode the same way.
   if (request.entry !== "public" && request.entry !== "registry") throw new DriverError(`entry ${String(request.entry)} is not supported`);
-  const m = modules[request.mode];
+  if (request.decoder !== "normal" && request.decoder !== "llm" && request.decoder !== "cleanup") {
+    throw new DriverError(`decoder ${String(request.decoder)} is not supported`);
+  }
+  const m = modules[request.package];
+  if (m === undefined) throw new DriverError(`no generated package ${request.package}`);
   const rejected = (error: ErrorFields): Result => ({
     id: request.id,
     accepted: false,
@@ -404,16 +623,34 @@ export function runTs(modules: Readonly<Record<Mode, TsModule>>, request: Reques
   try {
     text = UTF8.decode(hexBytes(request.hex));
   } catch {
-    // The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them.
+    // The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them. The
+    // runner only sends text to the LLM decoders and the cleanup step, as the other drivers need.
+    if (request.decoder !== "normal") throw new DriverError(`the ${request.decoder} input of request ${String(request.id)} is not UTF-8`);
     return rejected({ path: "", code: "invalid_json", expected: null, found: null, message: "not UTF-8 text" });
   }
-  const decode = request.mode === "report" ? m.fn(`report${request.type}FromJson`) : m.fn(`decode${request.type}FromJson`);
+  if (request.decoder === "cleanup") {
+    let cleaned: unknown;
+    try {
+      cleaned = m.fn("cleanLlmJson")(text);
+    } catch (error) {
+      return rejected({ path: "", code: CRASH, expected: null, found: null, message: String(error) });
+    }
+    if (typeof cleaned !== "string") return rejected({ path: "", code: CRASH, expected: null, found: null, message: "cleanLlmJson returned no string" });
+    return { id: request.id, accepted: true, error: null, unknown: [], encoded: cleaned, encodeError: null };
+  }
+  const decode =
+    request.decoder === "llm"
+      ? m.fn(tsLlmName(request.type))
+      : request.mode === "report"
+        ? m.fn(`report${request.type}FromJson`)
+        : m.fn(`decode${request.type}FromJson`);
   const encode = m.fn(`encode${request.type}ToJson`);
   let value: unknown;
   let unknown: readonly string[] = [];
   try {
     const decoded = decode(text);
-    if (request.mode === "report") {
+    // An LLM decoder is strict in every read mode, and returns the value alone.
+    if (request.mode === "report" && request.decoder === "normal") {
       ({ value, unknown } = decoded as { value: unknown; unknown: string[] });
     } else {
       value = decoded;
@@ -446,7 +683,8 @@ export function runTs(modules: Readonly<Record<Mode, TsModule>>, request: Reques
 }
 
 /** The TypeScript driver, in process, over the code `generateAll` wrote under `out`. */
-export async function typeScriptDriver(out: string): Promise<Driver> {
-  const modules = { strict: await loadTypeScript(out, "strict"), report: await loadTypeScript(out, "report") };
+export async function typeScriptDriver(out: string, packages: readonly Package[]): Promise<Driver> {
+  const modules: Record<string, TsModule> = {};
+  for (const p of packages) modules[p.name] = await loadTypeScript(out, p.name);
   return { language: "ts", run: (requests) => requests.map((r) => runTs(modules, r)) };
 }

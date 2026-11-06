@@ -514,8 +514,8 @@ export function attempt<T>(decode: Decoder<T>, json: unknown): DecodeResult<T> {
 }
 
 /**
- * The deepest nesting the strict reader takes: a value inside MAX_DEPTH or more arrays and
- * objects fails, as in Rust (serde_json's recursion limit) and Go, so reading and decoding stay
+ * The deepest nesting the strict reader takes: more than MAX_DEPTH - 1 nested arrays and
+ * objects fail, as in Rust (serde_json's recursion limit) and Go, so reading and decoding stay
  * bounded however deep the input.
  */
 const MAX_DEPTH = ${String(MAX_DEPTH)};

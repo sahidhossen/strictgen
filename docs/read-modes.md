@@ -51,7 +51,7 @@ A tagged union decodes only the branch its tag names, so the keys of another bra
 
 An untagged union tries its variants in order. A variant that fails is discarded with every unknown key it met, so the paths come only from the variant that decoded. If the courier variant of a delivery reads the carrier, meets an unknown key in it and then fails on a missing `trackingCode`, and the pickup variant then decodes, the carrier's unknown key is reported once, by the pickup variant.
 
-A variant may decode in report mode where it failed in strict mode, because unknown keys no longer fail it.
+A variant may decode in report mode where it failed in strict mode, because unknown keys no longer fail it. So a value with the keys of two variants, which strict mode rejects as fitting neither, decodes in report mode as the first variant that takes it, and the keys only the other variant names are reported as unknown. With a card variant `{ "last4" }` before a bank variant `{ "iban" }`, `{ "last4": "4242", "iban": "DE89370400440532013000" }` decodes as the card, with `/iban` unknown. An exactly-one choice is the exception: a key a sibling branch names is not unknown, so a value with both still fails.
 
 ## The hook
 

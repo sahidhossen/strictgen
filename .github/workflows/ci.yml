@@ -116,8 +116,9 @@ jobs:
           go-version: stable
           cache: false
       - run: go vet ./...
+      # -race also fails on any state the decoders share between goroutines, like an LLM decode's.
       - name: Round trip the fixtures
-        run: go test -count=1 ./...
+        run: go test -race -count=1 ./...
 
   conformance:
     name: Conformance suite
@@ -149,11 +150,11 @@ jobs:
         run: |
           test -z "$(gofmt -l conformance/driver/go)"
           # Formatted from stdin, so rustfmt doesn't look for the modules the runner generates.
-          for file in conformance/driver/rust/src/main.rs conformance/driver/rust/src/lib.rs; do
-            rustfmt --edition 2024 < "$file" | diff -u "$file" -
-          done
+          rustfmt --edition 2024 < conformance/driver/rust/src/main.rs | diff -u conformance/driver/rust/src/main.rs -
       # Every case in Rust, Go and TypeScript, in strict and report mode, through the public entry
-      # points and the fixture registry. The build is kept for the lints below.
+      # points, the fixture registry and the LLM decoders, with the shared vectors of examples/llm.
+      # It fails on a mapping rule or error code without a case too. The build is kept for the
+      # lints below.
       - run: pnpm conformance --keep | tee conformance-run.txt
       # The drivers only build beside the generated code, so they are linted where the run built them.
       - name: Lint the drivers

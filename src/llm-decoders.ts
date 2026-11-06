@@ -41,8 +41,20 @@ export function llmMaps(profiles: readonly Profile[]): LlmMaps {
   };
 }
 
+/**
+ * Fails for LLM options that read maps in no shape. Such decoders would take no map at all, and
+ * the TypeScript helpers would read 0 as "no LLM decode running", so an emitter given them
+ * fails rather than write decoders that read null for absent nowhere.
+ */
+export function checkLlmMaps(maps: LlmMaps | undefined): void {
+  if (maps !== undefined && !maps.entries && !maps.objects) {
+    throw new Error("the llm option needs a map shape: entries, objects or both");
+  }
+}
+
 /** The map shapes as one number, 1 for entries plus 2 for objects, which the helpers read. */
 export function mapBits(maps: LlmMaps): number {
+  checkLlmMaps(maps);
   return (maps.entries ? 1 : 0) + (maps.objects ? 2 : 0);
 }
 

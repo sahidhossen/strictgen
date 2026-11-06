@@ -43,7 +43,7 @@ import { RUST_CLEANUP } from "./cleanup-helpers.js";
 import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
 import type { LlmMaps } from "./llm-decoders.js";
-import { checkLlmNames, isWrapped, llmTypes, rustLlmName } from "./llm-decoders.js";
+import { checkLlmMaps, checkLlmNames, isWrapped, llmTypes, rustLlmName } from "./llm-decoders.js";
 
 /** Name of the built in type for any JSON value except `null`. */
 export const NON_NULL_JSON = RUST_NON_NULL;
@@ -187,6 +187,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
   const header = commentHeader(options.header ?? DEFAULT_HEADER);
   const publicModules = options.publicModules ?? [];
   const report = options.read === "report";
+  checkLlmMaps(options.llm);
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name) || KEYWORDS.has(decl.name)) {
       throw new CodegenError(
