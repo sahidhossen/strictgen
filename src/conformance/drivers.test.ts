@@ -33,6 +33,7 @@ const request = (text: string, mode: Request["mode"] = "strict"): Request => ({
   mode,
   decoder: "normal",
   entry: "public",
+  package: mode,
   hex: Buffer.from(text).toString("hex"),
 });
 
@@ -92,8 +93,40 @@ describe("the TypeScript driver", () => {
     expect(runTs(modules, { ...request(""), hex: "efbbbf7b7d" })).toMatchObject({ accepted: true, encoded: `{"text":"${String.fromCharCode(0xfeff)}{}"}` });
   });
 
-  it("refuses a decoder it doesn't have yet", () => {
-    expect(() => runTs(modules, { ...request("ok"), decoder: "llm" })).toThrow("decoder llm is not supported");
+  it("runs the LLM decoder and the cleanup step of a package", () => {
+    const llm = fake({
+      decodeOrderFromLlm: (text) => {
+        if (text === "bad") throw new FakeDecodeError("/value", "missing_key");
+        return { llm: text };
+      },
+      encodeOrderToJson: (value) => JSON.stringify(value),
+      cleanLlmJson: (text) => String(text).trim(),
+    });
+    const all = { ...modules, strict_llm_both: llm, report_llm_vectors: llm };
+    // An LLM decoder returns the value alone, with no unknown keys, in report mode too.
+    expect(runTs(all, { ...request("x", "report"), decoder: "llm", package: "strict_llm_both" })).toMatchObject({ accepted: true, unknown: [], encoded: '{"llm":"x"}' });
+    expect(runTs(all, { ...request("bad"), decoder: "llm", package: "strict_llm_both" }).error).toMatchObject({ path: "/value", code: "missing_key" });
+    expect(runTs(all, { ...request(" {} "), decoder: "cleanup", package: "report_llm_vectors" })).toEqual({
+      id: 7,
+      accepted: true,
+      error: null,
+      unknown: [],
+      encoded: "{}",
+      encodeError: null,
+    });
+    const broken = fake({ cleanLlmJson: () => 1 });
+    expect(runTs({ broken }, { ...request("x"), decoder: "cleanup", package: "broken" }).error).toMatchObject({ code: "crash" });
+  });
+
+  it("refuses a decoder, an entry or a package it doesn't have", () => {
+    expect(() => runTs(modules, { ...request("ok"), decoder: "other" as Request["decoder"] })).toThrow("decoder other is not supported");
+    expect(() => runTs(modules, { ...request("ok"), entry: "other" as Request["entry"] })).toThrow("entry other is not supported");
+    expect(() => runTs(modules, { ...request("ok"), package: "strict_llm_both" })).toThrow("no generated package strict_llm_both");
+  });
+
+  it("refuses LLM and cleanup input that isn't UTF-8, which the runner never sends", () => {
+    expect(() => runTs(modules, { ...request(""), decoder: "llm", hex: "ff" })).toThrow("is not UTF-8");
+    expect(() => runTs(modules, { ...request(""), decoder: "cleanup", hex: "ff" })).toThrow("is not UTF-8");
   });
 });
 

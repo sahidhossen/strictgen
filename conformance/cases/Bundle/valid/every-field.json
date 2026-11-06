@@ -1,0 +1,23 @@
+{
+  "sku": "B-1",
+  "version": 2,
+  "sealed": true,
+  "parts": [
+    {
+      "sku": "P-1",
+      "inner": {
+        "sku": "P-2",
+        "inner": {
+          "sku": "P-3"
+        }
+      }
+    },
+    {
+      "sku": "P-4"
+    }
+  ],
+  "label": {
+    "text": "Fragile \u00e9\ud83d\ude00"
+  },
+  "meta": null
+}

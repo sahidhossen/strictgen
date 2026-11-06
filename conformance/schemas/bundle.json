@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/bundle.json",
+  "title": "Bundle",
+  "description": "A product bundle: parts that hold parts, consts, and values of any JSON type.",
+  "type": "object",
+  "properties": {
+    "sku": { "description": "The bundle's stock keeping unit.", "type": "string" },
+    "version": { "description": "The version of the bundle format, always 2.", "const": 2 },
+    "sealed": { "description": "Always true: a bundle ships sealed.", "const": true },
+    "parts": {
+      "description": "The parts, each of which may hold another part.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/part" }
+    },
+    "label": { "description": "Any JSON value but null, printed on the box.", "not": { "const": null } },
+    "meta": { "description": "Any JSON value the sender attached, null included." }
+  },
+  "required": ["sku", "version"],
+  "additionalProperties": false,
+  "$defs": {
+    "part": {
+      "description": "One part, which may hold another part inside it.",
+      "type": "object",
+      "properties": {
+        "sku": { "description": "The part's stock keeping unit.", "type": "string" },
+        "inner": { "$ref": "#/$defs/part" }
+      },
+      "required": ["sku"],
+      "additionalProperties": false
+    }
+  }
+}

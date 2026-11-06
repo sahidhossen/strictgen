@@ -4,8 +4,10 @@
  * differential fuzzer can reuse it.
  *
  * A request is one line: `{"id": 0, "type": "Order", "mode": "strict", "decoder": "normal",
- * "entry": "public", "hex": "7b7d"}`. The input is hex, since a case may be bytes that aren't
- * UTF-8. A result is one line per request, in request order:
+ * "entry": "public", "package": "strict", "hex": "7b7d"}`. The input is hex, since a case may be
+ * bytes that aren't UTF-8. `package` names the generated code that decodes it, one per read mode
+ * and LLM configuration (see {@link packageName}). A result is one line per request, in request
+ * order:
  *
  * ```json
  * {"id": 0, "accepted": false, "unknown": null, "encoded": null, "encodeError": null,
@@ -13,7 +15,8 @@
  * ```
  *
  * `unknown` is the list of unknown key paths when the value decoded (always empty in strict
- * mode), `encoded` the JSON the value encodes to again, or `encodeError` why it didn't.
+ * mode), `encoded` the JSON the value encodes to again, or `encodeError` why it didn't. For the
+ * cleanup step, `encoded` is the text it returned.
  */
 
 /** The languages, in the order tables show them. */
@@ -25,11 +28,24 @@ export const MODES = ["strict", "report"] as const;
 export type Mode = (typeof MODES)[number];
 
 /**
- * Which decoder reads the input: the normal one, or the LLM decoder of a provider-ready
- * payload. Only the normal decoder runs yet; the drivers refuse the others.
+ * Which function reads the input: the normal decoder, the LLM decoder of a provider-ready
+ * payload (`decodeXFromLlm`, `DecodeXFromLlm`, `decode_x_from_llm`), or the cleanup step that
+ * LLM decoders run first when `llm.cleanup` is on (`cleanLlmJson`, `CleanLLMJSON`,
+ * `clean_llm_json`), whose output text a result carries in `encoded`.
  */
-export type Decoder = "normal" | "llm";
-export const DECODERS: readonly Decoder[] = ["normal"];
+export type Decoder = "normal" | "llm" | "cleanup";
+export const DECODERS: readonly Decoder[] = ["normal", "llm", "cleanup"];
+
+/**
+ * The map shapes the LLM decoders of a generated package read, from the profiles it was
+ * generated with: `entries` from a profile that gives maps as `[{key, value}]` (openai),
+ * `objects` from one that keeps them as objects (gemini), `both` from all three built in ones.
+ */
+export type Maps = "entries" | "objects" | "both";
+export const MAPS: readonly Maps[] = ["both", "entries", "objects"];
+
+/** How an LLM payload gives its maps: as an array of entries, or as objects. */
+export type Shape = "entries" | "objects";
 
 /**
  * Which function decodes: `public`, the entry point users call (Go's `json.Unmarshal` into the
@@ -42,16 +58,46 @@ export const DECODERS: readonly Decoder[] = ["normal"];
 export type Entry = "public" | "registry";
 export const ENTRIES: readonly Entry[] = ["public", "registry"];
 
-/** One way of reading a case: a read mode, a decoder and an entry point. */
+/**
+ * One way of reading a case: a read mode, a decoder and an entry point, and the LLM
+ * configuration of the generated code. `maps` is absent for code generated without `llm`, and
+ * `shape` gives how the payloads of an LLM decoder give their maps. `vectors` marks the code
+ * generated for `examples/llm`, whose shared vectors and cleanup vectors run too.
+ */
 export interface Variant {
   readonly mode: Mode;
   readonly decoder: Decoder;
   readonly entry: Entry;
+  readonly maps?: Maps;
+  readonly shape?: Shape;
+  readonly vectors?: true;
 }
 
-/** A variant as tables show it, like `strict` or `report/registry`. */
+/**
+ * A variant as tables show it, like `strict`, `report/registry`, `strict/with-llm` for the
+ * normal decoder of code generated with `llm`, `report/llm/both:entries` for the LLM decoder of
+ * code that reads both map shapes, given entries, or `report/llm/vectors`.
+ */
 export function variantName(v: Variant): string {
-  return [v.mode, ...(v.decoder === "normal" ? [] : [v.decoder]), ...(v.entry === "public" ? [] : [v.entry])].join("/");
+  const parts: string[] = [v.mode];
+  if (v.vectors === true) parts.push(v.decoder === "normal" ? "vectors" : `${v.decoder}/vectors`);
+  else if (v.decoder === "normal" && v.maps !== undefined) parts.push("with-llm");
+  else if (v.decoder !== "normal") {
+    parts.push(v.decoder);
+    if (v.maps !== undefined) parts.push(v.maps === "both" && v.shape !== undefined ? `both:${v.shape}` : v.maps);
+  }
+  if (v.entry !== "public") parts.push(v.entry);
+  return parts.join("/");
+}
+
+/**
+ * The generated package a variant's requests decode with: `strict` or `report` for code
+ * generated without `llm`, like `strict_llm_both` for code generated with profiles that give
+ * those map shapes, and `report_llm_vectors` for `examples/llm`.
+ */
+export function packageName(v: Variant): string {
+  if (v.vectors === true) return `${v.mode}_llm_vectors`;
+  return v.maps === undefined ? v.mode : `${v.mode}_llm_${v.maps}`;
 }
 
 /** The error code a driver reports when a decoder threw or panicked instead of returning an error. */
@@ -70,6 +116,8 @@ export interface Request {
   readonly mode: Mode;
   readonly decoder: Decoder;
   readonly entry: Entry;
+  /** The generated package that decodes, from {@link packageName}. */
+  readonly package: string;
   /** The input bytes, as lowercase hex. */
   readonly hex: string;
 }
@@ -112,6 +160,7 @@ export function requestLine(request: Request): string {
     mode: request.mode,
     decoder: request.decoder,
     entry: request.entry,
+    package: request.package,
     hex: request.hex,
   });
 }

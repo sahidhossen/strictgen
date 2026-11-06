@@ -20,7 +20,7 @@ import { GO_CODES, GO_NON_NULL, GO_PATTERN_TYPE, goHelpersBody } from "./go-help
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
 import type { LlmMaps } from "./llm-decoders.js";
-import { goLlmName, isWrapped, llmTypes } from "./llm-decoders.js";
+import { checkLlmMaps, goLlmName, isWrapped, llmTypes } from "./llm-decoders.js";
 
 /** The Go package every generated file belongs to, unless the options name another. */
 export const GO_PACKAGE = "types";
@@ -128,6 +128,7 @@ function goHead(options: GoOptions, doc: string): string {
  * names are unique across schemas and files need no imports between them.
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
+  checkLlmMaps(options.llm);
   const ctx = context(model, options.read === "report");
   checkNames(model, options.cleanup === true, options.llm !== undefined);
   const llm = options.llm === undefined ? new Set<string>() : new Set(llmTypes(model).map((d) => d.name));

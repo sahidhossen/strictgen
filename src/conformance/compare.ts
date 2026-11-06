@@ -11,6 +11,7 @@ import type { Case, Mark, MarkKind, Outcome } from "./cases.js";
 import { expected } from "./cases.js";
 import type { ErrorFields, Language, Result, Variant } from "./protocol.js";
 import { CRASH, GO_SYNTAX_ERROR, LANGUAGES, variantName } from "./protocol.js";
+import { compactOf } from "./vectors.js";
 
 /** What every language that ran did with one case, in one variant. */
 export interface Run {
@@ -60,7 +61,7 @@ const EXCLUSIONS: Readonly<
   "ts-no-bytes-api": { language: "ts", applies: () => true, stated: () => "rejected invalid_json at the root" },
   "go-unmarshal-syntax": {
     language: "go",
-    applies: (v) => v.mode === "strict" && v.entry === "public",
+    applies: (v) => v.decoder === "normal" && v.mode === "strict" && v.entry === "public",
     stated: () => `rejected ${GO_SYNTAX_ERROR} at the root`,
   },
 };
@@ -102,7 +103,7 @@ function canonicalEncoding(result: Result): string {
 /** The canonical form a case should encode to again: its input without the unknown keys. */
 function expectedEncoding(c: Case, outcome: Outcome & { accepted: true }): string {
   try {
-    return serialize(withoutMembers(parseJson(UTF8.decode(c.bytes)), outcome.unknown), CANONICAL);
+    return serialize(withoutMembers(parseJson(UTF8.decode(c.encodes ?? c.bytes)), outcome.unknown), CANONICAL);
   } catch (error) {
     return `the case is not canonical JSON: ${reason(error)}`;
   }
@@ -150,12 +151,23 @@ export function compareRun(run: Run, marks: readonly Mark[]): Disagreement[] {
     if (new Set(values.map(([, v]) => v)).size <= 1) return;
     row(field, Object.fromEntries(values));
   };
-  const want = expected(run.case, run.variant.mode);
+  // LLM decoders are strict in every read mode.
+  const want = run.variant.decoder === "llm" ? run.case.strict : expected(run.case, run.variant.mode);
 
   // A decoder that threw or panicked is a bug, even when every language crashed alike.
   for (const l of ran) {
     const error = result(l).error;
     if (error?.code === CRASH) row("crash", { [l]: error.message });
+  }
+
+  // The cleanup step returns text, which must be exactly the vector's output in every language.
+  if (run.variant.decoder === "cleanup") {
+    add("result", [...compared.map((l) => [l, result(l).accepted ? "accepted" : "rejected"] as const), ["expected", "accepted"]]);
+    add("cleaned", [
+      ...compared.flatMap((l) => (result(l).accepted ? [[l, result(l).encoded ?? NONE] as const] : [])),
+      ["expected", run.case.cleaned ?? NONE],
+    ]);
+    return rows;
   }
 
   add("result", [
@@ -168,6 +180,16 @@ export function compareRun(run: Run, marks: readonly Mark[]): Disagreement[] {
     add(field, [
       ...rejecting.map((l) => [l, result(l).error?.[field] ?? NONE] as const),
       ...(!want.accepted && (field === "path" || field === "code") ? [["expected", want[field]] as const] : []),
+    ]);
+  }
+
+  if (run.case.compact !== undefined) {
+    add("compact", [
+      ...rejecting.flatMap((l) => {
+        const e = result(l).error;
+        return e === null ? [] : [[l, compactOf(e)] as const];
+      }),
+      ["expected", run.case.compact],
     ]);
   }
 
@@ -254,7 +276,7 @@ export function around(value: string, offset: number, before = 12, after = 28): 
 }
 
 /** The fields whose values are whole JSON documents, shown around their first difference. */
-const DOCUMENTS = new Set(["encoded", "raw"]);
+const DOCUMENTS = new Set(["encoded", "raw", "cleaned"]);
 
 /** The disagreement table: one row per field that differs, with a column per language and the expectation. */
 export function table(rows: readonly Disagreement[], languages: readonly Language[]): string[] {

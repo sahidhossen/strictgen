@@ -197,23 +197,25 @@ describe("driver results", () => {
   });
 
   it("writes requests with a fixed key order", () => {
-    expect(requestLine({ hex: "7b7d", entry: "registry", decoder: "normal", mode: "report", type: "Order", id: 1 })).toBe(
-      '{"id":1,"type":"Order","mode":"report","decoder":"normal","entry":"registry","hex":"7b7d"}',
+    expect(requestLine({ hex: "7b7d", package: "report", entry: "registry", decoder: "normal", mode: "report", type: "Order", id: 1 })).toBe(
+      '{"id":1,"type":"Order","mode":"report","decoder":"normal","entry":"registry","package":"report","hex":"7b7d"}',
     );
   });
 });
 
 describe("the command line", () => {
   it("runs both modes and every language by default", () => {
-    expect(parseArguments([])).toEqual({ modes: ["strict", "report"], languages: ["rust", "go", "ts"], keep: false });
+    expect(parseArguments([])).toEqual({ modes: ["strict", "report"], languages: ["rust", "go", "ts"], keep: false, coverage: false });
   });
 
-  it("takes a mode, languages in any order and --keep", () => {
+  it("takes a mode, languages in any order, --keep and --coverage", () => {
     expect(parseArguments(["--mode", "report", "--lang=ts,rust", "--keep"])).toEqual({
       modes: ["report"],
       languages: ["rust", "ts"],
       keep: true,
+      coverage: false,
     });
+    expect(parseArguments(["--coverage"])).toMatchObject({ coverage: true });
     expect(parseArguments(["--mode=both"])).toMatchObject({ modes: ["strict", "report"] });
   });
 
@@ -224,6 +226,7 @@ describe("the command line", () => {
     [["--lang="], "--lang needs a value"],
     [["--mode", "strict", "--mode", "report"], "--mode is given twice"],
     [["--keep=yes"], "unknown argument --keep=yes"],
+    [["--coverage=yes"], "unknown argument --coverage=yes"],
     [["fast"], "unknown argument fast"],
   ])("refuses %j", (args, why) => {
     expect(parseArguments(args)).toBe(why);
@@ -292,8 +295,19 @@ describe("the manifest of case counts", () => {
     [{ types: { Order: { valid: -1, invalid: 2 } }, empty: {} }, 'Order needs {"valid": n, "invalid": n}'],
     [{ types: {}, empty: { Line: "" } }, "empty type Line needs a reason"],
     [{ types: { Line: { valid: 1, invalid: 0 } }, empty: { Line: "r" } }, "listed with cases and as empty"],
+    [{ types: {}, empty: {}, llm: [] }, "llm must map names to reasons"],
+    [{ types: {}, empty: {}, llm: { "a.json": " " } }, "llm a.json needs a reason"],
+    [{ types: {}, empty: {}, coverage: { "any/invalid": 1 } }, "coverage any/invalid needs a reason"],
+    [{ types: {}, empty: {}, other: {} }, "expected"],
   ])("refuses a bad manifest %j", (value, why) => {
     expect(() => manifest(value)).toThrow(why);
+  });
+
+  it("reads the schema files the LLM packages leave out and the coverage allowances, each with a reason", () => {
+    const m = manifest({ types: {}, empty: {}, llm: { "a.json": "why" }, coverage: { "any/invalid": "because" } });
+    expect(m.llm).toEqual(new Map([["a.json", "why"]]));
+    expect(m.coverage).toEqual(new Map([["any/invalid", "because"]]));
+    expect(manifest({ types: {}, empty: {} }).llm.size).toBe(0);
   });
 
   it("fails on a missing manifest", () => {

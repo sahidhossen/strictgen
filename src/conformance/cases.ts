@@ -44,6 +44,15 @@ export interface Case {
   readonly bytes: Uint8Array;
   readonly strict: Outcome;
   readonly report: Outcome;
+  /**
+   * The JSON the decoded value must encode to again, when it isn't the input itself: for an LLM
+   * payload, the normal JSON of the same value.
+   */
+  readonly encodes?: Uint8Array;
+  /** The compact form the first error must have, for the shared LLM vectors. */
+  readonly compact?: string;
+  /** For a cleanup vector: the text the cleanup step must return. */
+  readonly cleaned?: string;
 }
 
 /** The outcome a case expects in a mode. */
@@ -275,20 +284,54 @@ export function loadMarks(file: string, cases: readonly Case[]): Mark[] {
  * How many valid and invalid cases each type has, from `manifest.json`, so a case or a type
  * folder that disappears fails the run instead of shrinking it. A type with no cases is listed
  * under `empty` with the reason.
+ *
+ * `llm` lists the schema files the LLM packages leave out, each with the reason no
+ * provider-ready schema can describe a type of it; every other schema file must project under
+ * every profile, and every listed one must fail to. `coverage` lists the sides of mapping rules
+ * no case can have, like `any/invalid`, each with the reason (see `coverage.ts`).
  */
 export interface Manifest {
   readonly types: ReadonlyMap<string, { readonly valid: number; readonly invalid: number }>;
   readonly empty: ReadonlyMap<string, string>;
+  readonly llm: ReadonlyMap<string, string>;
+  readonly coverage: ReadonlyMap<string, string>;
 }
 
-/** Reads `manifest.json`: `{"types": {"Order": {"valid": 1, "invalid": 2}}, "empty": {"Note": "why"}}`. */
+/** A map of names to reasons, from one of the manifest's optional sections. */
+function reasons(value: unknown, section: string, problems: string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (value === undefined) return out;
+  if (!isObject(value)) {
+    problems.push(`manifest.json: ${section} must map names to reasons`);
+    return out;
+  }
+  for (const [name, why] of Object.entries(value)) {
+    if (typeof why !== "string" || why.trim() === "") problems.push(`manifest.json: ${section} ${name} needs a reason`);
+    else out.set(name, why);
+  }
+  return out;
+}
+
+/**
+ * Reads `manifest.json`: `{"types": {"Order": {"valid": 1, "invalid": 2}}, "empty": {"Note": "why"},
+ * "llm": {"shipment.json": "why"}, "coverage": {"any/invalid": "why"}}`, the last two optional.
+ */
 export function loadManifest(file: string): Manifest {
   if (!existsSync(file)) throw new LayoutError([`${file}: no manifest file`]);
   const problems: string[] = [];
   const value = readJson(file, "manifest.json", problems);
   if (problems.length > 0) throw new LayoutError(problems);
-  const shape = 'manifest.json: expected {"types": {"<Type>": {"valid": n, "invalid": n}}, "empty": {"<Type>": "<reason>"}}';
-  if (!isObject(value) || Object.keys(value).sort().join() !== "empty,types" || !isObject(value.types) || !isObject(value.empty)) {
+  const shape =
+    'manifest.json: expected {"types": {"<Type>": {"valid": n, "invalid": n}}, "empty": {"<Type>": "<reason>"}}, with optional "llm" and "coverage" reasons';
+  const keys = isObject(value) ? Object.keys(value) : [];
+  if (
+    !isObject(value) ||
+    !keys.includes("types") ||
+    !keys.includes("empty") ||
+    keys.some((k) => !["types", "empty", "llm", "coverage"].includes(k)) ||
+    !isObject(value.types) ||
+    !isObject(value.empty)
+  ) {
     throw new LayoutError([shape]);
   }
   const types = new Map<string, { valid: number; invalid: number }>();
@@ -310,8 +353,10 @@ export function loadManifest(file: string): Manifest {
     else empty.set(type, why);
     if (types.has(type)) problems.push(`manifest.json: ${type} is listed with cases and as empty`);
   }
+  const llm = reasons(value.llm, "llm", problems);
+  const coverage = reasons(value.coverage, "coverage", problems);
   if (problems.length > 0) throw new LayoutError(problems);
-  return { types, empty };
+  return { types, empty, llm, coverage };
 }
 
 /**

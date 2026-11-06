@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/refund.json",
+  "title": "Refund",
+  "description": "A refund of an order, paid back to a card or a bank account. Every type here has a provider-ready schema, so the LLM decoders read all of it.",
+  "type": "object",
+  "properties": {
+    "order": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/orderId" },
+    "reason": { "$ref": "#/$defs/reason" },
+    "amounts": {
+      "description": "The amount refunded in each currency, in cents, at least one currency.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/currency" },
+      "additionalProperties": { "type": "integer", "minimum": 1 },
+      "minProperties": 1
+    },
+    "to": { "$ref": "#/$defs/destination" },
+    "issuedAt": { "description": "When the refund was issued, an RFC 3339 date-time.", "type": "string", "format": "date-time" },
+    "codes": {
+      "description": "Up to three different codes of three upper case letters.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Z]{3}$" },
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "memo": { "description": "A memo for the customer, 1 to 40 characters.", "type": "string", "minLength": 1, "maxLength": 40 },
+    "version": { "description": "The version of the refund format, always 1.", "const": 1 },
+    "final": { "description": "Always true: a refund can't be undone.", "const": true }
+  },
+  "required": ["order", "reason", "amounts", "to"],
+  "additionalProperties": false,
+  "$defs": {
+    "reason": { "description": "Why the order is refunded.", "enum": ["damaged", "late", "other"] },
+    "currency": { "description": "A currency code.", "enum": ["EUR", "GBP", "USD"] },
+    "destination": {
+      "description": "Where the money goes: back to a card or to a bank account. Both may carry a note.",
+      "oneOf": [{ "$ref": "#/$defs/cardRefund" }, { "$ref": "#/$defs/bankRefund" }]
+    },
+    "cardRefund": {
+      "description": "Back to the card that paid.",
+      "type": "object",
+      "properties": {
+        "last4": { "description": "The last four digits of the card number.", "type": "string", "pattern": "^\\d{4}$" },
+        "note": { "description": "A note for the card holder, at most 20 characters.", "type": "string", "maxLength": 20 }
+      },
+      "required": ["last4"],
+      "additionalProperties": false
+    },
+    "bankRefund": {
+      "description": "To a bank account.",
+      "type": "object",
+      "properties": {
+        "iban": { "description": "The account's IBAN, at least 15 characters.", "type": "string", "minLength": 15 },
+        "note": { "description": "A note for the account holder, at most 20 characters.", "type": "string", "maxLength": 20 }
+      },
+      "required": ["iban"],
+      "additionalProperties": false
+    }
+  }
+}

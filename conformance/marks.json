@@ -1,6 +1,11 @@
 {
   "marks": [
     {
+      "case": "Bundle/valid/every-field",
+      "kind": "string-escaping",
+      "reason": "label takes any JSON value but null. Go keeps such a value as the bytes it read, escapes included, while Rust and TypeScript decode it and write the characters. Same strings, so the canonical bytes are equal."
+    },
+    {
       "case": "Code/invalid/not-utf8-at-the-root",
       "kind": "go-unmarshal-syntax",
       "reason": "json.Unmarshal's own syntax check refuses a byte 0xFF outside a string with a *json.SyntaxError before the generated decoder runs. The registry and Report[T] give invalid_json."

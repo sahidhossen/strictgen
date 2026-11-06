@@ -297,6 +297,16 @@ describe("marks that aren't needed", () => {
     expect(compareAll([c], list, results, [mark("go-unmarshal-syntax", { case: c.id })], { complete: true })).toEqual([]);
   });
 
+  it("hold Go to json.Unmarshal's own error only for the normal decoder", () => {
+    const c = invalidCase("[1,]", "/1", "invalid_json");
+    const llm: Variant = { mode: "strict", decoder: "llm", entry: "public", maps: "both", shape: "entries" };
+    const shared = rejected({ path: "/1", code: "invalid_json" });
+    const syntax = rejected({ path: "", code: "json.SyntaxError" });
+    const marks = [mark("go-unmarshal-syntax", { case: c.id })];
+    expect(fields(compareRun(run(c, { rust: shared, go: syntax, ts: shared }, llm), marks))).toEqual(["path", "code", "message"]);
+    expect(compareRun(run(c, { rust: shared, go: shared, ts: shared }, llm), marks)).toEqual([]);
+  });
+
   it("covers every kind", () => {
     expect([...MARK_KINDS].sort()).toEqual([
       "go-unmarshal-syntax",
