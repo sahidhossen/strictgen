@@ -270,6 +270,8 @@ export function explain(
     location,
     decls,
     targets: configTargets(config)
+      // Languages only: strictgen llm prints a type's LLM schema.
+      .filter((t) => Object.hasOwn(LANGUAGES, t.name))
       .sort((a, b) => ORDER.indexOf(a.name) - ORDER.indexOf(b.name))
       .map((t) => explainTarget(config, model, schemas, decls, t, env)),
   };

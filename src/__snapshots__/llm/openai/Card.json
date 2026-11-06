@@ -1,0 +1,19 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "const": "card"
+    },
+    "last4": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "kind",
+    "last4"
+  ],
+  "additionalProperties": false
+}
+
+Nothing moved to the decoder.

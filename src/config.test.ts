@@ -50,9 +50,9 @@ const FULL = {
       read: "report",
     },
     go: { out: "go/types", package: "orders", shared: false, fixtures: true, read: "strict" },
-    typescript: { out: "src/generated", decoders: false, read: "strict" },
+    typescript: { out: "src/generated", decoders: true, read: "strict" },
   },
-  llm: { profiles: ["openai", "anthropic"], out: "llm", cleanup: true },
+  llm: { profiles: ["openai", "profiles/local.json"], out: "llm", cleanup: true },
   docs: { out: "docs/types", format: "markdown" },
   format: { rust: "none", go: "none", typescript: "none" },
 };
@@ -98,7 +98,7 @@ describe("config defaults", () => {
 
   it("fills the options of later phases", () => {
     const config = parse({ targets: ts, llm: { profiles: ["openai"], out: "llm" }, docs: { out: "d" } });
-    expect(config.llm).toEqual({ profiles: ["openai"], out: join(ROOT, "llm"), cleanup: false });
+    expect(config.llm).toEqual({ profiles: [{ name: "openai" }], out: join(ROOT, "llm"), cleanup: false });
     expect(config.docs).toEqual({ out: join(ROOT, "d"), format: "markdown" });
   });
 
@@ -124,8 +124,13 @@ describe("config defaults", () => {
     });
     expect(config.targets.typescript).toEqual({
       out: join(ROOT, "src/generated"),
-      decoders: false,
+      decoders: true,
       read: "strict",
+    });
+    expect(config.llm).toEqual({
+      profiles: [{ name: "openai" }, { file: join(ROOT, "profiles/local.json"), shown: "profiles/local.json" }],
+      out: join(ROOT, "llm"),
+      cleanup: true,
     });
     expect(config.format).toEqual({ rust: "none", go: "none", typescript: "none" });
   });
@@ -305,6 +310,9 @@ const INVALID: readonly (readonly [string, unknown, string, string])[] = [
   ["llm with no profile", { targets: ts, llm: { profiles: [], out: "llm" } }, "llm.profiles", "at least one"],
   ["llm with a bad profile", { targets: ts, llm: { profiles: ["Open AI"], out: "llm" } }, "llm.profiles[0]", "is not a profile name"],
   ["llm with a profile twice", { targets: ts, llm: { profiles: ["openai", "openai"], out: "llm" } }, "llm.profiles", "listed twice"],
+  ["llm with a profile file twice", { targets: ts, llm: { profiles: ["a.json", "a.json"], out: "llm" } }, "llm.profiles", "listed twice"],
+  ["llm with a profile path not ending in .json", { targets: ts, llm: { profiles: ["profiles/openai"], out: "llm" } }, "llm.profiles[0]", "a path to a .json profile"],
+  ["llm with an empty profile", { targets: ts, llm: { profiles: [""], out: "llm" } }, "llm.profiles[0]", "must not be empty"],
   ["llm cleanup not a boolean", { targets: ts, llm: { profiles: ["openai"], out: "llm", cleanup: 1 } }, "llm.cleanup", "true or false"],
   ["docs without out", { targets: ts, docs: {} }, "docs.out", "is required"],
   ["unknown docs format", { targets: ts, docs: { out: "d", format: "pdf" } }, "docs.format", "must be one of"],
@@ -321,6 +329,14 @@ const INVALID_TOGETHER: readonly (readonly [string, unknown, string, string])[] 
   ["a target inside an owned folder", { targets: { rust: { out: "gen" }, typescript: { out: "gen/ts" } } }, "targets.typescript.out", "is inside targets.rust.out"],
   ["the fixture registry inside the Rust folder", { targets: { rust: { out: "gen", fixtures: { out: "gen/tests", crate: "t" } } } }, "targets.rust.fixtures.out", "is inside targets.rust.out"],
   ["a folder owned by Go", { targets: { go: { out: "go", shared: false }, typescript: { out: "go/ts" } } }, "targets.typescript.out", "is inside targets.go.out"],
+  ["the LLM folder holding the schemas", { schemas: "llm/schemas", targets: ts, llm: { profiles: ["openai"], out: "llm" } }, "llm.out", "holds the schemas folder"],
+  ["the LLM folder holding the config file", { targets: ts, llm: { profiles: ["openai"], out: "." } }, "llm.out", "holds the config file"],
+  ["the LLM folder inside a target", { targets: ts, llm: { profiles: ["openai"], out: "src/generated/llm" } }, "llm.out", "is inside targets.typescript.out"],
+  ["the LLM folder as a target folder", { targets: ts, llm: { profiles: ["openai"], out: "src/generated" } }, "llm.out", "is the same folder as targets.typescript.out"],
+  ["a target inside the LLM folder", { targets: { typescript: { out: "llm/ts" } }, llm: { profiles: ["openai"], out: "llm" } }, "targets.typescript.out", "is inside llm.out"],
+  ["a profile file in the LLM folder", { targets: ts, llm: { profiles: ["llm/local.json"], out: "llm" } }, "llm.profiles[0]", "is inside llm.out, which is cleared"],
+  ["a profile file in a target folder", { targets: ts, llm: { profiles: ["src/generated/x/local.json"], out: "llm" } }, "llm.profiles[0]", "is inside targets.typescript.out"],
+  ["cleanup without TypeScript decoders", { targets: { typescript: { out: "ts", decoders: false } }, llm: { profiles: ["openai"], out: "llm", cleanup: true } }, "llm.cleanup", "needs \"decoders\": true"],
 ];
 
 describe("config validation", () => {

@@ -1,0 +1,1 @@
+category.json#: llm-unsupported: profile anthropic: Category contains itself, and the profile accepts no recursive schema

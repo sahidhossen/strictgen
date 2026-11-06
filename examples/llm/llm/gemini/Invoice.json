@@ -1,0 +1,34 @@
+{
+  "description": "Payment by invoice.",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string",
+      "enum": [
+        "invoice"
+      ]
+    },
+    "dueAt": {
+      "description": "When the invoice is due.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "reference": {
+      "description": "The customer's reference. A UUID, like 123e4567-e89b-12d3-a456-426614174000.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "method",
+    "dueAt",
+    "reference"
+  ],
+  "additionalProperties": false
+}

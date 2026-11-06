@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "A way to reach the customer: a phone number, or a count of reminders to send.",
+      "anyOf": [
+        {
+          "description": "At least 6 characters.",
+          "type": "string"
+        },
+        {
+          "description": "At least 0, at most 3.",
+          "type": "integer"
+        }
+      ]
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

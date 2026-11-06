@@ -1,0 +1,238 @@
+{
+  "description": "An order a model reads out of a customer's message.",
+  "type": "object",
+  "properties": {
+    "customer": {
+      "description": "Who orders.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The full name. At least 1 character, at most 100 characters.",
+          "type": "string"
+        },
+        "email": {
+          "description": "An email address. Matching the regular expression ^[^@ ]+@[^@ ]+$.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "contact": {
+          "description": "A way to reach the customer: a phone number, or a count of reminders to send.",
+          "anyOf": [
+            {
+              "description": "At least 6 characters.",
+              "type": "string"
+            },
+            {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 3
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "email",
+        "contact"
+      ],
+      "additionalProperties": false
+    },
+    "lines": {
+      "description": "What the customer orders.",
+      "type": "array",
+      "items": {
+        "description": "One line of an order.",
+        "type": "object",
+        "properties": {
+          "sku": {
+            "description": "A stock keeping unit, like AB-1234. Matching the regular expression ^[A-Z]{2}-[0-9]{4}$.",
+            "type": "string"
+          },
+          "quantity": {
+            "description": "How many, in packs of 2. Greater than 0, a multiple of 2.",
+            "type": "integer"
+          },
+          "price": {
+            "description": "The unit price. Less than 10000.",
+            "anyOf": [
+              {
+                "type": "number",
+                "minimum": 0
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "description": "Free form tags. No two items equal.",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sku",
+          "quantity",
+          "price",
+          "tags"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1,
+      "maxItems": 20
+    },
+    "payment": {
+      "description": "How the customer pays, picked by its method key.",
+      "anyOf": [
+        {
+          "description": "A card payment.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "card"
+              ]
+            },
+            "last4": {
+              "description": "The last four digits. At least 4 characters, at most 4 characters.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "method",
+            "last4"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "description": "Payment by invoice.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "enum": [
+                "invoice"
+              ]
+            },
+            "dueAt": {
+              "description": "When the invoice is due.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "reference": {
+              "description": "The customer's reference. A UUID, like 123e4567-e89b-12d3-a456-426614174000.",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "method",
+            "dueAt",
+            "reference"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "deliverOn": {
+      "description": "The day the customer wants it delivered.",
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "note": {
+      "description": "A note for the packer. At most 80 characters.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "priority": {
+      "description": "How urgent it is.",
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "gift": {
+      "description": "Whether to wrap it as a gift.",
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "labels": {
+      "description": "Labels by name, like a color per box. At most 5 keys.",
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "customer",
+    "lines",
+    "payment",
+    "deliverOn",
+    "note",
+    "priority",
+    "gift",
+    "labels"
+  ],
+  "additionalProperties": false
+}

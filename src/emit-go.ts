@@ -15,6 +15,7 @@ import type {
 } from "./model.js";
 import { Checks, limitsOf, patternsOf } from "./checks.js";
 import type { ReadMode } from "./config.js";
+import { GO_CLEANUP } from "./cleanup-helpers.js";
 import { GO_CODES, GO_NON_NULL, GO_PATTERN_TYPE, goHelpersBody } from "./go-helpers.js";
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
@@ -103,6 +104,8 @@ export interface GoOptions {
    * their paths and adds `Report` and a `ReportX` per tagged union. Defaults to `strict`.
    */
   readonly read?: ReadMode;
+  /** Adds `CleanLLMJSON`, the LLM cleanup step, to the helpers. */
+  readonly cleanup?: boolean;
 }
 
 /** The first lines of a generated Go file: header comment, then `doc` and the package clause. */
@@ -136,6 +139,7 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
         goHelpersBody(ctx.report),
         ...(ctx.patterns.length > 0 ? [patternTable(ctx.patterns)] : []),
         ...literals.map(literalType),
+        ...(options.cleanup === true ? [GO_CLEANUP.trimStart()] : []),
       ]),
     },
     ...files,

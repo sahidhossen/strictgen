@@ -1,0 +1,17 @@
+[package]
+name = "example-llm"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "The Rust types strictgen generates for examples/llm/schemas, with the LLM cleanup step"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "example_llm"
+
+[dependencies]
+# The schema uses pattern, which the generated code checks with the regex crate.
+regex = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "Where the order is.",
+      "type": "string",
+      "enum": [
+        "open",
+        "paid",
+        "shipped"
+      ]
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}
+
+Moved to the decoder:
+  (root): not an object, so wrapped as { "value": ... }: the decoder reads the value key

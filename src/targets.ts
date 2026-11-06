@@ -1,11 +1,12 @@
 import { relative, sep } from "node:path";
 
 import type { EmittedFile } from "./common.js";
-import type { Config, GoConfig, RustConfig, TypeScriptConfig } from "./config.js";
+import type { Config, GoConfig, LlmConfig, RustConfig, TypeScriptConfig } from "./config.js";
 import { emitGo, emitGoAttributes, emitGoFixtures, GO_FIXTURES } from "./emit-go.js";
 import { emitRust, emitRustFixtures } from "./emit-rust.js";
 import { emitRustSchemas } from "./emit-schemas.js";
 import { emitTypeScript } from "./emit-ts.js";
+import { emitLlm, llmProfiles } from "./llm.js";
 import type { MainOptions, OutputFile, Target } from "./main.js";
 
 /** The name of the Rust fixture registry, in the folder `targets.rust.fixtures.out` names. */
@@ -31,7 +32,12 @@ function typescriptTarget(config: Config, ts: TypeScriptConfig): Target {
     emit: (model) =>
       placed(
         out,
-        emitTypeScript(model, { header: config.header, decoders: ts.decoders, read: ts.read }),
+        emitTypeScript(model, {
+          header: config.header,
+          decoders: ts.decoders,
+          read: ts.read,
+          cleanup: cleanup(config),
+        }),
       ),
   };
 }
@@ -51,6 +57,7 @@ function rustTarget(config: Config, rust: RustConfig): Target {
           header,
           allow: rust.allow,
           read: rust.read,
+          cleanup: cleanup(config),
           publicModules: rust.embedSchemas ? [SCHEMAS_MODULE] : [],
         }),
       ),
@@ -73,7 +80,12 @@ function rustTarget(config: Config, rust: RustConfig): Target {
  */
 function goTarget(config: Config, go: GoConfig): Target {
   const out = under(config.root, go.out);
-  const options = { header: config.header, package: go.package, read: go.read };
+  const options = {
+    header: config.header,
+    package: go.package,
+    read: go.read,
+    cleanup: cleanup(config),
+  };
   return {
     name: "go",
     dirs: go.shared ? [] : [out],
@@ -97,8 +109,24 @@ function goTarget(config: Config, go: GoConfig): Target {
   };
 }
 
+/** True when `llm.cleanup` asks for the cleanup helper in every language. */
+function cleanup(config: Config): boolean {
+  return config.llm?.cleanup === true;
+}
+
+/** The LLM output: a folder per profile, with one provider-ready schema per type. */
+function llmTarget(config: Config, llm: LlmConfig): Target {
+  const out = under(config.root, llm.out);
+  const profiles = llmProfiles(config, llm);
+  return {
+    name: "llm",
+    dirs: [out],
+    emit: (model) => placed(out, emitLlm(model, profiles)),
+  };
+}
+
 /**
- * The targets a config lists, in a fixed order: TypeScript, Rust, Go. Their folders are
+ * The targets a config lists, in a fixed order: TypeScript, Rust, Go, then the LLM schemas. Their folders are
  * relative to the folder that holds the config file.
  */
 export function configTargets(config: Config): Target[] {
@@ -107,6 +135,7 @@ export function configTargets(config: Config): Target[] {
     ...(typescript === undefined ? [] : [typescriptTarget(config, typescript)]),
     ...(rust === undefined ? [] : [rustTarget(config, rust)]),
     ...(go === undefined ? [] : [goTarget(config, go)]),
+    ...(config.llm === undefined ? [] : [llmTarget(config, config.llm)]),
   ];
 }
 

@@ -1,0 +1,36 @@
+{
+  "$schema": "./profile.schema.json",
+  "name": "openai",
+  "version": 1,
+  "date": "2026-11-06",
+  "description": "OpenAI structured outputs with strict: true (response_format json_schema, or a strict function)",
+  "sources": [
+    {
+      "url": "https://developers.openai.com/api/docs/guides/structured-outputs",
+      "checked": "2026-11-06",
+      "notes": "Section Supported schemas: string pattern and format, number multipleOf and the four bounds, array minItems and maxItems. minLength, maxLength and uniqueItems are not listed, so they are treated as unsupported. Every object needs additionalProperties false, so maps are written as entries. The limits are the ones the section lists."
+    }
+  ],
+  "keywords": [
+    "const",
+    "pattern",
+    "format",
+    "minimum",
+    "exclusiveMinimum",
+    "maximum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minItems",
+    "maxItems"
+  ],
+  "formats": ["date-time", "date", "uuid"],
+  "maps": "entries",
+  "recursion": true,
+  "limits": {
+    "maxDepth": 10,
+    "maxProperties": 5000,
+    "maxEnumValues": 1000,
+    "maxStringSize": 120000,
+    "largeEnum": { "values": 250, "maxSize": 15000 }
+  }
+}

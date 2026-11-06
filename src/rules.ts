@@ -41,6 +41,8 @@ export const RULES = {
   "name-clash": "two schema items map to the same name in the generated code",
   "reserved-name": "a name is a keyword or a name the generated code uses itself",
   "unsupported-name": "a name can't be turned into a valid identifier",
+  "llm-unsupported": "a type uses something no LLM structured output schema can describe",
+  "llm-limit": "a type's provider-ready schema is over a limit of the LLM profile",
   "output-conflict": "writing the output would clear or replace files strictgen doesn't own",
   "write-failed": "the output can't be written",
   internal: "a generator bug, not a schema problem",

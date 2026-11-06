@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "properties": {
+    "kind": {
+      "type": "string",
+      "enum": [
+        "wire"
+      ]
+    },
+    "iban": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "kind",
+    "iban"
+  ],
+  "additionalProperties": false
+}
+
+Moved to the decoder:
+  /properties/iban: optional, so required and nullable: null stands for absent

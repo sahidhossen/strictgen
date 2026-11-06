@@ -1,0 +1,25 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "An email address or a phone extension.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "description": "At least 100.",
+          "type": "integer"
+        }
+      ]
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}
+
+Moved to the decoder:
+  (root): not an object, so wrapped as { "value": ... }: the decoder reads the value key
+  /properties/value/anyOf/1: minimum 100: at least 100

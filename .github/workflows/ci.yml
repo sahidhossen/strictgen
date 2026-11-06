@@ -60,18 +60,21 @@ jobs:
         run: |
           node dist/cli.js check --config examples/basic/strictgen.json
           node dist/cli.js check --config examples/report/strictgen.json
+          node dist/cli.js check --config examples/llm/strictgen.json
       # check compared the first run with what is committed. A second run must write the
       # same files again, so generation is deterministic.
       - name: Generate again and check that nothing changes
         run: |
           node dist/cli.js generate --config examples/basic/strictgen.json
           node dist/cli.js generate --config examples/report/strictgen.json
+          node dist/cli.js generate --config examples/llm/strictgen.json
           git diff --exit-code
           test -z "$(git status --porcelain)"
       - name: Typecheck the TypeScript output
         run: |
           pnpm exec tsc -p examples/basic/ts/tsconfig.json
           pnpm exec tsc -p examples/report/ts/tsconfig.json
+          pnpm exec tsc -p examples/llm/ts/tsconfig.json
 
   examples-rust:
     name: Rust example (${{ matrix.example }})
@@ -79,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [basic, report]
+        example: [basic, report, llm]
     defaults:
       run:
         working-directory: examples/${{ matrix.example }}/rust
@@ -102,7 +105,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [basic, report]
+        example: [basic, report, llm]
     defaults:
       run:
         working-directory: examples/${{ matrix.example }}/go

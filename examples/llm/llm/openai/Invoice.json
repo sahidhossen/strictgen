@@ -1,0 +1,33 @@
+{
+  "description": "Payment by invoice.",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string",
+      "const": "invoice"
+    },
+    "dueAt": {
+      "description": "When the invoice is due.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "reference": {
+      "description": "The customer's reference.",
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "uuid"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "method",
+    "dueAt",
+    "reference"
+  ],
+  "additionalProperties": false
+}

@@ -1,0 +1,282 @@
+[
+  {
+    "name": "a plain object stays as it is",
+    "input": "{\"a\":1}",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "white space at both ends goes",
+    "input": " \n\t{\"a\":1}\r\n ",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "white space inside stays",
+    "input": "{ \"a\" : [ 1 , 2 ] }",
+    "output": "{ \"a\" : [ 1 , 2 ] }"
+  },
+  {
+    "name": "only white space becomes empty",
+    "input": "  \n\t\r ",
+    "output": ""
+  },
+  {
+    "name": "empty stays empty",
+    "input": "",
+    "output": ""
+  },
+  {
+    "name": "a byte order mark at the start goes",
+    "input": "\ufeff{\"a\":1}",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "only the first byte order mark goes",
+    "input": "\ufeff\ufeff{}",
+    "output": "\ufeff{}"
+  },
+  {
+    "name": "a byte order mark after white space stays",
+    "input": " \ufeff{}",
+    "output": "\ufeff{}"
+  },
+  {
+    "name": "a byte order mark inside a string stays",
+    "input": "{\"a\":\"\ufeff\"}",
+    "output": "{\"a\":\"\ufeff\"}"
+  },
+  {
+    "name": "a fence without an info string goes",
+    "input": "```\n[1,2]\n```",
+    "output": "[1,2]"
+  },
+  {
+    "name": "a json fence goes",
+    "input": "```json\n{\"a\":1}\n```",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "an upper case info string is allowed",
+    "input": "```JSON\n{}\n```",
+    "output": "{}"
+  },
+  {
+    "name": "an info string of letters, digits and _+.- is allowed",
+    "input": "```json5_x+y.z-1\n{}\n```",
+    "output": "{}"
+  },
+  {
+    "name": "an info string with a slash keeps the fence",
+    "input": "```application/json\n{}\n```",
+    "output": "```application/json\n{}\n```"
+  },
+  {
+    "name": "an info string with a space inside keeps the fence",
+    "input": "```json x\n{}\n```",
+    "output": "```json x\n{}\n```"
+  },
+  {
+    "name": "a space before the info string keeps the fence",
+    "input": "``` json\n{}\n```",
+    "output": "``` json\n{}\n```"
+  },
+  {
+    "name": "spaces and tabs after the info string are allowed",
+    "input": "```json \t\n{}\n```",
+    "output": "{}"
+  },
+  {
+    "name": "a fence with CRLF line ends goes",
+    "input": "```json\r\n{\"a\":1}\r\n```",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "an indented closing fence goes",
+    "input": "```json\n{}\n \t```",
+    "output": "{}"
+  },
+  {
+    "name": "white space inside the fence goes too",
+    "input": "```json\n\n  {\"a\": 1}  \n\n```",
+    "output": "{\"a\": 1}"
+  },
+  {
+    "name": "white space around the fence goes",
+    "input": "\n  ```json\n{}\n```\n\n",
+    "output": "{}"
+  },
+  {
+    "name": "a byte order mark before the fence goes",
+    "input": "\ufeff\n```json\n{\"a\":1}\n```\n",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "a byte order mark inside the fence stays",
+    "input": "```json\n\ufeff{}\n```",
+    "output": "\ufeff{}"
+  },
+  {
+    "name": "an empty fence becomes empty",
+    "input": "```json\n```",
+    "output": ""
+  },
+  {
+    "name": "a fence holding only white space becomes empty",
+    "input": "```json\n  \n```",
+    "output": ""
+  },
+  {
+    "name": "no closing fence keeps the text",
+    "input": "```json\n{}",
+    "output": "```json\n{}"
+  },
+  {
+    "name": "no opening fence keeps the text",
+    "input": "{}\n```",
+    "output": "{}\n```"
+  },
+  {
+    "name": "a closing fence on the last line of content keeps the text",
+    "input": "```json\n{}```",
+    "output": "```json\n{}```"
+  },
+  {
+    "name": "a fence on one line stays",
+    "input": "```{\"a\":1}```",
+    "output": "```{\"a\":1}```"
+  },
+  {
+    "name": "only three backticks stay",
+    "input": "```",
+    "output": "```"
+  },
+  {
+    "name": "four backticks keep the fence",
+    "input": "````json\n{}\n````",
+    "output": "````json\n{}\n````"
+  },
+  {
+    "name": "text before the fence keeps it",
+    "input": "Here it is:\n```json\n{}\n```",
+    "output": "Here it is:\n```json\n{}\n```"
+  },
+  {
+    "name": "text after the fence keeps it",
+    "input": "```json\n{}\n```\nThanks",
+    "output": "```json\n{}\n```\nThanks"
+  },
+  {
+    "name": "a fence inside a fence keeps the inner one",
+    "input": "```\n```json\n{}\n```\n```",
+    "output": "```json\n{}\n```"
+  },
+  {
+    "name": "a trailing comma in an object goes",
+    "input": "{\"a\":1,}",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "a trailing comma in an array goes",
+    "input": "[1,2,]",
+    "output": "[1,2]"
+  },
+  {
+    "name": "white space after a trailing comma stays",
+    "input": "[1,2 ,\n ]",
+    "output": "[1,2 \n ]"
+  },
+  {
+    "name": "a trailing comma before CRLF goes",
+    "input": "[1,\r\n]",
+    "output": "[1\r\n]"
+  },
+  {
+    "name": "nested trailing commas all go",
+    "input": "{\"a\":[1,],\"b\":{\"c\":2,},}",
+    "output": "{\"a\":[1],\"b\":{\"c\":2}}"
+  },
+  {
+    "name": "a trailing comma inside a fence goes",
+    "input": "```json\n{\"a\":[1,2,],}\n```",
+    "output": "{\"a\":[1,2]}"
+  },
+  {
+    "name": "a comma between values stays",
+    "input": "{\"a\":1,\"b\":[1,2]}",
+    "output": "{\"a\":1,\"b\":[1,2]}"
+  },
+  {
+    "name": "a comma and brace inside a string stay",
+    "input": "{\"a\":\"x,}\"}",
+    "output": "{\"a\":\"x,}\"}"
+  },
+  {
+    "name": "a comma and bracket inside a string stay",
+    "input": "[\"a,]\",]",
+    "output": "[\"a,]\"]"
+  },
+  {
+    "name": "an escaped quote doesn't end a string",
+    "input": "{\"a\":\"say \\\"hi,\\\" ]\",}",
+    "output": "{\"a\":\"say \\\"hi,\\\" ]\"}"
+  },
+  {
+    "name": "an escaped backslash ends before the quote",
+    "input": "[\"c:\\\\\",]",
+    "output": "[\"c:\\\\\"]"
+  },
+  {
+    "name": "of two commas only the last goes",
+    "input": "[1,,]",
+    "output": "[1,]"
+  },
+  {
+    "name": "a leading comma stays",
+    "input": "[,1]",
+    "output": "[,1]"
+  },
+  {
+    "name": "a comma at the end of the text stays",
+    "input": "[1],",
+    "output": "[1],"
+  },
+  {
+    "name": "a comma before a comment stays",
+    "input": "{\"a\":1, // note\n}",
+    "output": "{\"a\":1, // note\n}"
+  },
+  {
+    "name": "single quotes don't start a string",
+    "input": "{'a':1,}",
+    "output": "{'a':1}"
+  },
+  {
+    "name": "an unterminated string keeps the rest",
+    "input": "{\"a\":\"x,}",
+    "output": "{\"a\":\"x,}"
+  },
+  {
+    "name": "other characters stay as they are",
+    "input": "{\"emoji\":\"\ud83d\ude00\",\"separator\":\"\u2028\",\"nul\":\"\u0000\",}",
+    "output": "{\"emoji\":\"\ud83d\ude00\",\"separator\":\"\u2028\",\"nul\":\"\u0000\"}"
+  },
+  {
+    "name": "a no-break space is not JSON white space",
+    "input": "\u00a0{}\u00a0",
+    "output": "\u00a0{}\u00a0"
+  },
+  {
+    "name": "a vertical tab is not JSON white space",
+    "input": "\u000b[1,\u000b]",
+    "output": "\u000b[1,\u000b]"
+  },
+  {
+    "name": "a no-break space before a bracket keeps the comma",
+    "input": "[1,\u00a0]",
+    "output": "[1,\u00a0]"
+  },
+  {
+    "name": "keys and values are never changed",
+    "input": "{\"Name\":\"  x  \",\"n\":01,\"t\":tru,}",
+    "output": "{\"Name\":\"  x  \",\"n\":01,\"t\":tru}"
+  }
+]

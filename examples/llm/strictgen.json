@@ -1,0 +1,10 @@
+{
+  "$schema": "../../strictgen.schema.json",
+  "schemas": "schemas",
+  "targets": {
+    "rust": { "out": "rust/src/generated" },
+    "go": { "out": "go", "package": "types", "shared": true },
+    "typescript": { "out": "ts/generated" }
+  },
+  "llm": { "profiles": ["openai", "anthropic", "gemini"], "out": "llm", "cleanup": true }
+}

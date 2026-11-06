@@ -35,6 +35,7 @@ import {
   rustHelpersCore,
   rustHelpersObject,
 } from "./rust-helpers.js";
+import { RUST_CLEANUP } from "./cleanup-helpers.js";
 import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
 
@@ -135,6 +136,8 @@ export interface RustOptions {
    * their paths and adds `Decode::report_from_json`. Defaults to `strict`.
    */
   readonly read?: ReadMode;
+  /** Adds `clean_llm_json`, the LLM cleanup step, to the helpers and re-exports it. */
+  readonly cleanup?: boolean;
 }
 
 /**
@@ -233,6 +236,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     report && usesUntagged ? RUST_HELPERS_ATTEMPT : "",
     ...checkParts(contents.map((c) => c.contents)),
     patterns.length > 0 ? patternTable(patterns) : "",
+    options.cleanup === true ? RUST_CLEANUP : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -251,6 +255,9 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     report
       ? `\n// The unknown key hook, which every decode calls with the paths of its unknown keys.\n` +
         `pub use ${HELPERS}::{clear_unknown_key_hook, set_unknown_key_hook};\n`
+      : "",
+    options.cleanup === true
+      ? `\n// The cleanup step LLM output goes through before decoding.\npub use ${HELPERS}::clean_llm_json;\n`
       : "",
   ].join("");
   return [

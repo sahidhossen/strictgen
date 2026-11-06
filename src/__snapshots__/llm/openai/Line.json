@@ -1,0 +1,20 @@
+{
+  "description": "One line.",
+  "type": "object",
+  "properties": {
+    "sku": {
+      "type": "string"
+    },
+    "quantity": {
+      "type": "integer",
+      "minimum": 1
+    }
+  },
+  "required": [
+    "sku",
+    "quantity"
+  ],
+  "additionalProperties": false
+}
+
+Nothing moved to the decoder.

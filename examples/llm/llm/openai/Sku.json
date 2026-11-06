@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "A stock keeping unit, like AB-1234.",
+      "type": "string",
+      "pattern": "^[A-Z]{2}-[0-9]{4}$"
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

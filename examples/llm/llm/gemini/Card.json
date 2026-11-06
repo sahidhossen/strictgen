@@ -1,0 +1,21 @@
+{
+  "description": "A card payment.",
+  "type": "object",
+  "properties": {
+    "method": {
+      "type": "string",
+      "enum": [
+        "card"
+      ]
+    },
+    "last4": {
+      "description": "The last four digits. At least 4 characters, at most 4 characters.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "method",
+    "last4"
+  ],
+  "additionalProperties": false
+}
