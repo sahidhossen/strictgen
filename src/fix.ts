@@ -608,6 +608,8 @@ const OPEN_CLOSERS = [
   "patternProperties",
 ];
 const APPLICATORS = ["allOf", "oneOf", "anyOf", "if"];
+/** Keywords that bring in keys of their own, so closing the object beside them narrows it. */
+const REF_LIKE = ["$ref", "$dynamicRef", "dependentSchemas"];
 
 function isTypePlace(place: Place): boolean {
   if (place.keyword === undefined) return true;
@@ -630,6 +632,20 @@ function closeObject(
 ): JMap {
   if (node.get("type") !== "object" || OPEN_CLOSERS.some((k) => node.has(k))) return node;
   if (!isTypePlace(place) || pass.bases.has(`${file}#${pointer(path)}`)) return node;
+  const beside = REF_LIKE.find((k) => node.has(k));
+  if (beside !== undefined) {
+    note(
+      pass,
+      file,
+      path,
+      "close-objects",
+      `an object with ${beside} beside its properties stays open, since closing it would reject keys ${beside} allows`,
+      beside === "dependentSchemas"
+        ? 'declare every key in "properties" and close the object by hand'
+        : 'move the $ref into "allOf" and add "unevaluatedProperties": false',
+    );
+    return node;
+  }
   const applicator = APPLICATORS.some((k) => node.has(k));
   if (!applicator && !node.has("properties")) {
     note(

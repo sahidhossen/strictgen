@@ -126,6 +126,36 @@ describe("close-objects", () => {
     expect(result.problem).toBeUndefined();
   });
 
+  it.each(["$ref", "$dynamicRef", "dependentSchemas"])(
+    "leaves an object with %s beside its properties open, with a note",
+    (keyword) => {
+      const value =
+        keyword === "dependentSchemas"
+          ? { a: { properties: { b: { type: "string" } } } }
+          : "#/$defs/base";
+      const result = fix({
+        order: schema({
+          type: "object",
+          properties: {
+            item: { type: "object", [keyword]: value, properties: { a: { type: "string" } } },
+          },
+          additionalProperties: false,
+          $defs: { base: { type: "object", properties: { id: { type: "string" } } } },
+        }),
+      });
+      const order = fixed(result) as { properties: { item: object } };
+      expect(order.properties.item).not.toHaveProperty("additionalProperties");
+      expect(order.properties.item).not.toHaveProperty("unevaluatedProperties");
+      expect(
+        notes(result).some((n) =>
+          n.startsWith(
+            `order.json#/properties/item: close-objects: an object with ${keyword} beside its properties stays open`,
+          ),
+        ),
+      ).toBe(true);
+    },
+  );
+
   it("leaves additionalProperties true, which the author chose, for a change by hand", () => {
     const result = fix({
       order: schema({

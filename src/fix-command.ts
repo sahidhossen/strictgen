@@ -16,7 +16,7 @@ import { fixSchemas, noteText } from "./fix.js";
 import { unifiedDiff } from "./fix-diff.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import { writeError } from "./main.js";
-import { samePath, within } from "./paths.js";
+import { canonical, samePath, within } from "./paths.js";
 import type { Io } from "./run.js";
 import { CodegenError } from "./schema.js";
 import { mainOptions } from "./targets.js";
@@ -61,18 +61,32 @@ export function readSchemaFiles(dir: string): FixInput[] {
 /**
  * Writes the changed files back into the schemas folder. First checks every one: it must still
  * hold what was read, be a regular file inside the schemas folder (a symlink may point at one),
- * and not be the config file. Then writes each to a temporary file next to it, and only when
- * all of them are written renames them over the originals, keeping each file's mode.
+ * not be the config file, and not be the same file as another schema entry. Then writes each to
+ * a temporary file next to it, and only when all of them are written renames them over the
+ * originals, keeping each file's mode. The renames are not atomic as a group: when one fails,
+ * the error names the files already renamed.
  */
 function writeFixed(config: Config, files: readonly FixedFile[]): void {
   const planned: { path: string; name: string; after: string; mode: number }[] = [];
   try {
+    const seen = new Map<string, string>();
     for (const file of files) {
       const name = shown(config.root, join(config.schemas, file.file));
+      const path = realpathSync(join(config.schemas, file.file));
+      const other = seen.get(canonical(path));
+      if (other !== undefined) {
+        throw new CodegenError(
+          name,
+          "output-conflict",
+          `refusing to write: it is the same file as ${other}`,
+          "keep one of them and remove the other, which is a symlink or a hard link to it",
+        );
+      }
+      seen.set(canonical(path), name);
+      if (file.before === file.after) continue;
       const refuse = (reason: string, hint: string): never => {
         throw new CodegenError(name, "output-conflict", `refusing to write it: ${reason}`, hint);
       };
-      const path = realpathSync(join(config.schemas, file.file));
       if (!within(path, config.schemas))
         refuse(
           "it is a symlink to a file outside the schemas folder",
@@ -90,20 +104,35 @@ function writeFixed(config: Config, files: readonly FixedFile[]): void {
   }
   const TEMP = ".strictgen-fix";
   const written: string[] = [];
+  const renamed: string[] = [];
   try {
     for (const { path, after, mode } of planned) {
       writeFileSync(path + TEMP, after, { flag: "wx" });
       written.push(path + TEMP);
       chmodSync(path + TEMP, mode & 0o7777);
     }
-    for (const { path } of planned) renameSync(path + TEMP, path);
+    for (const { path, name } of planned) {
+      renameSync(path + TEMP, path);
+      renamed.push(name);
+    }
   } catch (error) {
     for (const temp of written) rmSync(temp, { force: true });
     if (!isFsError(error)) throw error;
     // Name the file as the schemas folder shows it, not by the path its symlinks resolve to.
     const file = planned.find((p) => error.path === p.path || error.path === p.path + TEMP);
-    const name = file === undefined ? "." : file.name + (error.path === file.path ? "" : TEMP);
-    throw new CodegenError(name, "write-failed", `can't write the output: ${fsReason(error)}`);
+    const temp = file !== undefined && error.path !== file.path;
+    const name = file === undefined ? "." : file.name + (temp ? TEMP : "");
+    const done = renamed.length === 0 ? "" : `. Already written: ${renamed.join(", ")}`;
+    const hint =
+      error.code === "EEXIST" && temp
+        ? "it is left from an earlier run that stopped; delete it and run strictgen fix --write again"
+        : undefined;
+    throw new CodegenError(
+      name,
+      "write-failed",
+      `can't write the output: ${fsReason(error)}${done}`,
+      hint,
+    );
   }
 }
 
@@ -121,7 +150,7 @@ export function fixCommand(config: Config, io: Io, write: boolean): number {
     ...(options.validation === undefined ? {} : { validation: options.validation }),
   });
   const changed = result.files.filter((f) => f.before !== f.after);
-  if (write) writeFixed(config, changed);
+  if (write) writeFixed(config, result.files);
   else {
     for (const file of changed) {
       const path = shown(io.cwd, join(config.schemas, file.file));

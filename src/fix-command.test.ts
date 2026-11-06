@@ -155,6 +155,18 @@ describe("strictgen fix", () => {
     expect(readFileSync(outside, "utf8")).toBe(OPEN);
   });
 
+  it("refuses two schema entries that are the same file, naming both", () => {
+    const root = project({ "order.json": OPEN });
+    symlinkSync(join(root, "schemas", "order.json"), join(root, "schemas", "other.json"));
+    const { code, err } = cli(root, "--write");
+    expect(code).toBe(EXIT_FAILED);
+    expect(err).toEqual([
+      "error: schemas/other.json: output-conflict: refusing to write: it is the same file as schemas/order.json. Hint: keep one of them and remove the other, which is a symlink or a hard link to it",
+    ]);
+    expect(read(root, "order.json")).toBe(OPEN);
+    expect(readdirSync(join(root, "schemas")).sort()).toEqual(["order.json", "other.json"]);
+  });
+
   it("writes through a symlink that stays inside the schemas folder", () => {
     const root = project({ "real.txt": OPEN });
     symlinkSync(join(root, "schemas", "real.txt"), join(root, "schemas", "order.json"));
@@ -175,7 +187,7 @@ describe("strictgen fix", () => {
     expect(code).toBe(EXIT_FAILED);
     expect(err).toEqual([
       expect.stringMatching(
-        /^error: schemas\/order\.json\.strictgen-fix: write-failed: can't write the output: already exists \(EEXIST\)$/,
+        /^error: schemas\/order\.json\.strictgen-fix: write-failed: can't write the output: already exists \(EEXIST\)\. Hint: it is left from an earlier run that stopped; delete it and run strictgen fix --write again$/,
       ),
     ]);
     expect(read(other, "order.json")).toBe(OPEN);

@@ -98,7 +98,8 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       "simple allOf parts and moves definitions and inline schemas a $ref points at into $defs.",
       "Prints a unified diff of the changes, or with --write writes them in place, keeping key order",
       "and formatting. Then it generates every target in memory and lists what is left to change by",
-      "hand, with the file, JSON pointer and rule. Exits 1 when generation still fails.",
+      "hand, with the file, JSON pointer and rule. Exits 1 when generation still fails; --write",
+      "writes the files it fixed even then.",
     ],
     options: [
       "  --write          Write the fixed schemas in place instead of printing a diff",
