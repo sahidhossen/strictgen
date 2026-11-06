@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/order.json",
+  "title": "Order",
+  "description": "An order, with limits on lengths, numbers, item counts and map sizes that every language checks the same way.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/orderId" },
+    "note": {
+      "description": "A note for the packer, 2 to 5 characters.",
+      "type": "string",
+      "minLength": 2,
+      "maxLength": 5
+    },
+    "quantity": {
+      "description": "How many units, 1 to 99.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 99
+    },
+    "packSize": {
+      "description": "Units per pack: a multiple of 6 between 0 and 50, both left out.",
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "exclusiveMaximum": 50,
+      "multipleOf": 6
+    },
+    "price": {
+      "description": "The unit price, from 0.5 up to but not including 1000.",
+      "type": "number",
+      "minimum": 0.5,
+      "exclusiveMaximum": 1000
+    },
+    "discount": {
+      "description": "The share taken off, above 0 and at most 0.75.",
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.75
+    },
+    "tags": {
+      "description": "One to three tags of at most 3 characters each.",
+      "type": "array",
+      "items": { "type": "string", "maxLength": 3 },
+      "minItems": 1,
+      "maxItems": 3
+    },
+    "attributes": {
+      "description": "One or two codes, by a name of at most 4 characters.",
+      "type": "object",
+      "propertyNames": { "type": "string", "maxLength": 4 },
+      "additionalProperties": { "$ref": "#/$defs/code" },
+      "minProperties": 1,
+      "maxProperties": 2
+    },
+    "coupon": { "$ref": "#/$defs/code" },
+    "lines": {
+      "description": "At most two order lines.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/line" },
+      "maxItems": 2
+    },
+    "size": {
+      "description": "A size as a number from 1, or as a label of at most 2 characters.",
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "maxLength": 2 }
+      ]
+    }
+  },
+  "required": ["id", "note", "quantity", "price", "tags"],
+  "additionalProperties": false,
+  "$defs": {
+    "code": {
+      "description": "A code of exactly 3 characters.",
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 3
+    },
+    "codes": {
+      "description": "At most two codes.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/code" },
+      "maxItems": 2
+    },
+    "line": {
+      "description": "One line of an order.",
+      "type": "object",
+      "properties": {
+        "sku": { "$ref": "#/$defs/code" },
+        "count": { "description": "How many, at least 1.", "type": "integer", "minimum": 1 }
+      },
+      "required": ["sku", "count"],
+      "additionalProperties": false
+    }
+  }
+}

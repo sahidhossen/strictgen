@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/payment-method.json",
+  "title": "PaymentMethod",
+  "description": "A way to pay, picked by its `type` key.",
+  "oneOf": [
+    { "$ref": "#/$defs/card" },
+    { "$ref": "#/$defs/bankAccount" },
+    { "$ref": "#/$defs/wallet" }
+  ],
+  "$defs": {
+    "bankAccount": {
+      "description": "A bank account, debited directly.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "bank_account" },
+        "holderName": { "description": "The name on the account.", "type": "string" },
+        "iban": { "description": "The account's IBAN.", "type": "string" }
+      },
+      "required": ["type", "holderName", "iban"],
+      "unevaluatedProperties": false
+    },
+    "card": {
+      "description": "A payment card.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "card" },
+        "brand": { "description": "The card network.", "enum": ["visa", "mastercard", "amex"] },
+        "last4": { "description": "The last four digits of the card number.", "type": "string" },
+        "expMonth": { "description": "The expiry month, 1 to 12.", "type": "integer" },
+        "expYear": { "description": "The expiry year, like 2030.", "type": "integer" }
+      },
+      "required": ["type", "brand", "last4", "expMonth", "expYear"],
+      "unevaluatedProperties": false
+    },
+    "wallet": {
+      "description": "A digital wallet.",
+      "type": "object",
+      "properties": {
+        "type": { "const": "wallet" },
+        "provider": { "description": "The wallet provider.", "enum": ["apple_pay", "google_pay"] },
+        "email": {
+          "description": "The wallet's email address, when the provider shares it.",
+          "type": "string"
+        }
+      },
+      "required": ["type", "provider"],
+      "unevaluatedProperties": false
+    }
+  }
+}

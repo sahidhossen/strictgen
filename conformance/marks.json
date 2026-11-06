@@ -1,0 +1,44 @@
+{
+  "marks": [
+    {
+      "case": "Event/invalid/attempt-above-int64-maximum",
+      "kind": "ts-unsafe-integer",
+      "path": "/attempt",
+      "reason": "Every language rejects 2^63 with out_of_range_integer at the same path, but the error names the range the language holds: 64 bits in Rust and Go, 2^53 - 1 in TypeScript."
+    },
+    {
+      "case": "Event/invalid/attempt-below-int64-minimum",
+      "kind": "ts-unsafe-integer",
+      "path": "/attempt",
+      "reason": "Every language rejects -2^63 - 1 with out_of_range_integer at the same path, but the error names the range the language holds: 64 bits in Rust and Go, 2^53 - 1 in TypeScript."
+    },
+    {
+      "case": "Event/valid/attempt-just-above-safe-integer",
+      "kind": "ts-unsafe-integer",
+      "path": "/attempt",
+      "reason": "A TypeScript number holds integers exactly only up to 2^53 - 1, where Rust and Go hold 64 bits. TypeScript rejects 2^53 + 1 with out_of_range_integer rather than round it."
+    },
+    {
+      "case": "Event/valid/attempt-at-int64-maximum",
+      "kind": "ts-unsafe-integer",
+      "path": "/attempt",
+      "reason": "A TypeScript number holds integers exactly only up to 2^53 - 1, where Rust and Go hold 64 bits. TypeScript rejects 2^63 - 1 with out_of_range_integer rather than round it."
+    },
+    {
+      "case": "Event/valid/attempt-at-int64-minimum",
+      "kind": "ts-unsafe-integer",
+      "path": "/attempt",
+      "reason": "A TypeScript number holds integers exactly only down to -(2^53 - 1), where Rust and Go hold 64 bits. TypeScript rejects -2^63 with out_of_range_integer rather than round it."
+    },
+    {
+      "case": "Parcel/valid/weight-spelled-with-exponent",
+      "kind": "number-spelling",
+      "reason": "Each language spells a decoded number its own way when it encodes it again: Rust writes 150.0, Go keeps 1.50E+2 as it was read, TypeScript writes 150. The value is the same, so the canonical bytes are."
+    },
+    {
+      "case": "Parcel/valid/size-with-line-separators",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JavaScript that embeds the JSON in a script can't break, where Rust and TypeScript write the characters. Both are the same JSON string, so the canonical bytes are equal."
+    }
+  ]
+}

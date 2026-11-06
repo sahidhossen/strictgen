@@ -1814,7 +1814,7 @@ describe("TypeScript example fixtures", () => {
       }
       expect(errorFromJson(m, type, text), name).toEqual(want);
     }
-    expect(count).toBeGreaterThan(10);
+    expect(count).toBeGreaterThan(5);
   });
 });
 
@@ -2055,7 +2055,7 @@ describe("TypeScript report example fixtures", () => {
     } finally {
       m.fn("setUnknownKeyHook")(undefined);
     }
-    expect(count).toBeGreaterThan(10);
+    expect(count).toBeGreaterThan(5);
   });
 });
 

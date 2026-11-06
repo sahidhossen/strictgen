@@ -10,6 +10,7 @@ You need Node.js 22 or later and pnpm 10. The cross-language checks also need a 
 pnpm install
 pnpm typecheck
 pnpm test
+pnpm conformance   # every conformance case in Rust, Go and TypeScript, see conformance/README.md
 ```
 
 ## Ground rules

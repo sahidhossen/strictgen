@@ -1,0 +1,8 @@
+{
+  "url": "https://hooks.example.com/strictgen",
+  "match": ["user.created", "payment_method.attached"],
+  "default": false,
+  "async": true,
+  "select": ["id", "type", "user"],
+  "self": "https://api.example.com/v1/subscriptions/sub_4k2p"
+}

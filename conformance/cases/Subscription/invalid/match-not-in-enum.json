@@ -1,0 +1,5 @@
+{
+  "url": "https://hooks.example.com/all",
+  "match": ["user.deleted"],
+  "default": true
+}
