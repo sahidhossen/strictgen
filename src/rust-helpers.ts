@@ -84,13 +84,41 @@ thread_local! {
     static UNKNOWN: std::cell::RefCell<Option<Vec<usize>>> = const { std::cell::RefCell::new(None) };
 }
 
+/// The collector of one decode on this thread. Dropping it restores the collector of the decode
+/// that was running before, even when decoding panics, so nothing notes into a stale one.
+struct Collecting {
+    saved: Option<Vec<usize>>,
+}
+
+impl Collecting {
+    /// Starts an empty collector, keeping the one before.
+    fn start() -> Self {
+        Self { saved: UNKNOWN.with(|cell| cell.replace(Some(Vec::new()))) }
+    }
+
+    /// Ends the collector, restores the one before, and returns the offsets it noted.
+    fn finish(self) -> Vec<usize> {
+        let offsets = UNKNOWN.with(|cell| cell.borrow_mut().take()).unwrap_or_default();
+        drop(self);
+        offsets
+    }
+}
+
+impl Drop for Collecting {
+    fn drop(&mut self) {
+        let saved = self.saved.take();
+        // The thread's storage may be gone when the thread exits; then there is nothing to restore.
+        let _ = UNKNOWN.try_with(|cell| cell.replace(saved));
+    }
+}
+
 /// Parses data once, decodes it as T, calls the hook and returns the value with the paths of
 /// its unknown keys.
 fn reported<T: Decode>(data: &[u8]) -> Result<Reported<T>, DecodeError> {
     let root = parse(data)?;
-    let saved = UNKNOWN.with(|cell| cell.replace(Some(Vec::new())));
+    let collecting = Collecting::start();
     let result = T::decode_node(&root);
-    let mut offsets = UNKNOWN.with(|cell| cell.replace(saved)).unwrap_or_default();
+    let mut offsets = collecting.finish();
     let value = result?;
     // Offsets sort the keys into input order.
     offsets.sort_unstable();

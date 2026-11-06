@@ -153,7 +153,10 @@ fn remove(value: &mut Value, path: &str) -> bool {
 #[test]
 fn fixtures_round_trip() {
     example_report::set_unknown_key_hook(|paths| {
-        HOOKED.lock().expect("the hook's calls").push(paths.to_vec());
+        HOOKED
+            .lock()
+            .expect("the hook's calls")
+            .push(paths.to_vec());
     });
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures");
     let mut failures = Vec::new();
@@ -226,7 +229,9 @@ fn fixtures_round_trip() {
                     ));
                 }
                 if !hooked.is_empty() {
-                    failures.push(format!("{name}: a failed decode called the hook with {hooked:?}"));
+                    failures.push(format!(
+                        "{name}: a failed decode called the hook with {hooked:?}"
+                    ));
                 }
             }
         }

@@ -86,6 +86,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      # The generated files are formatted by strictgen; this keeps the hand written tests formatted too.
+      - run: cargo fmt --check
       - run: cargo check --locked --all-targets
       - name: Round trip the fixtures
         run: cargo test --locked
