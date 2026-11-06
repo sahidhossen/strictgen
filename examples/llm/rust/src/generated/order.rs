@@ -6,6 +6,56 @@ use super::helpers;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+/// How a repeat order pays: the same choice as a payment.
+///
+/// Schema: `order.json#/$defs/billing`.
+pub type Billing = Payment;
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Billing`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_billing_from_llm(text: &str) -> Result<Billing, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
+/// How many boxes to pack.
+///
+/// Schema: `order.json#/$defs/boxes`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Boxes(pub i64);
+
+impl helpers::Decode for Boxes {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <i64 as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_integer(self.0, &[(">=", 1, "1"), ("<=", 9, "9")])
+    }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Boxes`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_boxes_from_llm(text: &str) -> Result<Boxes, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
 /// A card payment.
 ///
 /// Schema: `order.json#/$defs/card`.
@@ -36,6 +86,19 @@ impl helpers::Decode for Card {
         )?;
         Ok(())
     }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Card`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_card_from_llm(text: &str) -> Result<Card, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), false)
 }
 
 /// Schema: `order.json#/$defs/card/properties/method`.
@@ -93,10 +156,10 @@ pub enum Contact {
 
 impl helpers::Decode for Contact {
     fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
-        if let Ok(value) = <String as helpers::Decode>::decode_node(node) {
+        if let Ok(value) = helpers::attempt(|| <String as helpers::Decode>::decode_node(node)) {
             return Ok(Self::String(value));
         }
-        if let Ok(value) = <i64 as helpers::Decode>::decode_node(node) {
+        if let Ok(value) = helpers::attempt(|| <i64 as helpers::Decode>::decode_node(node)) {
             return Ok(Self::Integer(value));
         }
         Err(helpers::mismatch("Contact", node))
@@ -110,6 +173,20 @@ impl helpers::Decode for Contact {
             }
         }
     }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Contact`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_contact_from_llm(text: &str) -> Result<Contact, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
 }
 
 /// Who orders.
@@ -155,6 +232,19 @@ impl helpers::Decode for Customer {
     }
 }
 
+/// Reads the JSON text a model gave for a provider-ready schema of `Customer`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_customer_from_llm(text: &str) -> Result<Customer, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), false)
+}
+
 /// Payment by invoice.
 ///
 /// Schema: `order.json#/$defs/invoice`.
@@ -189,6 +279,19 @@ impl helpers::Decode for Invoice {
         }
         Ok(())
     }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Invoice`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_invoice_from_llm(text: &str) -> Result<Invoice, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), false)
 }
 
 /// Schema: `order.json#/$defs/invoice/properties/method`.
@@ -285,6 +388,19 @@ impl helpers::Decode for Line {
     }
 }
 
+/// Reads the JSON text a model gave for a provider-ready schema of `Line`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_line_from_llm(text: &str) -> Result<Line, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), false)
+}
+
 /// An order a model reads out of a customer's message.
 ///
 /// Schema: `order.json#`.
@@ -359,6 +475,19 @@ impl helpers::Decode for OrderRequest {
         }
         Ok(())
     }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `OrderRequest`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_order_request_from_llm(text: &str) -> Result<OrderRequest, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), false)
 }
 
 /// How urgent it is.
@@ -443,6 +572,70 @@ impl helpers::Decode for Payment {
     }
 }
 
+/// Reads the JSON text a model gave for a provider-ready schema of `Payment`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_payment_from_llm(text: &str) -> Result<Payment, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
+/// Lines to pick first.
+///
+/// Schema: `order.json#/$defs/picks`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Picks(pub Vec<Line>);
+
+impl helpers::Decode for Picks {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <Vec<Line> as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_items(&self.0, None, Some(3), helpers::Decode::check)
+    }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Picks`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_picks_from_llm(text: &str) -> Result<Picks, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
+/// A remark for the driver.
+///
+/// Schema: `order.json#/$defs/remark`.
+pub type Remark = String;
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Remark`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_remark_from_llm(text: &str) -> Result<Remark, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
 /// A stock keeping unit, like AB-1234.
 ///
 /// Schema: `order.json#/$defs/sku`.
@@ -458,4 +651,123 @@ impl helpers::Decode for Sku {
     fn check(&self) -> Result<(), helpers::DecodeError> {
         helpers::check_pattern(&self.0, 0)
     }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Sku`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_sku_from_llm(text: &str) -> Result<Sku, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
+/// Where an order is.
+///
+/// Schema: `order.json#/$defs/status`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
+pub enum Status {
+    /// `new`
+    #[serde(rename = "new")]
+    New,
+    /// `paid`
+    #[serde(rename = "paid")]
+    Paid,
+    /// `sent`
+    #[serde(rename = "sent")]
+    Sent,
+}
+
+impl Status {
+    /// The value as it is in JSON.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::New => "new",
+            Self::Paid => "paid",
+            Self::Sent => "sent",
+        }
+    }
+}
+
+/// Orders by the JSON value, by code point, so a map keyed by the enum encodes its keys in
+/// the order Go and TypeScript write them.
+impl Ord for Status {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.as_str().cmp(other.as_str())
+    }
+}
+
+impl PartialOrd for Status {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl helpers::Decode for Status {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        match helpers::string(node)? {
+            "new" => Ok(Self::New),
+            "paid" => Ok(Self::Paid),
+            "sent" => Ok(Self::Sent),
+            other => Err(helpers::not_in_enum(other, &["new", "paid", "sent"])),
+        }
+    }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Status`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_status_from_llm(text: &str) -> Result<Status, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
+}
+
+/// Units in stock, by stock keeping unit.
+///
+/// Schema: `order.json#/$defs/stock`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Stock(pub BTreeMap<Sku, i64>);
+
+impl helpers::Decode for Stock {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <BTreeMap<Sku, i64> as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_entries(
+            &self.0,
+            Some(1),
+            Some(3),
+            |key| key.0.as_str(),
+            helpers::Decode::check,
+            |item| helpers::check_integer(*item, &[(">=", 0, "0")]),
+        )
+    }
+}
+
+/// Reads the JSON text a model gave for a provider-ready schema of `Stock`.
+/// After the cleanup step, it undoes the projection: null for an optional key is absent, and
+/// a map is read in the shapes the profiles give.
+/// The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+/// Then every constraint of the type is checked.
+///
+/// # Errors
+///
+/// A `DecodeError` at the JSON Pointer of the first problem in the model's payload, whose
+/// compact form is made for asking the model to retry.
+pub fn decode_stock_from_llm(text: &str) -> Result<Stock, helpers::DecodeError> {
+    helpers::from_llm(&helpers::clean_llm_json(text), true)
 }

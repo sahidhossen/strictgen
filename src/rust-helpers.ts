@@ -8,6 +8,8 @@ import {
   UNIQUE_EXPECTED,
   UNIQUE_FOUND,
 } from "./errors.js";
+import type { LlmMaps } from "./llm-decoders.js";
+import { mapExpected } from "./llm-decoders.js";
 
 /** The name of the built in type for any JSON value except `null`. */
 export const RUST_NON_NULL = "NonNullJson";
@@ -1509,3 +1511,309 @@ fn number_text(number: f64) -> String {
 `,
   },
 };
+
+/** The map decoder's start, as the template writes it. */
+const MAP_START = String.raw`    fn decode_node(node: &Node<'_>) -> Result<Self, DecodeError> {
+        let Kind::Object(members) = &node.kind else {
+            return Err(mismatch("an object", node));
+        };
+        members.entries.iter().map(|(name, item)| entry(name, item)).collect()`;
+
+/** The map decoder's start with LLM decoders, which read maps in the profiles' shapes. */
+const MAP_START_LLM = String.raw`    fn decode_node(node: &Node<'_>) -> Result<Self, DecodeError> {
+        if in_llm() {
+            match &node.kind {
+                Kind::Array(items) if LLM_ENTRIES => return llm_entries(node, items),
+                Kind::Object(_) if LLM_OBJECTS => {}
+                _ => return Err(mismatch(LLM_MAP_EXPECTED, node)),
+            }
+        }
+        let Kind::Object(members) = &node.kind else {
+            return Err(mismatch("an object", node));
+        };
+        members.entries.iter().map(|(name, item)| entry(name, item)).collect()`;
+
+/** Object's key reads, as the template writes them. */
+const READS = String.raw`    /// Reads a key that must be present. A missing key fails at its own path.
+    pub(super) fn required<T: Decode>(&mut self, key: &str) -> Result<T, DecodeError> {
+        self.optional(key)?.ok_or_else(|| DecodeError::new(DecodeError::MISSING_KEY, None, None).at(key))
+    }
+
+    /// Reads an optional key, None when it is absent. An explicit null fails, unless the type
+    /// takes any JSON value.
+    pub(super) fn optional<T: Decode>(&mut self, key: &str) -> Result<Option<T>, DecodeError> {
+        let Some(i) = self.members.find(key) else {
+            return Ok(None);
+        };
+        let Some((_, node)) = self.members.entries.get(i) else {
+            return Ok(None);
+        };
+        if let Some(used) = self.used.get_mut(i) {
+            *used = true;
+        }
+        T::decode_node(node).map(Some).map_err(|error| error.at(key))
+    }`;
+
+/** Object's key reads with LLM decoders: in an LLM decode, null for an optional key is absent. */
+const READS_LLM = String.raw`    /// Reads a key that must be present. A missing key fails at its own path.
+    pub(super) fn required<T: Decode>(&mut self, key: &str) -> Result<T, DecodeError> {
+        self.read(key, false)?.ok_or_else(|| DecodeError::new(DecodeError::MISSING_KEY, None, None).at(key))
+    }
+
+    /// Reads an optional key, None when it is absent. An explicit null fails, unless the type
+    /// takes any JSON value, or an LLM decode runs, where null stands for absent.
+    pub(super) fn optional<T: Decode>(&mut self, key: &str) -> Result<Option<T>, DecodeError> {
+        self.read(key, true)
+    }
+
+    /// Reads a key, None when it is absent, or when it is optional and null in an LLM decode.
+    fn read<T: Decode>(&mut self, key: &str, optional: bool) -> Result<Option<T>, DecodeError> {
+        let Some(i) = self.members.find(key) else {
+            return Ok(None);
+        };
+        let Some((_, node)) = self.members.entries.get(i) else {
+            return Ok(None);
+        };
+        if let Some(used) = self.used.get_mut(i) {
+            *used = true;
+        }
+        if optional && matches!(node.kind, Kind::Null) && in_llm() {
+            return Ok(None);
+        }
+        T::decode_node(node).map(Some).map_err(|error| error.at(key))
+    }`;
+
+/** check_entries' check of a key, as the template writes it. */
+const KEY_CHECK = String.raw`        key(k).map_err(|error| error.at(name(k)))?;`;
+
+/** check_entries' check of a key with LLM decoders, which marks the error as the key's own. */
+const KEY_CHECK_LLM = String.raw`        key(k).map_err(|error| {
+            // An LLM decode gives the error of a key's own check the path of the entry's key.
+            LLM.with(|cell| {
+                if let Some(state) = cell.borrow_mut().as_mut() {
+                    state.key = true;
+                }
+            });
+            error.at(name(k))
+        })?;`;
+
+/** The untagged variant runner for LLM decoders, with report mode or without. */
+export function rustHelpersAttempt(report: boolean, llm: boolean): string {
+  if (!llm) return RUST_HELPERS_ATTEMPT;
+  const what = report ? "the unknown keys it noted and the entries of maps it read" : "the entries of maps it read";
+  const mark = report
+    ? "    let mark = UNKNOWN.with(|cell| cell.borrow().as_ref().map_or(0, Vec::len));\n"
+    : "";
+  const rollback = report
+    ? String.raw`        UNKNOWN.with(|cell| {
+            if let Some(offsets) = cell.borrow_mut().as_mut() {
+                offsets.truncate(mark);
+            }
+        });
+`
+    : "";
+  return String.raw`/// Runs one variant of an untagged union. When it fails, ${what} are
+/// dropped, so only the variant used notes its own.
+pub(super) fn attempt<T>(decode: impl FnOnce() -> Result<T, DecodeError>) -> Result<T, DecodeError> {
+${mark}    let entries = LLM.with(|cell| cell.borrow().as_ref().map_or(0, |state| state.entries.len()));
+    let result = decode();
+    if result.is_err() {
+${rollback}        LLM.with(|cell| {
+            if let Some(state) = cell.borrow_mut().as_mut() {
+                state.entries.truncate(entries);
+            }
+        });
+    }
+    result
+}
+`;
+}
+
+/** The core helpers with what LLM decoders need. */
+export function rustCoreWithLlm(core: string): string {
+  return swapText(core, MAP_START, MAP_START_LLM);
+}
+
+/** The object decoder with what LLM decoders need. */
+export function rustObjectWithLlm(object: string): string {
+  return swapText(object, READS, READS_LLM);
+}
+
+/** The check_entries helper with what LLM decoders need. */
+export function rustCheckEntriesWithLlm(text: string): string {
+  return swapText(text, KEY_CHECK, KEY_CHECK_LLM);
+}
+
+/** Replaces old, which must be in text, with replacement. */
+function swapText(text: string, old: string, replacement: string): string {
+  if (!text.includes(old)) throw new Error(`the Rust helpers template has no ${JSON.stringify(old.slice(0, 60))}`);
+  return text.split(old).join(replacement);
+}
+
+/**
+ * The LLM section of `helpers.rs`: the map shapes, the state of an LLM decode, the decoder of maps
+ * given as entries, the function every LLM decoder runs, and the path of a constraint error in
+ * the model's payload. `report` says how Object::finish is called.
+ */
+export function rustLlmSection(maps: LlmMaps, report: boolean): string {
+  const shapes = maps.entries && maps.objects ? "entries or objects, told apart by their JSON type" : maps.entries ? "entries" : "objects";
+  const finish = report ? "finish(&[])" : "finish()";
+  return String.raw`/// Whether LLM decodes read a map given as an array of {"key": ..., "value": ...} entries. The
+/// configured profiles give maps as ${shapes}.
+const LLM_ENTRIES: bool = ${String(maps.entries)};
+
+/// Whether LLM decodes read a map given as a JSON object.
+const LLM_OBJECTS: bool = ${String(maps.objects)};
+
+/// What a map expects in an LLM decode, for a value in neither shape.
+const LLM_MAP_EXPECTED: &str = ${JSON.stringify(mapExpected(maps))};
+
+/// What an LLM decode running on a thread notes.
+#[derive(Default)]
+struct LlmState {
+    /// The offsets of the arrays it read as the entries of a map, in decode order.
+    entries: Vec<usize>,
+    /// Set when the constraint error is of a map key's own check.
+    key: bool,
+}
+
+thread_local! {
+    /// While an LLM decode runs on this thread: what it notes. None outside one.
+    static LLM: std::cell::RefCell<Option<LlmState>> = const { std::cell::RefCell::new(None) };
+}
+
+/// One LLM decode on this thread. Dropping it restores the state of the decode that was running
+/// before, even when decoding panics, so nothing reads a stale one.
+struct LlmDecoding {
+    saved: Option<LlmState>,
+}
+
+impl LlmDecoding {
+    /// Starts an LLM decode, keeping the state before.
+    fn start() -> Self {
+        Self { saved: LLM.with(|cell| cell.replace(Some(LlmState::default()))) }
+    }
+
+    /// Ends the decode, restores the state before, and returns what it noted.
+    fn finish(self) -> LlmState {
+        let state = LLM.with(|cell| cell.borrow_mut().take()).unwrap_or_default();
+        drop(self);
+        state
+    }
+}
+
+impl Drop for LlmDecoding {
+    fn drop(&mut self) {
+        let saved = self.saved.take();
+        // The thread's storage may be gone when the thread exits; then there is nothing to restore.
+        let _ = LLM.try_with(|cell| cell.replace(saved));
+    }
+}
+
+/// True while an LLM decode runs on this thread.
+fn in_llm() -> bool {
+    LLM.with(|cell| cell.borrow().is_some())
+}
+
+/// The value of the key name of an object node, if it is one and has the key.
+fn member<'n, 'a>(node: &'n Node<'a>, name: &str) -> Option<&'n Node<'a>> {
+    let Kind::Object(members) = &node.kind else {
+        return None;
+    };
+    members.find(name).and_then(|i| members.entries.get(i)).map(|(_, item)| item)
+}
+
+/// Decodes a map an LLM gave as an array of {"key": ..., "value": ...} entries, in order. Each
+/// entry is an object with exactly those keys, read like a struct, the key at /i/key and the
+/// value at /i/value. A key given twice fails with duplicate_key at the later entry's key. The
+/// array's offset is noted, so a constraint error can be given the entry's path.
+fn llm_entries<K: Decode + Ord, V: Decode>(node: &Node<'_>, items: &[Node<'_>]) -> Result<BTreeMap<K, V>, DecodeError> {
+    let mut out = BTreeMap::new();
+    for (i, item) in items.iter().enumerate() {
+        let index = i.to_string();
+        let read = || -> Result<(K, V), DecodeError> {
+            let mut object = Object::new(item)?;
+            let key = object.required("key")?;
+            let value = object.required("value")?;
+            object.${finish}?;
+            Ok((key, value))
+        };
+        let (key, value) = read().map_err(|error| error.at(&index))?;
+        if out.contains_key(&key) {
+            let name = member(item, "key").and_then(|key| string(key).ok()).unwrap_or_default();
+            return Err(DecodeError::new(DecodeError::DUPLICATE_KEY, None, Some(quote(name))).at("key").at(&index));
+        }
+        out.insert(key, value);
+    }
+    LLM.with(|cell| {
+        if let Some(state) = cell.borrow_mut().as_mut() {
+            state.entries.push(node.at);
+        }
+    });
+    Ok(out)
+}
+
+/// Decodes the JSON text a model gave for a provider-ready schema as T, undoing the projection:
+/// null for an optional key is absent, and maps are read in the shapes the profiles give. A type
+/// that isn't an object is read from the "value" key of the object around it, when wrapped is
+/// set. Then the constraints of the whole value are checked. Every error has the path of the
+/// model's payload.
+pub(super) fn from_llm<T: Decode>(text: &str, wrapped: bool) -> Result<T, DecodeError> {
+    let root = parse(text.as_bytes())?;
+    let decoding = LlmDecoding::start();
+    let (value, node) = if wrapped {
+        let mut object = Object::new(&root)?;
+        let value: T = object.required("value")?;
+        object.${finish}?;
+        (value, member(&root, "value"))
+    } else {
+        (T::decode_node(&root)?, Some(&root))
+    };
+    if let Err(error) = value.check() {
+        let state = decoding.finish();
+        let path = llm_path(node, &error.path, &state);
+        let path = if wrapped { format!("/value{path}") } else { path };
+        return Err(DecodeError { path, ..error });
+    }
+    drop(decoding);
+    Ok(value)
+}
+
+/// The path, in the payload under node, of a constraint error whose path is in the decoded value:
+/// under a map read from entries, a key becomes the index of its entry, then key for an error of
+/// the key itself, else value.
+fn llm_path(mut node: Option<&Node<'_>>, path: &str, state: &LlmState) -> String {
+    let segments: Vec<String> = match path.strip_prefix('/') {
+        Some(rest) => rest.split('/').map(|s| s.replace("~1", "/").replace("~0", "~")).collect(),
+        None => Vec::new(),
+    };
+    let mut out = String::new();
+    for (i, segment) in segments.iter().enumerate() {
+        if let Some(Node { kind: Kind::Array(items), at, .. }) = node {
+            let found = state.entries.contains(at).then(|| {
+                items.iter().position(|item| {
+                    member(item, "key").and_then(|key| string(key).ok()) == Some(segment.as_str())
+                })
+            });
+            if let Some(Some(j)) = found {
+                out.push_str(&pointer(&j.to_string()));
+                if i + 1 == segments.len() && state.key {
+                    out.push_str("/key");
+                    return out;
+                }
+                out.push_str("/value");
+                node = items.get(j).and_then(|item| member(item, "value"));
+                continue;
+            }
+        }
+        out.push_str(&pointer(segment));
+        node = node.and_then(|n| match &n.kind {
+            Kind::Object(_) => member(n, segment),
+            Kind::Array(items) => segment.parse::<usize>().ok().and_then(|j| items.get(j)),
+            _ => None,
+        });
+    }
+    out
+}
+`;
+}

@@ -157,7 +157,7 @@ Codes are public API: changing one is a major version.
 | `not_unique` | not unique | an array whose items must be unique, with a repeat; `path` is the later item's pointer | `unique items` | `a repeat of item` and the earlier index |
 | `out_of_range_integer` | out of range integer | an integer the language can't hold exactly | the range | the value |
 | `invalid_json` | invalid JSON | text that isn't JSON: a syntax error, invalid UTF-8, a lone surrogate, data after the value, a number out of range | | what was found and the byte offset |
-| `duplicate_key` | duplicate key | an object that gives the same key twice, at the key's pointer | | the key and the byte offset |
+| `duplicate_key` | duplicate key | an object that gives the same key twice, at the key's pointer, or a map an LLM gave as entries with a key twice, at the later entry's key ([llm.md](llm.md#decoders)) | | the key and the byte offset, or for entries the key alone |
 | `too_deep` | too deep | a value inside 128 or more arrays and objects | `at most 127 nested arrays and objects` | the byte offset |
 
 Some cases worth knowing:

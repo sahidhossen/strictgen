@@ -7,6 +7,8 @@ import { emitRust, emitRustFixtures } from "./emit-rust.js";
 import { emitRustSchemas } from "./emit-schemas.js";
 import { emitTypeScript } from "./emit-ts.js";
 import { emitLlm, llmProfiles } from "./llm.js";
+import type { LlmMaps } from "./llm-decoders.js";
+import { llmMaps } from "./llm-decoders.js";
 import type { MainOptions, OutputFile, Target } from "./main.js";
 
 /** The name of the Rust fixture registry, in the folder `targets.rust.fixtures.out` names. */
@@ -37,6 +39,7 @@ function typescriptTarget(config: Config, ts: TypeScriptConfig): Target {
           decoders: ts.decoders,
           read: ts.read,
           cleanup: cleanup(config),
+          ...llmOption(config),
         }),
       ),
   };
@@ -58,6 +61,7 @@ function rustTarget(config: Config, rust: RustConfig): Target {
           allow: rust.allow,
           read: rust.read,
           cleanup: cleanup(config),
+          ...llmOption(config),
           publicModules: rust.embedSchemas ? [SCHEMAS_MODULE] : [],
         }),
       ),
@@ -85,6 +89,7 @@ function goTarget(config: Config, go: GoConfig): Target {
     package: go.package,
     read: go.read,
     cleanup: cleanup(config),
+    ...llmOption(config),
   };
   return {
     name: "go",
@@ -112,6 +117,14 @@ function goTarget(config: Config, go: GoConfig): Target {
 /** True when `llm.cleanup` asks for the cleanup helper in every language. */
 function cleanup(config: Config): boolean {
   return config.llm?.cleanup === true;
+}
+
+/**
+ * The LLM decoders every language gets when `llm` lists profiles: the map shapes those profiles
+ * give. Loading the profiles fails like the LLM target does, for a profile that doesn't load.
+ */
+function llmOption(config: Config): { llm?: LlmMaps } {
+  return config.llm === undefined ? {} : { llm: llmMaps(llmProfiles(config, config.llm)) };
 }
 
 /** The LLM output: a folder per profile, with one provider-ready schema per type. */

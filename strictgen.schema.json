@@ -63,7 +63,7 @@
       "additionalProperties": false
     },
     "llm": {
-      "description": "Provider-ready schemas for LLM structured output, one per type and profile. docs/llm.md explains them.",
+      "description": "Provider-ready schemas for LLM structured output, one per type and profile, and an LLM decoder per type in every language, which reads what a model sends back. docs/llm.md explains them.",
       "type": "object",
       "properties": {
         "profiles": {
@@ -79,7 +79,7 @@
           "minLength": 1
         },
         "cleanup": {
-          "description": "Adds the cleanup helper to every target: it removes a surrounding code fence, a byte order mark, surrounding white space and trailing commas, and nothing else.",
+          "description": "Adds the cleanup helper to every target: it removes a surrounding code fence, a byte order mark, surrounding white space and trailing commas, and nothing else. The LLM decoders run it first; the normal decoders never do.",
           "type": "boolean",
           "default": false
         }

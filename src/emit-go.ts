@@ -19,6 +19,8 @@ import { GO_CLEANUP } from "./cleanup-helpers.js";
 import { GO_CODES, GO_NON_NULL, GO_PATTERN_TYPE, goHelpersBody } from "./go-helpers.js";
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
+import type { LlmMaps } from "./llm-decoders.js";
+import { goLlmName, isWrapped, llmTypes } from "./llm-decoders.js";
 
 /** The Go package every generated file belongs to, unless the options name another. */
 export const GO_PACKAGE = "types";
@@ -106,6 +108,11 @@ export interface GoOptions {
   readonly read?: ReadMode;
   /** Adds `CleanLLMJSON`, the LLM cleanup step, to the helpers. */
   readonly cleanup?: boolean;
+  /**
+   * Adds an LLM decoder for every type with a provider-ready schema, reading maps in the shapes
+   * given. It runs the cleanup step first when `cleanup` is on.
+   */
+  readonly llm?: LlmMaps;
 }
 
 /** The first lines of a generated Go file: header comment, then `doc` and the package clause. */
@@ -122,13 +129,14 @@ function goHead(options: GoOptions, doc: string): string {
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   const ctx = context(model, options.read === "report");
-  checkNames(model, options.cleanup === true);
+  checkNames(model, options.cleanup === true, options.llm !== undefined);
+  const llm = options.llm === undefined ? new Set<string>() : new Set(llmTypes(model).map((d) => d.name));
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
     contents: goFile(
       goHead(options, `Types for ${schema}.json.`),
       decls.some((d) => usesJSON(d) || marshalsKeys(ctx, d)) ? ["encoding/json"] : [],
-      decls.map((d) => declaration(ctx, d)),
+      decls.map((d) => declaration(ctx, d) + (llm.has(d.name) ? llmFunction(ctx, d, options.cleanup === true) : "")),
     ),
   }));
   const literals = literalsOf(model);
@@ -136,7 +144,7 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
     {
       name: GO_HELPERS,
       contents: goFile(goHead(options, ""), helperImports(ctx.report, ctx.patterns.length > 0), [
-        goHelpersBody(ctx.report),
+        goHelpersBody(ctx.report, options.llm),
         ...(ctx.patterns.length > 0 ? [patternTable(ctx.patterns)] : []),
         ...literals.map(literalType),
         ...(options.cleanup === true ? [GO_CLEANUP.trimStart()] : []),
@@ -243,7 +251,7 @@ function goFile(head: string, packages: readonly string[], parts: readonly strin
 }
 
 /** Every package-level name must be unique, since all schemas share one package. */
-function checkNames(model: Model, cleanup: boolean): void {
+function checkNames(model: Model, cleanup: boolean, llm: boolean): void {
   // An enum constant like CodeTooDeep, from an enum named code, would clash with the helpers.
   const owners = new Map<string, string>(CODES.map((name) => [name, GO_HELPERS]));
   // The cleanup step's function is in the helpers too, when it is on.
@@ -278,6 +286,34 @@ function checkNames(model: Model, cleanup: boolean): void {
     }
     if (decl.kind === "struct") fieldNames(decl);
   }
+  if (llm) for (const decl of llmTypes(model)) claim(goLlmName(decl.name), decl.path);
+}
+
+/**
+ * `DecodeXFromLlm`, which reads the JSON text a model gave for the type's provider-ready schema.
+ * It runs the cleanup step first when `cleanup` is on.
+ */
+function llmFunction(ctx: Ctx, decl: Decl, cleanup: boolean): string {
+  const name = goLlmName(decl.name);
+  const lines = [
+    `${name} reads the JSON text a model gave for a provider-ready schema of ${decl.name}.`,
+    ...(cleanup
+      ? [
+          "After the cleanup step, it undoes the projection: null for an optional key is absent, and",
+          "a map is read in the shapes the profiles give.",
+        ]
+      : ["It undoes the projection: null for an optional key is absent, and a map is read in the", "shapes the profiles give."]),
+    ...(isWrapped(decl) ? ['The type isn\'t an object, so the schema wraps it, and it is read from the "value" key.'] : []),
+    "Then every constraint of the type is checked. The error is a *DecodeError at the JSON Pointer",
+    "of the first problem in the model's payload, whose Compact form is made for asking the model",
+    "to retry.",
+  ];
+  const data = cleanup ? "CleanLLMJSON(data)" : "data";
+  const decode = decoder(ctx, { kind: "ref", name: decl.name });
+  return (
+    `\n${comment(lines, "")}func ${name}(data []byte) (${decl.name}, error) {\n` +
+    `\treturn decodeLlm(${data}, ${String(isWrapped(decl))}, ${decode})\n}\n`
+  );
 }
 
 function literalsOf(model: Model): (number | boolean)[] {

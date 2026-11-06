@@ -1,0 +1,59 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "Lines to pick first. At most 3 items.",
+      "type": "array",
+      "items": {
+        "description": "One line of an order.",
+        "type": "object",
+        "properties": {
+          "sku": {
+            "description": "A stock keeping unit, like AB-1234. Matching the regular expression ^[A-Z]{2}-[0-9]{4}$.",
+            "type": "string"
+          },
+          "quantity": {
+            "description": "How many, in packs of 2. Greater than 0, a multiple of 2.",
+            "type": "integer"
+          },
+          "price": {
+            "description": "The unit price. At least 0, less than 10000.",
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "tags": {
+            "description": "Free form tags. No two items equal.",
+            "anyOf": [
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "sku",
+          "quantity",
+          "price",
+          "tags"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

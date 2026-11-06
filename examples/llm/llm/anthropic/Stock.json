@@ -1,0 +1,32 @@
+{
+  "type": "object",
+  "properties": {
+    "value": {
+      "description": "Units in stock, by stock keeping unit. Each key at most once, at most 3 entries.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "description": "A stock keeping unit, like AB-1234. Matching the regular expression ^[A-Z]{2}-[0-9]{4}$.",
+            "type": "string"
+          },
+          "value": {
+            "description": "At least 0.",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "key",
+          "value"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "value"
+  ],
+  "additionalProperties": false
+}

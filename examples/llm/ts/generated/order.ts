@@ -4,6 +4,146 @@
 
 import * as h from "./helpers.js";
 
+/** How a repeat order pays: the same choice as a payment. */
+export type Billing = Payment;
+
+/** Decodes the structure of Billing, checking constraints only while h.checked asks for it. */
+function readBilling(json: unknown, path: string): Billing {
+  return decodePayment(json, path);
+}
+
+/**
+ * Decodes parsed JSON as Billing, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeBilling(json: unknown, path = ""): Billing {
+  return h.checked(json, path, readBilling);
+}
+
+/** Like decodeBilling, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBilling(json: unknown): h.DecodeResult<Billing> {
+  return h.attempt(decodeBilling, json);
+}
+
+/**
+ * Reads JSON text as Billing, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeBillingFromJson(text: string): Billing {
+  return h.fromJson(text, decodeBilling);
+}
+
+/** Like decodeBillingFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBillingFromJson(text: string): h.DecodeResult<Billing> {
+  return h.attemptJson(decodeBilling, text);
+}
+
+/**
+ * Encodes Billing as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeBilling(value: Billing): unknown {
+  return encodePayment(value);
+}
+
+/**
+ * Encodes Billing as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeBilling.
+ */
+export function encodeBillingToJson(value: Billing): string {
+  return h.toJson(encodeBilling(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Billing. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeBillingFromLlm(text: string): Billing {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeBilling));
+}
+
+/** Like decodeBillingFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBillingFromLlm(text: string): h.DecodeResult<Billing> {
+  return h.attemptText(decodeBillingFromLlm, text);
+}
+
+/** How many boxes to pack. */
+export type Boxes = number;
+
+/** Decodes the structure of Boxes, checking constraints only while h.checked asks for it. */
+function readBoxes(json: unknown, path: string): Boxes {
+  return h.limits(h.decodeInteger, [[">=", 1, "1"], ["<=", 9, "9"]])(json, path);
+}
+
+/**
+ * Decodes parsed JSON as Boxes, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeBoxes(json: unknown, path = ""): Boxes {
+  return h.checked(json, path, readBoxes);
+}
+
+/** Like decodeBoxes, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBoxes(json: unknown): h.DecodeResult<Boxes> {
+  return h.attempt(decodeBoxes, json);
+}
+
+/**
+ * Reads JSON text as Boxes, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeBoxesFromJson(text: string): Boxes {
+  return h.fromJson(text, decodeBoxes);
+}
+
+/** Like decodeBoxesFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBoxesFromJson(text: string): h.DecodeResult<Boxes> {
+  return h.attemptJson(decodeBoxes, text);
+}
+
+/**
+ * Encodes Boxes as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeBoxes(value: Boxes): unknown {
+  return h.encodeInteger(value);
+}
+
+/**
+ * Encodes Boxes as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeBoxes.
+ */
+export function encodeBoxesToJson(value: Boxes): string {
+  return h.toJson(encodeBoxes(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Boxes. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeBoxesFromLlm(text: string): Boxes {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeBoxes));
+}
+
+/** Like decodeBoxesFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBoxesFromLlm(text: string): h.DecodeResult<Boxes> {
+  return h.attemptText(decodeBoxesFromLlm, text);
+}
+
 /** A card payment. */
 export interface Card {
   method: CardMethod;
@@ -68,6 +208,23 @@ export function encodeCard(value: Card): unknown {
  */
 export function encodeCardToJson(value: Card): string {
   return h.toJson(encodeCard(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Card. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeCardFromLlm(text: string): Card {
+  return h.fromLlm(h.cleanLlmJson(text), decodeCard);
+}
+
+/** Like decodeCardFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeCardFromLlm(text: string): h.DecodeResult<Card> {
+  return h.attemptText(decodeCardFromLlm, text);
 }
 
 export type CardMethod = "card";
@@ -170,6 +327,24 @@ export function encodeContactToJson(value: Contact): string {
   return h.toJson(encodeContact(value));
 }
 
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Contact. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeContactFromLlm(text: string): Contact {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeContact));
+}
+
+/** Like decodeContactFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContactFromLlm(text: string): h.DecodeResult<Contact> {
+  return h.attemptText(decodeContactFromLlm, text);
+}
+
 /** Who orders. */
 export interface Customer {
   /** The full name. */
@@ -240,6 +415,23 @@ export function encodeCustomerToJson(value: Customer): string {
   return h.toJson(encodeCustomer(value));
 }
 
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Customer. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeCustomerFromLlm(text: string): Customer {
+  return h.fromLlm(h.cleanLlmJson(text), decodeCustomer);
+}
+
+/** Like decodeCustomerFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeCustomerFromLlm(text: string): h.DecodeResult<Customer> {
+  return h.attemptText(decodeCustomerFromLlm, text);
+}
+
 /** Payment by invoice. */
 export interface Invoice {
   method: InvoiceMethod;
@@ -308,6 +500,23 @@ export function encodeInvoice(value: Invoice): unknown {
  */
 export function encodeInvoiceToJson(value: Invoice): string {
   return h.toJson(encodeInvoice(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Invoice. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeInvoiceFromLlm(text: string): Invoice {
+  return h.fromLlm(h.cleanLlmJson(text), decodeInvoice);
+}
+
+/** Like decodeInvoiceFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeInvoiceFromLlm(text: string): h.DecodeResult<Invoice> {
+  return h.attemptText(decodeInvoiceFromLlm, text);
 }
 
 export type InvoiceMethod = "invoice";
@@ -429,6 +638,23 @@ export function encodeLineToJson(value: Line): string {
   return h.toJson(encodeLine(value));
 }
 
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Line. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeLineFromLlm(text: string): Line {
+  return h.fromLlm(h.cleanLlmJson(text), decodeLine);
+}
+
+/** Like decodeLineFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeLineFromLlm(text: string): h.DecodeResult<Line> {
+  return h.attemptText(decodeLineFromLlm, text);
+}
+
 /** An order a model reads out of a customer's message. */
 export interface OrderRequest {
   customer: Customer;
@@ -516,6 +742,23 @@ export function encodeOrderRequest(value: OrderRequest): unknown {
  */
 export function encodeOrderRequestToJson(value: OrderRequest): string {
   return h.toJson(encodeOrderRequest(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of OrderRequest. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeOrderRequestFromLlm(text: string): OrderRequest {
+  return h.fromLlm(h.cleanLlmJson(text), decodeOrderRequest);
+}
+
+/** Like decodeOrderRequestFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeOrderRequestFromLlm(text: string): h.DecodeResult<OrderRequest> {
+  return h.attemptText(decodeOrderRequestFromLlm, text);
 }
 
 /** How urgent it is. */
@@ -619,6 +862,158 @@ export function encodePaymentToJson(value: Payment): string {
   return h.toJson(encodePayment(value));
 }
 
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Payment. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodePaymentFromLlm(text: string): Payment {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodePayment));
+}
+
+/** Like decodePaymentFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodePaymentFromLlm(text: string): h.DecodeResult<Payment> {
+  return h.attemptText(decodePaymentFromLlm, text);
+}
+
+/** Lines to pick first. */
+export type Picks = Line[];
+
+/** Decodes the structure of Picks, checking constraints only while h.checked asks for it. */
+function readPicks(json: unknown, path: string): Picks {
+  return h.array(decodeLine, undefined, 3)(json, path);
+}
+
+/**
+ * Decodes parsed JSON as Picks, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodePicks(json: unknown, path = ""): Picks {
+  return h.checked(json, path, readPicks);
+}
+
+/** Like decodePicks, but returns the DecodeError instead of throwing it. */
+export function tryDecodePicks(json: unknown): h.DecodeResult<Picks> {
+  return h.attempt(decodePicks, json);
+}
+
+/**
+ * Reads JSON text as Picks, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodePicksFromJson(text: string): Picks {
+  return h.fromJson(text, decodePicks);
+}
+
+/** Like decodePicksFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodePicksFromJson(text: string): h.DecodeResult<Picks> {
+  return h.attemptJson(decodePicks, text);
+}
+
+/**
+ * Encodes Picks as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodePicks(value: Picks): unknown {
+  return h.encodeArray(encodeLine)(value);
+}
+
+/**
+ * Encodes Picks as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodePicks.
+ */
+export function encodePicksToJson(value: Picks): string {
+  return h.toJson(encodePicks(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Picks. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodePicksFromLlm(text: string): Picks {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodePicks));
+}
+
+/** Like decodePicksFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodePicksFromLlm(text: string): h.DecodeResult<Picks> {
+  return h.attemptText(decodePicksFromLlm, text);
+}
+
+/** A remark for the driver. */
+export type Remark = string;
+
+/**
+ * Decodes parsed JSON as Remark, strictly. Throws a DecodeError at the JSON Pointer of
+ * the first problem, under `path` when given.
+ */
+export function decodeRemark(json: unknown, path = ""): Remark {
+  return h.decodeString(json, path);
+}
+
+/** Like decodeRemark, but returns the DecodeError instead of throwing it. */
+export function tryDecodeRemark(json: unknown): h.DecodeResult<Remark> {
+  return h.attempt(decodeRemark, json);
+}
+
+/**
+ * Reads JSON text as Remark, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeRemarkFromJson(text: string): Remark {
+  return h.fromJson(text, decodeRemark);
+}
+
+/** Like decodeRemarkFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeRemarkFromJson(text: string): h.DecodeResult<Remark> {
+  return h.attemptJson(decodeRemark, text);
+}
+
+/**
+ * Encodes Remark as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeRemark(value: Remark): unknown {
+  return h.encodeString(value);
+}
+
+/**
+ * Encodes Remark as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeRemark.
+ */
+export function encodeRemarkToJson(value: Remark): string {
+  return h.toJson(encodeRemark(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Remark. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeRemarkFromLlm(text: string): Remark {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeRemark));
+}
+
+/** Like decodeRemarkFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeRemarkFromLlm(text: string): h.DecodeResult<Remark> {
+  return h.attemptText(decodeRemarkFromLlm, text);
+}
+
 /** A stock keeping unit, like AB-1234. */
 export type Sku = string;
 
@@ -669,4 +1064,156 @@ export function encodeSku(value: Sku): unknown {
  */
 export function encodeSkuToJson(value: Sku): string {
   return h.toJson(encodeSku(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Sku. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeSkuFromLlm(text: string): Sku {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeSku));
+}
+
+/** Like decodeSkuFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeSkuFromLlm(text: string): h.DecodeResult<Sku> {
+  return h.attemptText(decodeSkuFromLlm, text);
+}
+
+/** Where an order is. */
+export type Status = "new" | "paid" | "sent";
+
+/**
+ * Decodes parsed JSON as Status, strictly. Throws a DecodeError at the JSON Pointer of
+ * the first problem, under `path` when given.
+ */
+export function decodeStatus(json: unknown, path = ""): Status {
+  return h.enumValue(json, path, ["new", "paid", "sent"] as const);
+}
+
+/** Like decodeStatus, but returns the DecodeError instead of throwing it. */
+export function tryDecodeStatus(json: unknown): h.DecodeResult<Status> {
+  return h.attempt(decodeStatus, json);
+}
+
+/**
+ * Reads JSON text as Status, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeStatusFromJson(text: string): Status {
+  return h.fromJson(text, decodeStatus);
+}
+
+/** Like decodeStatusFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeStatusFromJson(text: string): h.DecodeResult<Status> {
+  return h.attemptJson(decodeStatus, text);
+}
+
+/**
+ * Encodes Status as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeStatus(value: Status): unknown {
+  return h.encodeEnum(value, ["new", "paid", "sent"] as const);
+}
+
+/**
+ * Encodes Status as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeStatus.
+ */
+export function encodeStatusToJson(value: Status): string {
+  return h.toJson(encodeStatus(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Status. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeStatusFromLlm(text: string): Status {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeStatus));
+}
+
+/** Like decodeStatusFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeStatusFromLlm(text: string): h.DecodeResult<Status> {
+  return h.attemptText(decodeStatusFromLlm, text);
+}
+
+/** Units in stock, by stock keeping unit. */
+export type Stock = Record<Sku, number>;
+
+/** Decodes the structure of Stock, checking constraints only while h.checked asks for it. */
+function readStock(json: unknown, path: string): Stock {
+  return h.map(decodeSku, h.limits(h.decodeInteger, [[">=", 0, "0"]]), 1, 3)(json, path);
+}
+
+/**
+ * Decodes parsed JSON as Stock, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeStock(json: unknown, path = ""): Stock {
+  return h.checked(json, path, readStock);
+}
+
+/** Like decodeStock, but returns the DecodeError instead of throwing it. */
+export function tryDecodeStock(json: unknown): h.DecodeResult<Stock> {
+  return h.attempt(decodeStock, json);
+}
+
+/**
+ * Reads JSON text as Stock, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeStockFromJson(text: string): Stock {
+  return h.fromJson(text, decodeStock);
+}
+
+/** Like decodeStockFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeStockFromJson(text: string): h.DecodeResult<Stock> {
+  return h.attemptJson(decodeStock, text);
+}
+
+/**
+ * Encodes Stock as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeStock(value: Stock): unknown {
+  return h.encodeMap(encodeSku, h.encodeInteger)(value);
+}
+
+/**
+ * Encodes Stock as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeStock.
+ */
+export function encodeStockToJson(value: Stock): string {
+  return h.toJson(encodeStock(value));
+}
+
+/**
+ * Reads the JSON text a model gave for a provider-ready schema of Stock. After the cleanup step,
+ * it undoes the projection: null for an optional key is absent, and a map is read in the
+ * shapes the profiles give.
+ * The type isn't an object, so the schema wraps it, and it is read from the "value" key.
+ * Then every constraint of the type is checked. Throws a DecodeError at the JSON Pointer of
+ * the first problem in the model's payload, whose compact form is made for asking the model to
+ * retry.
+ */
+export function decodeStockFromLlm(text: string): Stock {
+  return h.fromLlm(h.cleanLlmJson(text), h.unwrapped(decodeStock));
+}
+
+/** Like decodeStockFromLlm, but returns the DecodeError instead of throwing it. */
+export function tryDecodeStockFromLlm(text: string): h.DecodeResult<Stock> {
+  return h.attemptText(decodeStockFromLlm, text);
 }
