@@ -176,6 +176,14 @@ function functions(ctx: Ctx, decl: Decl): string {
     `/** Like decode${name}, but returns the DecodeError instead of throwing it. */\n` +
     `export function tryDecode${name}(json: unknown): h.DecodeResult<${name}> {\n` +
     `  return h.attempt(decode${name}, json);\n}\n\n` +
+    `/**\n * Reads JSON text as ${name}, strictly. Throws a DecodeError for text that is not JSON, or\n` +
+    ` * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value\n` +
+    ` * that doesn't fit, at the JSON Pointer of the first problem.\n */\n` +
+    `export function decode${name}FromJson(text: string): ${name} {\n` +
+    `  return h.fromJson(text, decode${name});\n}\n\n` +
+    `/** Like decode${name}FromJson, but returns the DecodeError instead of throwing it. */\n` +
+    `export function tryDecode${name}FromJson(text: string): h.DecodeResult<${name}> {\n` +
+    `  return h.attemptJson(decode${name}, text);\n}\n\n` +
     `/**\n * Encodes ${name} as a JSON value, ready for JSON.stringify.\n` +
     ` * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.\n */\n` +
     `export function encode${name}(value: ${name}): unknown {\n${encodeBody(ctx, decl)}}\n`
@@ -305,8 +313,10 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
     case "ref":
       ctx.calls.add(`decode${type.name}`);
       return `decode${type.name}`;
-    case "string":
-      return "h.decodeString";
+    case "string": {
+      const text = stringType(type.pattern);
+      return text === "string" ? "h.decodeString" : `h.family<${text}>()`;
+    }
     case "integer":
       return "h.decodeInteger";
     case "number":
@@ -401,6 +411,7 @@ function typeText(type: TypeExpr, decls: ReadonlyMap<string, Decl>): string {
     case "ref":
       return type.name;
     case "string":
+      return stringType(type.pattern);
     case "boolean":
       return type.kind;
     case "integer":
@@ -420,7 +431,74 @@ function typeText(type: TypeExpr, decls: ReadonlyMap<string, Decl>): string {
       const record = `Record<${typeText(type.key, decls)}, ${typeText(type.value, decls)}>`;
       return isEnum(type.key, decls) ? `Partial<${record}>` : record;
     }
+    default:
+      return unreachable(type);
   }
+}
+
+/** Pattern syntax characters, which a backslash before them makes literal. */
+const SYNTAX = "^$\\.*+?()[]{}|/";
+
+/** True for a character a pattern holds as itself: not syntax, and not a control character. */
+function isLiteral(c: string): boolean {
+  const code = c.codePointAt(0) ?? 0;
+  if (code < 0x20 || code === 0x7f || code === 0x2028 || code === 0x2029) return false;
+  return !"^$\\.*+?()[]{}|".includes(c);
+}
+
+/**
+ * The fixed prefix and suffix of a pattern that allows anything between them, or undefined
+ * when the pattern has another shape. The shapes are `^P`, `^P.*`, `^P.+`, `S$`, `.*S$`,
+ * `.+S$`, `^P.*S$` and `^P.+S$`, where P and S are literal characters, or syntax characters
+ * escaped with a backslash like `\.`, and at least one of them is not empty. So `^order\..+$`
+ * gives the prefix `order.`. The template literal type of such a family holds every string the
+ * pattern matches, and a few it doesn't, like `order.` itself for `.+`.
+ */
+export function stringFamily(pattern: string): { prefix: string; suffix: string } | undefined {
+  const chars = [...pattern];
+  // Literal characters as strings; undefined for one `.*` or `.+`.
+  const tokens: (string | undefined)[] = [];
+  let start = false;
+  let end = false;
+  for (let i = 0; i < chars.length; i++) {
+    const c = chars[i] ?? "";
+    const next = chars[i + 1] ?? "";
+    if (end) return undefined;
+    if (c === "^" && i === 0) start = true;
+    else if (c === "$") end = true;
+    else if (c === "\\" && next !== "" && SYNTAX.includes(next)) {
+      tokens.push(next);
+      i++;
+    } else if (c === "." && (next === "*" || next === "+")) {
+      tokens.push(undefined);
+      i++;
+    } else if (isLiteral(c)) tokens.push(c);
+    else return undefined;
+  }
+  const wild = tokens.indexOf(undefined);
+  if (wild !== tokens.lastIndexOf(undefined)) return undefined;
+  const literal = (part: readonly (string | undefined)[]): string => part.join("");
+  let family: { prefix: string; suffix: string } | undefined;
+  if (start && end) {
+    // Anchored on both sides, the wildcard is the only part that varies.
+    if (wild !== -1) {
+      family = { prefix: literal(tokens.slice(0, wild)), suffix: literal(tokens.slice(wild + 1)) };
+    }
+  } else if (start) {
+    // Anchored at the start only, anything may follow, so a wildcard can only come last.
+    if (wild === -1 || wild === tokens.length - 1) family = { prefix: literal(tokens), suffix: "" };
+  } else if (end) {
+    if (wild === -1 || wild === 0) family = { prefix: "", suffix: literal(tokens) };
+  }
+  return family === undefined || (family.prefix === "" && family.suffix === "") ? undefined : family;
+}
+
+/** The TypeScript type of a string: a template literal type for a family, else `string`. */
+function stringType(pattern: string | undefined): string {
+  const family = pattern === undefined ? undefined : stringFamily(pattern);
+  if (family === undefined) return "string";
+  const text = (s: string): string => s.replace(/[`\\$]/g, (c) => `\\${c}`);
+  return `\`${text(family.prefix)}\${string}${text(family.suffix)}\``;
 }
 
 /** True when a map key is a closed set of strings, so a record of it must allow missing keys. */

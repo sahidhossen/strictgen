@@ -147,6 +147,31 @@ const keywordFields: JsonObject = {
   unevaluatedProperties: false,
 };
 
+describe("string families", () => {
+  it("keep a patterned string a plain String, the pattern not checked yet", () => {
+    const model = buildModel(
+      schemaSet({
+        lib: schema("lib", {
+          $defs: {
+            orderRef: { type: "string", pattern: "^order\\..+$" },
+            note: {
+              type: "object",
+              properties: { ref: { type: "string", pattern: "^order\\..+$" } },
+              required: ["ref"],
+              unevaluatedProperties: false,
+            },
+          },
+        }),
+      }),
+    );
+    const out = emitRust(model)
+      .map((f) => f.contents)
+      .join("\n");
+    expect(out).toContain("pub type OrderRef = String;\n");
+    expect(out).toContain("    pub r#ref: String,\n");
+  });
+});
+
 describe("reserved names", () => {
   const lib = (entries: JsonObject) =>
     emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: entries }) })));

@@ -45,6 +45,20 @@ export function tryDecodeSubscription(json: unknown): h.DecodeResult<Subscriptio
 }
 
 /**
+ * Reads JSON text as Subscription, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeSubscriptionFromJson(text: string): Subscription {
+  return h.fromJson(text, decodeSubscription);
+}
+
+/** Like decodeSubscriptionFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeSubscriptionFromJson(text: string): h.DecodeResult<Subscription> {
+  return h.attemptJson(decodeSubscription, text);
+}
+
+/**
  * Encodes Subscription as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */

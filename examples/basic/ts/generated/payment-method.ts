@@ -34,6 +34,20 @@ export function tryDecodeBankAccount(json: unknown): h.DecodeResult<BankAccount>
 }
 
 /**
+ * Reads JSON text as BankAccount, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeBankAccountFromJson(text: string): BankAccount {
+  return h.fromJson(text, decodeBankAccount);
+}
+
+/** Like decodeBankAccountFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBankAccountFromJson(text: string): h.DecodeResult<BankAccount> {
+  return h.attemptJson(decodeBankAccount, text);
+}
+
+/**
  * Encodes BankAccount as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -60,6 +74,20 @@ export function decodeBankAccountType(json: unknown, path = ""): BankAccountType
 /** Like decodeBankAccountType, but returns the DecodeError instead of throwing it. */
 export function tryDecodeBankAccountType(json: unknown): h.DecodeResult<BankAccountType> {
   return h.attempt(decodeBankAccountType, json);
+}
+
+/**
+ * Reads JSON text as BankAccountType, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeBankAccountTypeFromJson(text: string): BankAccountType {
+  return h.fromJson(text, decodeBankAccountType);
+}
+
+/** Like decodeBankAccountTypeFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeBankAccountTypeFromJson(text: string): h.DecodeResult<BankAccountType> {
+  return h.attemptJson(decodeBankAccountType, text);
 }
 
 /**
@@ -106,6 +134,20 @@ export function tryDecodeCard(json: unknown): h.DecodeResult<Card> {
 }
 
 /**
+ * Reads JSON text as Card, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeCardFromJson(text: string): Card {
+  return h.fromJson(text, decodeCard);
+}
+
+/** Like decodeCardFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeCardFromJson(text: string): h.DecodeResult<Card> {
+  return h.attemptJson(decodeCard, text);
+}
+
+/**
  * Encodes Card as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -138,6 +180,20 @@ export function tryDecodeCardBrand(json: unknown): h.DecodeResult<CardBrand> {
 }
 
 /**
+ * Reads JSON text as CardBrand, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeCardBrandFromJson(text: string): CardBrand {
+  return h.fromJson(text, decodeCardBrand);
+}
+
+/** Like decodeCardBrandFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeCardBrandFromJson(text: string): h.DecodeResult<CardBrand> {
+  return h.attemptJson(decodeCardBrand, text);
+}
+
+/**
  * Encodes CardBrand as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -158,6 +214,20 @@ export function decodeCardType(json: unknown, path = ""): CardType {
 /** Like decodeCardType, but returns the DecodeError instead of throwing it. */
 export function tryDecodeCardType(json: unknown): h.DecodeResult<CardType> {
   return h.attempt(decodeCardType, json);
+}
+
+/**
+ * Reads JSON text as CardType, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeCardTypeFromJson(text: string): CardType {
+  return h.fromJson(text, decodeCardType);
+}
+
+/** Like decodeCardTypeFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeCardTypeFromJson(text: string): h.DecodeResult<CardType> {
+  return h.attemptJson(decodeCardType, text);
 }
 
 /**
@@ -186,6 +256,20 @@ export function decodePaymentMethod(json: unknown, path = ""): PaymentMethod {
 /** Like decodePaymentMethod, but returns the DecodeError instead of throwing it. */
 export function tryDecodePaymentMethod(json: unknown): h.DecodeResult<PaymentMethod> {
   return h.attempt(decodePaymentMethod, json);
+}
+
+/**
+ * Reads JSON text as PaymentMethod, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodePaymentMethodFromJson(text: string): PaymentMethod {
+  return h.fromJson(text, decodePaymentMethod);
+}
+
+/** Like decodePaymentMethodFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodePaymentMethodFromJson(text: string): h.DecodeResult<PaymentMethod> {
+  return h.attemptJson(decodePaymentMethod, text);
 }
 
 /**
@@ -230,6 +314,20 @@ export function tryDecodeWallet(json: unknown): h.DecodeResult<Wallet> {
 }
 
 /**
+ * Reads JSON text as Wallet, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeWalletFromJson(text: string): Wallet {
+  return h.fromJson(text, decodeWallet);
+}
+
+/** Like decodeWalletFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeWalletFromJson(text: string): h.DecodeResult<Wallet> {
+  return h.attemptJson(decodeWallet, text);
+}
+
+/**
  * Encodes Wallet as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -260,6 +358,20 @@ export function tryDecodeWalletProvider(json: unknown): h.DecodeResult<WalletPro
 }
 
 /**
+ * Reads JSON text as WalletProvider, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeWalletProviderFromJson(text: string): WalletProvider {
+  return h.fromJson(text, decodeWalletProvider);
+}
+
+/** Like decodeWalletProviderFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeWalletProviderFromJson(text: string): h.DecodeResult<WalletProvider> {
+  return h.attemptJson(decodeWalletProvider, text);
+}
+
+/**
  * Encodes WalletProvider as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -280,6 +392,20 @@ export function decodeWalletType(json: unknown, path = ""): WalletType {
 /** Like decodeWalletType, but returns the DecodeError instead of throwing it. */
 export function tryDecodeWalletType(json: unknown): h.DecodeResult<WalletType> {
   return h.attempt(decodeWalletType, json);
+}
+
+/**
+ * Reads JSON text as WalletType, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeWalletTypeFromJson(text: string): WalletType {
+  return h.fromJson(text, decodeWalletType);
+}
+
+/** Like decodeWalletTypeFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeWalletTypeFromJson(text: string): h.DecodeResult<WalletType> {
+  return h.attemptJson(decodeWalletType, text);
 }
 
 /**

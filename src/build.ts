@@ -387,7 +387,7 @@ function typeOf(
           'remove "format", or check the shape with "pattern"',
         );
       }
-      return { kind: "string" };
+      return stringType(schema);
     case "integer":
     case "number":
     case "boolean":
@@ -589,7 +589,13 @@ function keyType(ctx: Ctx, value: Json, loc: Loc, name: string): TypeExpr {
   if (schema.enum !== undefined) return typeOf(ctx, schema, loc, name);
   only(schema, loc, ["type"]);
   if (schema.type !== "string") fail(loc, "unsupported-map-key", "map keys must be strings");
-  return { kind: "string" };
+  return stringType(schema);
+}
+
+/** A string, keeping its `pattern` when it has one. */
+function stringType(schema: JsonObject): TypeExpr {
+  if (typeof schema.pattern !== "string") return { kind: "string" };
+  return { kind: "string", pattern: schema.pattern };
 }
 
 const STRUCT_KEYWORDS = [

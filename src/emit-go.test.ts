@@ -438,6 +438,19 @@ describe("Go scalars, ids, aliases and consts", () => {
   });
 });
 
+describe("Go string families", () => {
+  it("keep a patterned string a plain string, the pattern not checked yet", () => {
+    const out = go(
+      lib({
+        orderRef: { type: "string", pattern: "^order\\..+$" },
+        note: closed({ ref: { type: "string", pattern: "^order\\..+$" } }, ["ref"]),
+      }),
+    );
+    expect(out).toMatch(/type OrderRef = string\n/);
+    expect(out).toMatch(/\tRef string `json:"ref"`\n/);
+  });
+});
+
 describe("Go recursion and names", () => {
   it("puts a pointer on the back edge of a cycle", () => {
     const out = go(

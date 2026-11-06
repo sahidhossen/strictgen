@@ -52,6 +52,20 @@ export function tryDecodeEvent(json: unknown): h.DecodeResult<Event> {
 }
 
 /**
+ * Reads JSON text as Event, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeEventFromJson(text: string): Event {
+  return h.fromJson(text, decodeEvent);
+}
+
+/** Like decodeEventFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeEventFromJson(text: string): h.DecodeResult<Event> {
+  return h.attemptJson(decodeEvent, text);
+}
+
+/**
  * Encodes Event as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -83,6 +97,20 @@ export function decodeEventType(json: unknown, path = ""): EventType {
 /** Like decodeEventType, but returns the DecodeError instead of throwing it. */
 export function tryDecodeEventType(json: unknown): h.DecodeResult<EventType> {
   return h.attempt(decodeEventType, json);
+}
+
+/**
+ * Reads JSON text as EventType, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeEventTypeFromJson(text: string): EventType {
+  return h.fromJson(text, decodeEventType);
+}
+
+/** Like decodeEventTypeFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeEventTypeFromJson(text: string): h.DecodeResult<EventType> {
+  return h.attemptJson(decodeEventType, text);
 }
 
 /**

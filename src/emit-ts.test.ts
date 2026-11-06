@@ -9,7 +9,7 @@ import { buildModel } from "./build.js";
 import type { EmittedFile } from "./common.js";
 import { loadConfig } from "./config.js";
 import type { TypeScriptOptions } from "./emit-ts.js";
-import { emitTypeScript } from "./emit-ts.js";
+import { emitTypeScript, stringFamily } from "./emit-ts.js";
 import type { Model } from "./model.js";
 import type { JsonObject } from "./schema.js";
 import { loadSchemas, schemaSet } from "./schema.js";
@@ -67,6 +67,12 @@ const STRICT: ts.CompilerOptions = {
   noEmit: true,
   types: [],
 };
+
+/**
+ * The time a hook that compiles generated code with tsc may take. A cold start takes longer
+ * than vitest's default of 5 seconds.
+ */
+const COMPILE_TIMEOUT = 60_000;
 
 const folders: string[] = [];
 afterAll(() => {
@@ -144,6 +150,17 @@ function failure(m: Loaded, type: string, json: unknown, path?: string): string 
   throw new Error(`decode${type} accepted ${JSON.stringify(json)}`);
 }
 
+/** The message of the DecodeError that reading `text` as `type` throws. */
+function failureFromJson(m: Loaded, type: string, text: string): string {
+  try {
+    m.fn(`decode${type}FromJson`)(text);
+  } catch (error) {
+    if (!(error instanceof m.DecodeError)) throw error;
+    return error.message;
+  }
+  throw new Error(`decode${type}FromJson accepted ${text}`);
+}
+
 /** Decodes the JSON text as `type`, encodes it again, and returns the JSON text of that. */
 function roundTrip(m: Loaded, type: string, text: string): string {
   return JSON.stringify(m.fn(`encode${type}`)(m.fn(`decode${type}`)(JSON.parse(text))));
@@ -179,7 +196,7 @@ describe("TypeScript files", () => {
   it("compile under strict and exactOptionalPropertyTypes, both with and without decoders", () => {
     expect(() => compile(emitTypeScript(model))).not.toThrow();
     expect(() => compile(emitTypeScript(model, { decoders: false }))).not.toThrow();
-  });
+  }, COMPILE_TIMEOUT);
 
   it("return the error from tryDecodeX instead of throwing it", async () => {
     const m = await load(model);
@@ -192,14 +209,14 @@ describe("TypeScript files", () => {
       reason: "expected a string, found a number",
       message: "/id: expected a string, found a number",
     });
-  });
+  }, COMPILE_TIMEOUT);
 
   it("start error paths under the path given", async () => {
     const m = await load(model);
     expect(failure(m, "Order", { id: null }, "/orders/3")).toBe(
       "/orders/3/id: expected a string, found null",
     );
-  });
+  }, COMPILE_TIMEOUT);
 });
 
 describe("TypeScript closed objects", () => {
@@ -221,7 +238,7 @@ describe("TypeScript closed objects", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("decode every key in schema order, then reject the keys left over", () => {
     expect(emitTypeScript(model)[0]?.contents).toContain(
@@ -322,7 +339,7 @@ describe("TypeScript prototype keys", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("read __proto__ and constructor as data keys, never as object internals", () => {
     const text = '{"__proto__":"p","constructor":"c","toString":true}';
@@ -375,7 +392,7 @@ describe("TypeScript exactly-one choices and named keys beside a map", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("decode the named keys first, then every other key into the map", () => {
     expect(emitTypeScript(model)[0]?.contents).toContain(
@@ -458,7 +475,7 @@ describe("TypeScript scalars, ids, aliases and consts", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model, {}, { "ids.ts": ids });
-  });
+  }, COMPILE_TIMEOUT);
 
   it("decode strings and booleans strictly", () => {
     expect(m.fn("decodeStamp")("2030-01-01T00:00:00Z")).toBe("2030-01-01T00:00:00Z");
@@ -533,7 +550,8 @@ describe("TypeScript scalars, ids, aliases and consts", () => {
   it("document the number limits in the generated helpers", () => {
     const helpers = emitTypeScript(model).find((f) => f.name === "helpers.ts")?.contents ?? "";
     expect(helpers).toContain("12.0 and 1e2 decode as the integers 12 and 100");
-    expect(helpers).toContain("a number re-encodes as JavaScript spells it");
+    expect(helpers).toContain("the FromJson decoders reject them");
+    expect(helpers).toContain("A number re-encodes as\n * JavaScript spells it");
   });
 
   it("brand ids, so ids of different kinds don't mix at compile time", () => {
@@ -553,7 +571,7 @@ describe("TypeScript scalars, ids, aliases and consts", () => {
     expect(() => compile(emitTypeScript(model), { "ids.ts": loose })).toThrow(
       "Type 'UserId' is not assignable to type 'OrderId'",
     );
-  });
+  }, COMPILE_TIMEOUT);
 
   it("decode aliases as their target, and fields through their types' decoders", () => {
     const value = { order: "o1", status: "closed", version: 1, at: "t", orders: ["a", "b"] };
@@ -614,7 +632,7 @@ describe("TypeScript tagged unions", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("read the tag first and decode only the branch it names", () => {
     expect(emitTypeScript(model)[0]?.contents).toContain(
@@ -712,7 +730,7 @@ describe("TypeScript untagged unions", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("try the variants in the model's order, the same as Rust and Go", () => {
     const out = emitTypeScript(model)[0]?.contents ?? "";
@@ -790,7 +808,7 @@ describe("TypeScript maps", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("type an enum-keyed map as a partial record", () => {
     expect(emitTypeScript(model)[0]?.contents).toContain(
@@ -839,7 +857,7 @@ describe("TypeScript any values, non-null values and recursion", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("decode {} as any JSON value, null included, and keep it as it is", () => {
     for (const any of [null, 1, "x", true, [], { a: [null, { b: 2 }] }]) {
@@ -879,6 +897,28 @@ describe("TypeScript any values, non-null values and recursion", () => {
     expect(refusal(m, "Holder", { any: cycle })).toBe("/any/0: expected a JSON value, found a value that holds itself");
   });
 
+  it("fail with a DecodeError or EncodeError on a value whose reading throws", () => {
+    const getter = Object.defineProperty({}, "a", {
+      enumerable: true,
+      get: () => {
+        throw new Error("no");
+      },
+    });
+    const thrown = "expected a JSON value, found a value that throws when read";
+    expect(failure(m, "Holder", { any: { b: [getter] } })).toBe(`/any/b/0/a: ${thrown}`);
+    expect(refusal(m, "Holder", { any: { b: [getter] } })).toBe(`/any/b/0/a: ${thrown}`);
+    const item = Object.defineProperty([1, 2], 1, {
+      get: () => {
+        throw new Error("no");
+      },
+    });
+    expect(failure(m, "Holder", { any: item })).toBe(`/any/1: ${thrown}`);
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(failure(m, "Holder", { any: proxy })).toBe(`/any: ${thrown}`);
+    expect(refusal(m, "Holder", { nonNull: [proxy] })).toBe(`/nonNull/0: ${thrown}`);
+  });
+
   it("decode and encode recursive types as deep as the input", () => {
     const text = '{"name":"a","children":[{"name":"b","next":{"name":"c"}}]}';
     expect(roundTrip(m, "Tree", text)).toBe(text);
@@ -914,7 +954,7 @@ describe("TypeScript encoding checks", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
   const order = { id: "o1", count: 1, tags: [] };
 
   it("refuse integers JSON.stringify would change or Rust and Go can't hold", () => {
@@ -978,15 +1018,298 @@ describe("TypeScript determinism", () => {
   });
 });
 
+describe("TypeScript string families", () => {
+  it("detect a literal prefix or suffix around a part that allows anything", () => {
+    const cases: [string, string, string][] = [
+      ["^order\\..+$", "order.", ""],
+      ["^order\\..*$", "order.", ""],
+      ["^evt_", "evt_", ""],
+      ["^evt_.+", "evt_", ""],
+      ["\\.json$", "", ".json"],
+      [".+\\.json$", "", ".json"],
+      ["^v.+-beta$", "v", "-beta"],
+      ["^a\\$b\\/c.*$", "a$b/c", ""],
+      ["^é_.+$", "é_", ""],
+    ];
+    for (const [pattern, prefix, suffix] of cases) {
+      expect(stringFamily(pattern), pattern).toEqual({ prefix, suffix });
+    }
+  });
+
+  it("leave every other pattern a plain string", () => {
+    const plain = [
+      "order\\..+",
+      "^order\\.$",
+      "^.+$",
+      "^$",
+      "",
+      "^[a-z]+\\..+$",
+      "^a|b$",
+      "^\\d+$",
+      "^a.+b.+$",
+      "^a.*?$",
+      "^a+.*$",
+      "^a.*b",
+      "a.*b$",
+      "^a\\nb",
+      "^a\\-b",
+      "^a$b",
+      "^a(b).+$",
+      "^a{2}.+$",
+      "^a\tb",
+    ];
+    for (const pattern of plain) expect(stringFamily(pattern), pattern).toBeUndefined();
+  });
+
+  const model = libModel({
+    orderRef: { type: "string", pattern: "^order\\..+$" },
+    fileName: { type: "string", pattern: "\\.json$" },
+    quoted: { type: "string", pattern: "^a`\\$\\\\.+$" },
+    plain: { type: "string", pattern: "^[a-z]+$" },
+    note: closed(
+      {
+        ref: { type: "string", pattern: "^order\\..+$" },
+        refs: { type: "array", items: { type: "string", pattern: "^order\\..+$" } },
+        byRef: {
+          type: "object",
+          propertyNames: { type: "string", pattern: "^order\\." },
+          additionalProperties: { type: "integer" },
+        },
+      },
+      ["ref"],
+    ),
+  });
+  const checks = [
+    'import type { FileName, Note, OrderRef, Quoted } from "./index.js";',
+    'export const ref: OrderRef = "order.1";',
+    "// @ts-expect-error a string without the prefix is not an OrderRef",
+    'export const other: OrderRef = "user.1";',
+    'export const file: FileName = "a.json";',
+    "// @ts-expect-error a string without the suffix is not a FileName",
+    'export const notFile: FileName = "a.txt";',
+    'export const quoted: Quoted = "a`$\\\\x";',
+    'export const note: Note = { ref: "order.2", refs: ["order.3"], byRef: { "order.4": 1 } };',
+    "// @ts-expect-error a map key without the prefix",
+    'export const badKey: Note = { ref: "order.2", byRef: { "user.4": 1 } };',
+    "",
+  ].join("\n");
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model, {}, { "checks.ts": checks });
+  }, COMPILE_TIMEOUT);
+
+  it("type a family as a template literal type, and other patterns as string", () => {
+    const text = emitTypeScript(model)[0]?.contents ?? "";
+    expect(text).toContain("export type OrderRef = `order.${string}`;\n");
+    expect(text).toContain("export type FileName = `${string}.json`;\n");
+    expect(text).toContain("export type Quoted = `a\\`\\$\\\\${string}`;\n");
+    expect(text).toContain("export type Plain = string;\n");
+    expect(text).toContain("  ref: `order.${string}`;\n");
+    expect(text).toContain("  refs?: (`order.${string}`)[];\n");
+    expect(text).toContain("  byRef?: Record<`order.${string}`, number>;\n");
+  });
+
+  it("decode a family as a string, the pattern not checked yet, as in Rust and Go", () => {
+    expect(m.fn("decodeOrderRef")("order.1")).toBe("order.1");
+    expect(m.fn("decodeOrderRef")("user.1")).toBe("user.1");
+    expect(failure(m, "OrderRef", 1)).toBe("expected a string, found a number");
+    const note = { ref: "order.1", refs: ["order.2"], byRef: { "order.3": 1 } };
+    expect(m.fn("decodeNote")(note)).toEqual(note);
+    expect(JSON.stringify(m.fn("encodeNote")(note))).toBe(JSON.stringify(note));
+  });
+
+  it("fail to compile a value outside the family, which the @ts-expect-error checks rely on", () => {
+    const loose = checks.replaceAll("// @ts-expect-error", "//");
+    expect(() => compile(emitTypeScript(model), { "checks.ts": loose })).toThrow(
+      "is not assignable to type '`order.${string}`'",
+    );
+  }, COMPILE_TIMEOUT);
+});
+
+describe("TypeScript strict JSON reader", () => {
+  const model = libModel({
+    anything: {},
+    count: { type: "integer" },
+    ratio: { type: "number" },
+    one: { const: 1 },
+    order: closed(
+      {
+        id: { type: "string" },
+        qty: { type: "integer" },
+        tags: { type: "array", items: { type: "integer" } },
+        counts: { type: "object", additionalProperties: { type: "integer" } },
+        extra: {},
+      },
+      ["id"],
+    ),
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
+  }, COMPILE_TIMEOUT);
+  const read = (type: string, text: string): unknown => m.fn(`decode${type}FromJson`)(text);
+
+  it("read JSON text as JSON.parse does", () => {
+    const texts = [
+      "null",
+      " true ",
+      "false",
+      "0",
+      "-1.5e-3",
+      "1E+2",
+      "123456789012345678901234567890",
+      '""',
+      '"a\\"b\\\\c\\/d\\b\\f\\n\\r\\t"',
+      '"\\u0041\\u00e9\\uD83D\\ude00"',
+      '"é😀～"',
+      "[]",
+      "{}",
+      ' \t\n\r[ 1 , [ ] , { "a" : { } } ] ',
+      '{"a":[1,{"b":null}],"":"empty","c":"\\u0000"}',
+    ];
+    for (const text of texts) expect(read("Anything", text), text).toEqual(JSON.parse(text));
+  });
+
+  it("keep __proto__ as a data key", () => {
+    const value = read("Anything", '{"__proto__":{"x":1}}') as object;
+    expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+    expect(Object.keys(value)).toEqual(["__proto__"]);
+  });
+
+  it("reject invalid syntax with Go's reason and the offset in UTF-8 bytes", () => {
+    const cases: [string, string][] = [
+      ["", "unexpected end of input"],
+      ["   ", "unexpected end of input"],
+      ["[1,", "unexpected end of input"],
+      ["[1,]", "invalid value"],
+      ["{,}", "expected a key"],
+      ['{"a":1,}', "expected a key"],
+      ['{"a" 1}', "expected a colon"],
+      ['{"a":1 "b":2}', "expected a comma or a closing brace"],
+      ["[1 2]", "expected a comma or a closing bracket"],
+      ["tru", "invalid literal"],
+      ["nul1", "invalid literal"],
+      ["01", "leading zero"],
+      ["-", "invalid value"],
+      ["+1", "invalid value"],
+      ["1.", "invalid number"],
+      ["1e", "invalid number"],
+      [".5", "invalid value"],
+      ["NaN", "invalid value"],
+      ["1e400", "number out of range"],
+      ['"abc', "unterminated string"],
+      ['"a\nb"', "control character in a string"],
+      ['"\\x"', "invalid escape"],
+      ['"\\u12G4"', "invalid escape"],
+      ["﻿{}", "invalid value"],
+      ["{} {}", "trailing characters"],
+      ['"a" x', "trailing characters"],
+    ];
+    for (const [text, reason] of cases) {
+      expect(failureFromJson(m, "Anything", text), JSON.stringify(text)).toMatch(
+        new RegExp(`^(/\\S*: )?invalid JSON at offset \\d+: ${reason}$`),
+      );
+    }
+    expect(failureFromJson(m, "Anything", '{"a":1 "b":2}')).toBe(
+      "invalid JSON at offset 7: expected a comma or a closing brace",
+    );
+    // é is two bytes and 😀 four in UTF-8, one and two units in UTF-16.
+    expect(failureFromJson(m, "Anything", '["é😀", x]')).toBe(
+      "/1: invalid JSON at offset 11: invalid value",
+    );
+  });
+
+  it("reject a key given twice, at the object that has it", () => {
+    expect(failureFromJson(m, "Anything", '{"id":"a","id":"b"}')).toBe(
+      'invalid JSON at offset 10: key "id" given twice',
+    );
+    expect(failureFromJson(m, "Order", '{"id":"a","extra":[{"k":1,"k":1}]}')).toBe(
+      '/extra/0: invalid JSON at offset 26: key "k" given twice',
+    );
+    // Keys compare after unescaping, as Rust and Go compare them.
+    expect(failureFromJson(m, "Anything", '{"a":1,"\\u0061":2}')).toBe(
+      'invalid JSON at offset 7: key "a" given twice',
+    );
+  });
+
+  it("reject lone surrogates, escaped or in the text", () => {
+    for (const text of ['"\\ud800"', '"\\udc00"', '"\\ud800\\u0041"', '"\\ud800x"', '"x\\uDBFF"']) {
+      expect(failureFromJson(m, "Anything", text), text).toMatch(/: lone surrogate$/);
+    }
+    expect(failureFromJson(m, "Anything", '["a", "\\udc00"]')).toBe(
+      "/1: invalid JSON at offset 7: lone surrogate",
+    );
+    expect(failureFromJson(m, "Anything", '"a\uD800"')).toBe("invalid JSON at offset 2: not valid UTF-8");
+    expect(failureFromJson(m, "Anything", '"\uDC00\uD800"')).toBe("invalid JSON at offset 1: not valid UTF-8");
+  });
+
+  it("read up to 127 nested arrays and objects and reject more, as Rust and Go do", () => {
+    const nested = (depth: number): string => "[".repeat(depth) + "]".repeat(depth);
+    expect(read("Anything", nested(127))).toEqual(JSON.parse(nested(127)));
+    const deep = "invalid JSON at offset 127: recursion limit exceeded, more than 127 nested arrays and objects";
+    expect(failureFromJson(m, "Anything", nested(128))).toBe(`${"/0".repeat(127)}: ${deep}`);
+    const objects = '{"a":'.repeat(128) + "1" + "}".repeat(128);
+    expect(failureFromJson(m, "Anything", objects)).toMatch(/recursion limit exceeded/);
+    // Far deeper input fails at the limit, without running out of stack.
+    expect(failureFromJson(m, "Anything", nested(1_000_000))).toMatch(/recursion limit exceeded/);
+  });
+
+  it("reject an integer spelled with a fraction or an exponent, deciding on the text", () => {
+    for (const text of ["12.0", "1e2", "1E2", "1.0e1", "12.5", "-0.0"]) {
+      expect(failureFromJson(m, "Count", text), text).toBe(`expected an integer, found ${text}`);
+    }
+    expect(failureFromJson(m, "Count", "-0")).toBe("expected an integer, found -0");
+    expect(failureFromJson(m, "One", "1.0")).toBe("expected an integer, found 1.0");
+    for (const text of ["12", "-12", " 7 ", "0", "9007199254740991"]) {
+      expect(read("Count", text), text).toBe(JSON.parse(text));
+    }
+    expect(failureFromJson(m, "Count", "9007199254740993")).toBe(
+      "expected an integer from -9007199254740991 to 9007199254740991, found 9007199254740992",
+    );
+    expect(failureFromJson(m, "Order", '{"id":"a","tags":[1,2.0]}')).toBe(
+      "/tags/1: expected an integer, found 2.0",
+    );
+    expect(failureFromJson(m, "Order", '{"id":"a","counts":{"x":1,"y/z":1e0}}')).toBe(
+      "/counts/y~1z: expected an integer, found 1e0",
+    );
+  });
+
+  it("read a number or any value spelled with a fraction or an exponent", () => {
+    expect(read("Ratio", "12.0")).toBe(12);
+    expect(read("Ratio", "1e2")).toBe(100);
+    expect(read("Order", '{"id":"a","extra":{"n":12.0}}')).toEqual({ id: "a", extra: { n: 12 } });
+  });
+
+  it("forget the spellings of one document before the next", () => {
+    expect(failureFromJson(m, "Order", '{"id":"a","qty":1.0}')).toBe("/qty: expected an integer, found 1.0");
+    expect(read("Order", '{"id":"a","qty":1}')).toEqual({ id: "a", qty: 1 });
+    expect(m.fn("decodeOrder")({ id: "a", qty: 1 })).toEqual({ id: "a", qty: 1 });
+  });
+
+  it("return the error from tryDecodeXFromJson instead of throwing it", () => {
+    expect(m.fn("tryDecodeCountFromJson")("3")).toEqual({ ok: true, value: 3 });
+    const result = m.fn("tryDecodeCountFromJson")("3.0") as { ok: boolean; error: Error };
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeInstanceOf(m.DecodeError);
+    expect(result.error).toMatchObject({ path: "", reason: "expected an integer, found 3.0" });
+    expect(m.fn("tryDecodeCountFromJson")("[")).toMatchObject({ ok: false });
+  });
+
+  it("reject a leading byte order mark kept by the documented TextDecoder, as Rust and Go do", () => {
+    const bytes = new Uint8Array([0xef, 0xbb, 0xbf, 0x37]);
+    const kept = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+    expect(failureFromJson(m, "Count", kept)).toBe("invalid JSON at offset 0: invalid value");
+    // Without ignoreBOM the decoder drops the mark, and the text reads as 7.
+    expect(read("Count", new TextDecoder("utf-8", { fatal: true }).decode(bytes))).toBe(7);
+  });
+
+  it("fail on input that is not text", () => {
+    expect(failureFromJson(m, "Count", 12 as unknown as string)).toBe("expected JSON text, found a number");
+  });
+});
+
 /** The example whose fixtures every language round trips. */
 const EXAMPLE = join(import.meta.dirname, "..", "examples", "basic");
-/**
- * Invalid fixtures only the JSON text shows to be invalid. JSON.parse keeps the last of two
- * equal keys, so the decoders, which read parsed values, can't see them. A strict reader of
- * the text will.
- */
-const TEXT_ONLY = new Set(["duplicate-key.json"]);
-
 describe("TypeScript example fixtures", () => {
   const config = loadConfig(join(EXAMPLE, "strictgen.json"));
   const model = buildModel(loadSchemas(config.schemas), config.ids === undefined ? {} : { ids: config.ids });
@@ -994,7 +1317,9 @@ describe("TypeScript example fixtures", () => {
   const fixtures = (function walk(dir: string): string[] {
     return readdirSync(dir).flatMap((name) => {
       const path = join(dir, name);
-      return statSync(path).isDirectory() ? walk(path) : [path];
+      // Only .json files are fixtures, as in the Rust and Go harnesses.
+      if (statSync(path).isDirectory()) return walk(path);
+      return path.endsWith(".json") ? [path] : [];
     });
   })(root).map((path) => relative(root, path).split(sep));
   const typeOf = new Map(
@@ -1007,7 +1332,7 @@ describe("TypeScript example fixtures", () => {
   let m: Loaded;
   beforeAll(async () => {
     m = await load(model);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("covers every folder, each naming a type", () => {
     const keys = new Set(fixtures.map((parts) => parts.slice(0, -2).join("/")));
@@ -1019,17 +1344,27 @@ describe("TypeScript example fixtures", () => {
     for (const parts of fixtures) {
       const key = parts.slice(0, -2).join("/");
       const name = parts.join("/");
-      expect(parts.at(-1)?.endsWith(".json"), name).toBe(true);
       const kind = parts.at(-2);
+      // A file outside a valid or invalid folder fails, so a misspelled folder never skips one.
+      expect(parts.length >= 3 && (kind === "valid" || kind === "invalid"), name).toBe(true);
       const type = typeOf.get(key) ?? "";
-      const text = readFileSync(join(root, ...parts), "utf8");
-      if (kind === "valid") {
-        expect(JSON.parse(roundTrip(m, type, text)), name).toEqual(JSON.parse(text));
-      } else if (!TEXT_ONLY.has(parts.at(-1) ?? "")) {
-        expect(kind, name).toBe("invalid");
-        expect(failure(m, type, JSON.parse(text)), name).toEqual(expect.any(String));
-      }
+      const bytes = readFileSync(join(root, ...parts));
       count++;
+      if (kind === "valid") {
+        const text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+        const value = m.fn(`decode${type}FromJson`)(text);
+        const encoded = JSON.stringify(m.fn(`encode${type}`)(value));
+        expect(JSON.parse(encoded), name).toEqual(JSON.parse(text));
+        continue;
+      }
+      let text: string;
+      try {
+        text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+      } catch {
+        // Not UTF-8, which Rust and Go reject too.
+        continue;
+      }
+      expect(failureFromJson(m, type, text), name).toEqual(expect.any(String));
     }
     expect(count).toBeGreaterThan(10);
   });
@@ -1061,7 +1396,7 @@ describe("reserved names", () => {
     const m = await load(libModel({ rule: keywordFields }));
     const text = '{"type":"t","default":true,"crate":"c"}';
     expect(roundTrip(m, "Rule", text)).toBe(text);
-  });
+  }, COMPILE_TIMEOUT);
 
   it("quotes a key that is not an identifier", () => {
     const out = lib({

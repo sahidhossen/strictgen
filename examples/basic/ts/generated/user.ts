@@ -29,6 +29,20 @@ export function tryDecodeContact(json: unknown): h.DecodeResult<Contact> {
 }
 
 /**
+ * Reads JSON text as Contact, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeContactFromJson(text: string): Contact {
+  return h.fromJson(text, decodeContact);
+}
+
+/** Like decodeContactFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContactFromJson(text: string): h.DecodeResult<Contact> {
+  return h.attemptJson(decodeContact, text);
+}
+
+/**
  * Encodes Contact as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -62,6 +76,20 @@ export function decodeContactEmail(json: unknown, path = ""): ContactEmail {
 /** Like decodeContactEmail, but returns the DecodeError instead of throwing it. */
 export function tryDecodeContactEmail(json: unknown): h.DecodeResult<ContactEmail> {
   return h.attempt(decodeContactEmail, json);
+}
+
+/**
+ * Reads JSON text as ContactEmail, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeContactEmailFromJson(text: string): ContactEmail {
+  return h.fromJson(text, decodeContactEmail);
+}
+
+/** Like decodeContactEmailFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContactEmailFromJson(text: string): h.DecodeResult<ContactEmail> {
+  return h.attemptJson(decodeContactEmail, text);
 }
 
 /**
@@ -106,6 +134,20 @@ export function tryDecodeContactPhone(json: unknown): h.DecodeResult<ContactPhon
 }
 
 /**
+ * Reads JSON text as ContactPhone, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeContactPhoneFromJson(text: string): ContactPhone {
+  return h.fromJson(text, decodeContactPhone);
+}
+
+/** Like decodeContactPhoneFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContactPhoneFromJson(text: string): h.DecodeResult<ContactPhone> {
+  return h.attemptJson(decodeContactPhone, text);
+}
+
+/**
  * Encodes ContactPhone as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -132,6 +174,20 @@ export function decodeRole(json: unknown, path = ""): Role {
 /** Like decodeRole, but returns the DecodeError instead of throwing it. */
 export function tryDecodeRole(json: unknown): h.DecodeResult<Role> {
   return h.attempt(decodeRole, json);
+}
+
+/**
+ * Reads JSON text as Role, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeRoleFromJson(text: string): Role {
+  return h.fromJson(text, decodeRole);
+}
+
+/** Like decodeRoleFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeRoleFromJson(text: string): h.DecodeResult<Role> {
+  return h.attemptJson(decodeRole, text);
 }
 
 /**
@@ -176,6 +232,20 @@ export function decodeUser(json: unknown, path = ""): User {
 /** Like decodeUser, but returns the DecodeError instead of throwing it. */
 export function tryDecodeUser(json: unknown): h.DecodeResult<User> {
   return h.attempt(decodeUser, json);
+}
+
+/**
+ * Reads JSON text as User, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeUserFromJson(text: string): User {
+  return h.fromJson(text, decodeUser);
+}
+
+/** Like decodeUserFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeUserFromJson(text: string): h.DecodeResult<User> {
+  return h.attemptJson(decodeUser, text);
 }
 
 /**
