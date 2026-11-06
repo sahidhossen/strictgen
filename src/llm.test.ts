@@ -328,13 +328,65 @@ describe("projection rules", () => {
     expect(changes[0]).toMatchObject({ kind: "wrapped", pointer: "" });
   });
 
-  it("puts a recursive type in $defs for a profile with recursion, and fails for one without", () => {
-    const { schema } = projectType(m, "Category", openai);
+  /** openai with other limits, under another name. */
+  const limited = (limits: Record<string, unknown>): Profile => ({
+    ...parseProfile({ ...JSON.parse(readFileSync(builtinProfileFile("openai"), "utf8")), limits }, "limited.json"),
+    name: "limited",
+  });
+
+  it("puts a recursive type in $defs for a profile with recursion and no depth limit", () => {
+    const { schema } = projectType(m, "Category", limited({}));
     expect(Object.keys(schema.$defs as JsonObject)).toEqual(["Category"]);
     expect(JSON.stringify(schema)).toContain('"$ref":"#/$defs/Category"');
     expect(() => projectType(m, "Category", anthropic)).toThrow(
       "category.json#: llm-unsupported: profile anthropic: Category contains itself, and the profile accepts no recursive schema",
     );
+  });
+
+  it("fails a recursive type for a profile with a depth limit, since its nesting has no bound", () => {
+    expect(() => projectType(m, "Category", openai)).toThrow(
+      "category.json#: llm-limit: the openai schema for Category is recursive at " +
+        "/$defs/Category/properties/children/anyOf/0/items, so its nesting has no bound, and the profile allows a depth of at most 10",
+    );
+  });
+
+  const forest = model({
+    category: SHOP.category ?? {},
+    shelf: {
+      title: "Shelf",
+      type: "object",
+      properties: { left: { $ref: `${BASE}category.json` }, right: { $ref: `${BASE}category.json` } },
+      required: ["left", "right"],
+      additionalProperties: false,
+    },
+  });
+
+  it("counts a definition once per use, at the depth of each use", () => {
+    // Shelf has 2 properties, and each use of Category 2 more for the root and 2 for $defs.
+    expect(() => projectType(forest, "Shelf", limited({ maxProperties: 9 }))).not.toThrow();
+    expect(() => projectType(forest, "Shelf", limited({ maxProperties: 5 }))).toThrow("has a property count of 6,");
+    // Each use of Category has its children anyOf, once inside the $defs entry it refers to.
+    expect(() => projectType(forest, "Shelf", limited({ maxUnions: 1 }))).toThrow("has an anyOf count of 2,");
+  });
+
+  it("keeps the doc of an optional field of a recursive type beside the anyOf, never beside a $ref", () => {
+    const docs = model({
+      node: {
+        title: "Node",
+        type: "object",
+        properties: {
+          next: { description: "The next node.", $ref: "#" },
+          first: { $ref: "#" },
+        },
+        additionalProperties: false,
+        required: ["first"],
+      },
+    });
+    const { schema } = projectType(docs, "Node", limited({}));
+    const props = schema.properties as Record<string, JsonObject>;
+    expect(props.next).toEqual({ description: "The next node.", anyOf: [{ $ref: "#/$defs/Node" }, { type: "null" }] });
+    expect(props.first).toEqual({ $ref: "#/$defs/Node" });
+    expect(JSON.stringify(schema)).not.toMatch(/"\$ref":"[^"]*","description"|"description":"[^"]*","\$ref"/);
   });
 
   it("fails on a value of any type and on data keys beside properties, naming the schema path", () => {
@@ -350,6 +402,20 @@ describe("projection rules", () => {
     expect(() => projectType(anyModel, "Event", openai)).toThrow(
       "event.json#: llm-unsupported: profile openai: Event.payload takes any JSON value",
     );
+    // With the schemas, the error points at the field itself.
+    const set = schemaSet({
+      event: {
+        $id: `${BASE}event.json`,
+        title: "Event",
+        type: "object",
+        properties: { payload: {} },
+        required: ["payload"],
+        additionalProperties: false,
+      },
+    });
+    expect(() => projectType(anyModel, "Event", openai, set)).toThrow(
+      "event.json#/properties/payload: llm-unsupported: profile openai: Event.payload takes any JSON value",
+    );
     const restModel = model({
       attributes: {
         title: "Attributes",
@@ -363,8 +429,6 @@ describe("projection rules", () => {
     );
   });
 
-  const limited = (limits: Record<string, unknown>): Profile =>
-    parseProfile({ ...JSON.parse(readFileSync(builtinProfileFile("openai"), "utf8")), limits }, "limited.json");
 
   it.each([
     [{ maxDepth: 2 }, "order.json#: llm-limit: the limited schema for Order has a nesting depth of 3, at /properties/lines/items"],
@@ -374,12 +438,12 @@ describe("projection rules", () => {
     [{ maxUnions: 1 }, "has an anyOf count of"],
     [{ largeEnum: { values: 2, maxSize: 5 } }, "has an enum of more than 2 values with a total length of 15, at /properties/status"],
   ])("fails over the limit %j, naming the schema path", (limits, message) => {
-    const profile = { ...limited(limits), name: "limited" };
+    const profile = limited(limits);
     expect(() => projectType(m, "Order", profile)).toThrow(message);
   });
 
   it("passes at a limit exactly", () => {
-    const depth = projectType(m, "Order", { ...limited({ maxDepth: 3 }), name: "limited" });
+    const depth = projectType(m, "Order", limited({ maxDepth: 3 }));
     expect(depth.type).toBe("Order");
   });
 
@@ -483,6 +547,18 @@ describe("strictgen llm", () => {
     }
   });
 
+  it("prints one profile though another profile file in llm.profiles is broken", () => {
+    const root = project({ ...TS_ONLY, llm: { profiles: ["broken.json", "mine.json"], out: "llm" } });
+    writeFileSync(join(root, "broken.json"), "{");
+    writeFileSync(join(root, "mine.json"), JSON.stringify({ name: "mine", version: "x" }));
+    expect(cli(root, ["llm", "--profile", "openai", "Order"]).code).toBe(EXIT_OK);
+    // A file that names the profile, or is named like it when unreadable, is checked in full.
+    expect(cli(root, ["llm", "--profile", "mine", "Order"]).err).toEqual(["error: mine.json: date: is required"]);
+    expect(cli(root, ["llm", "--profile", "broken", "Order"]).err[0]).toMatch(/^error: broken\.json: not valid JSON/);
+    // generate still checks every listed profile.
+    expect(cli(root, ["generate"]).err[0]).toMatch(/^error: broken\.json: not valid JSON/);
+  });
+
   it("exits 2 for an unknown type or profile, and 1 for a type it can't project", () => {
     const root = project(TS_ONLY);
     const unknown = cli(root, ["llm", "--profile", "openai", "Nope"]);
@@ -547,7 +623,7 @@ describe("llm.out", () => {
     );
     const result = cli(root, ["generate"]);
     expect(result.code).toBe(EXIT_FAILED);
-    expect(result.err[0]).toMatch(/^error: event\.json#: llm-unsupported: profile openai: Event\.payload/);
+    expect(result.err[0]).toMatch(/^error: event\.json#\/properties\/payload: llm-unsupported: profile openai: Event\.payload/);
     expect(readdirSync(root).sort()).toEqual(["schemas", "strictgen.json"]);
   });
 
@@ -578,6 +654,12 @@ describe("the cleanup helper", () => {
     expect(file(emitGo(m, { cleanup: true }), "helpers.go")).toContain("func CleanLLMJSON(data []byte) []byte");
     expect(file(emitRust(m, { cleanup: true }), "helpers.rs")).toContain("pub fn clean_llm_json(text: &str) -> String");
     expect(file(emitRust(m, { cleanup: true }), "mod.rs")).toContain("pub use helpers::clean_llm_json;");
+  });
+
+  it("reserves CleanLLMJSON in Go when it is on", () => {
+    const clash = model({ clean: { title: "CleanLLMJSON", type: "object", properties: {}, additionalProperties: false } });
+    expect(() => emitGo(clash)).not.toThrow();
+    expect(() => emitGo(clash, { cleanup: true })).toThrow("name-clash: Go name CleanLLMJSON is also used by helpers.go");
   });
 
   it("refuses to go without the TypeScript decoders, which hold it", () => {

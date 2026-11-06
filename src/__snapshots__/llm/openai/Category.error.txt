@@ -1,0 +1,1 @@
+category.json#: llm-limit: the openai schema for Category is recursive at /$defs/Category/properties/children/anyOf/0/items, so its nesting has no bound, and the profile allows a depth of at most 10. Hint: remove the recursion, or use a profile file without limits.maxDepth if the provider takes the schema

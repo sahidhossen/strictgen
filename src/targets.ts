@@ -121,7 +121,7 @@ function llmTarget(config: Config, llm: LlmConfig): Target {
   return {
     name: "llm",
     dirs: [out],
-    emit: (model) => placed(out, emitLlm(model, profiles)),
+    emit: (model, schemas) => placed(out, emitLlm(model, profiles, schemas)),
   };
 }
 

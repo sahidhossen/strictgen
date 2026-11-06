@@ -32,8 +32,8 @@ import type {
   StructDecl,
   TypeExpr,
 } from "./model.js";
-import type { Json, JsonObject } from "./schema.js";
-import { CodegenError } from "./schema.js";
+import type { Json, JsonObject, SchemaSet } from "./schema.js";
+import { CodegenError, isObject } from "./schema.js";
 
 /** The key a type that isn't an object is wrapped in at the root. */
 export const WRAP_KEY = "value";
@@ -44,7 +44,10 @@ export const WRAP_KEY = "value";
  * - `nullable`: an optional field is required and nullable. `null` decodes as absent
  * - `dropped`: a constraint the profile doesn't accept was left out. `keyword` and `value` say
  *   which, and the decoder checks it
- * - `entries`: a map is an array of `{ key, value }` entries. A key given twice fails
+ * - `entries`: a map is an array of `{ key, value }` entries. A key given twice fails. The map's
+ *   `minProperties` and `maxProperties` become the array's `minItems` and `maxItems` (or a
+ *   `dropped` change with those keywords), and they count keys: after a duplicate key fails,
+ *   entries and keys are the same number
  * - `wrapped`: the root type is the `value` key of an object
  * - `union`: a tagged union is `anyOf` of its branches. `tag` names the tag key and `branches`
  *   the type each tag value decodes as
@@ -186,9 +189,24 @@ class Projector {
   constructor(
     model: Model,
     readonly profile: Profile,
+    readonly schemas: SchemaSet,
   ) {
     this.decls = new Map(model.decls.map((d) => [d.name, d]));
     this.recursive = recursiveDecls(model);
+  }
+
+  /**
+   * The schema path of a field, like `event.json#/properties/payload`, when the schemas hold it
+   * there, or else the path of the type that owns it.
+   */
+  fieldPath(owner: Owner): string {
+    const path = this.decls.get(owner.type)?.path ?? owner.type;
+    if (owner.field === undefined) return path;
+    const hash = path.indexOf("#");
+    const file = path.slice(0, hash).replace(/\.json$/, "");
+    const pointer = `${path.slice(hash + 1)}/properties${segment(owner.field)}`;
+    const root = this.schemas.find((s) => s.name === file)?.root;
+    return root !== undefined && pointed(root, pointer) ? `${path}/properties${segment(owner.field)}` : path;
   }
 
   unsupported(path: string, reason: string, hint?: string): never {
@@ -342,7 +360,9 @@ class Projector {
           this.defs.set(target.name, {});
           this.defs.set(target.name, this.decl(target, `/$defs${segment(target.name)}`, ""));
         }
-        return { $ref: `#/$defs/${target.name.replaceAll("~", "~0").replaceAll("/", "~1")}` };
+        // A description can't sit beside a $ref, so the field's doc is only kept where the $ref
+        // goes into an anyOf, for an optional field. stripRefDescriptions removes it elsewhere.
+        return withDescription({ $ref: `#/$defs/${target.name.replaceAll("~", "~0").replaceAll("/", "~1")}` }, doc, []);
       }
       case "string":
         return this.string(type, pointer, owner, doc);
@@ -361,7 +381,7 @@ class Projector {
       case "any":
       case "nonNull":
         return this.unsupported(
-          this.decls.get(owner.type)?.path ?? owner.type,
+          this.fieldPath(owner),
           `${owner.field === undefined ? owner.type : `${owner.type}.${owner.field}`} takes any JSON value, which no structured output schema describes`,
           "give it a type",
         );
@@ -492,6 +512,29 @@ function keyHint(key: Node): string {
   return `as described: ${description === "" ? JSON.stringify(key) : description}`;
 }
 
+/** True when `pointer` names a value in `root`. */
+function pointed(root: Json, pointer: string): boolean {
+  let current: Json | undefined = root;
+  for (const raw of pointer.split("/").slice(1)) {
+    const key = raw.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!isObject(current) || !Object.hasOwn(current, key)) return false;
+    current = current[key];
+  }
+  return current !== undefined;
+}
+
+/** `node` without a description beside a `$ref`, anywhere in it, which providers may refuse. */
+function stripRefDescriptions(node: Json): Json {
+  if (Array.isArray(node)) return node.map(stripRefDescriptions);
+  if (!isObject(node)) return node;
+  const out: Node = {};
+  for (const [key, value] of Object.entries(node)) {
+    if (key === "description" && node.$ref !== undefined) continue;
+    out[key] = stripRefDescriptions(value);
+  }
+  return out;
+}
+
 /** `node` with its description first, when there is one. */
 function withDescription(node: Node, doc: string, hints: readonly string[]): Node {
   const description = describe(doc, hints);
@@ -508,12 +551,20 @@ interface Measure {
   unions: number;
   /** The largest string enum over the large enum count, by its size. */
   largeEnum: { size: number; pointer: string } | undefined;
+  /** The first `$ref` that goes back into a type it is inside, when there is one. */
+  recursive: string | undefined;
 }
 
 function length(text: string): number {
   return [...text].length;
 }
 
+/**
+ * Measures a projected schema the way a provider meets it: each `$ref` is followed to its
+ * `$defs` entry at the place it is used, so a definition counts at the depth of each use, and its
+ * properties, enum values and anyOf schemas count once per use. A `$ref` back into a definition
+ * it is inside isn't followed again; `recursive` names the first one.
+ */
 function measure(schema: JsonObject, largeEnumValues: number | undefined): Measure {
   const m: Measure = {
     depth: 0,
@@ -523,51 +574,56 @@ function measure(schema: JsonObject, largeEnumValues: number | undefined): Measu
     stringSize: 0,
     unions: 0,
     largeEnum: undefined,
+    recursive: undefined,
   };
-  const walk = (node: Json | undefined, pointer: string, depth: number): void => {
-    if (typeof node !== "object" || node === null || Array.isArray(node)) return;
-    const o = node as JsonObject;
-    const nested = o.type === "object" || o.type === "array" ? depth + 1 : depth;
+  const { $defs, ...root } = schema;
+  const defs: JsonObject = isObject($defs) ? $defs : {};
+  // A definition's name is written once, however often it is used.
+  for (const name of Object.keys(defs)) m.stringSize += length(name);
+  const walk = (node: Json | undefined, pointer: string, depth: number, open: readonly string[]): void => {
+    if (!isObject(node)) return;
+    if (typeof node.$ref === "string") {
+      const name = node.$ref.slice("#/$defs/".length).replaceAll("~1", "/").replaceAll("~0", "~");
+      if (open.includes(name)) {
+        m.recursive ??= pointer;
+        return;
+      }
+      walk(defs[name], `/$defs${segment(name)}`, depth, [...open, name]);
+      return;
+    }
+    const nested = node.type === "object" || node.type === "array" ? depth + 1 : depth;
     if (nested > m.depth) {
       m.depth = nested;
       m.deepest = pointer;
     }
-    if (Array.isArray(o.anyOf)) {
+    if (Array.isArray(node.anyOf)) {
       m.unions++;
-      o.anyOf.forEach((b, i) => {
-        walk(b, `${pointer}/anyOf/${String(i)}`, nested);
+      node.anyOf.forEach((b, i) => {
+        walk(b, `${pointer}/anyOf/${String(i)}`, nested, open);
       });
     }
-    if (Array.isArray(o.enum)) {
-      m.enumValues += o.enum.length;
-      const strings = o.enum.filter((v): v is string => typeof v === "string");
+    if (Array.isArray(node.enum)) {
+      m.enumValues += node.enum.length;
+      const strings = node.enum.filter((v): v is string => typeof v === "string");
       const size = strings.reduce((n, v) => n + length(v), 0);
       m.stringSize += size;
       if (largeEnumValues !== undefined && strings.length > largeEnumValues && size > (m.largeEnum?.size ?? -1)) {
         m.largeEnum = { size, pointer };
       }
     }
-    if (typeof o.const === "string") m.stringSize += length(o.const);
-    const properties = o.properties;
-    if (typeof properties === "object" && properties !== null && !Array.isArray(properties)) {
-      for (const [name, value] of Object.entries(properties as JsonObject)) {
+    if (typeof node.const === "string") m.stringSize += length(node.const);
+    if (isObject(node.properties)) {
+      for (const [name, value] of Object.entries(node.properties)) {
         m.properties++;
         m.stringSize += length(name);
-        walk(value, `${pointer}/properties${segment(name)}`, nested);
+        walk(value, `${pointer}/properties${segment(name)}`, nested, open);
       }
     }
     for (const key of ["items", "additionalProperties", "propertyNames"]) {
-      walk(o[key], `${pointer}/${key}`, nested);
+      walk(node[key], `${pointer}/${key}`, nested, open);
     }
   };
-  const { $defs, ...root } = schema;
-  walk(root, "", 0);
-  if (typeof $defs === "object" && $defs !== null && !Array.isArray($defs)) {
-    for (const [name, def] of Object.entries($defs as JsonObject)) {
-      m.stringSize += length(name);
-      walk(def, `/$defs${segment(name)}`, 0);
-    }
-  }
+  walk(root, "", 0, []);
   return m;
 }
 
@@ -584,6 +640,17 @@ function checkLimits(schema: JsonObject, decl: Decl, profile: Profile): void {
       "split the type into smaller ones, or use a profile with higher limits",
     );
   };
+  // A type that contains itself nests without bound, and no provider says how it counts the
+  // depth of one, so a profile with a depth limit fails it rather than guess.
+  if (limits.maxDepth !== undefined && m.recursive !== undefined) {
+    throw new CodegenError(
+      decl.path,
+      "llm-limit",
+      `the ${profile.name} schema for ${decl.name} is recursive at ${m.recursive}, so its nesting has no bound, ` +
+        `and the profile allows a depth of at most ${String(limits.maxDepth)}`,
+      "remove the recursion, or use a profile file without limits.maxDepth if the provider takes the schema",
+    );
+  }
   if (limits.maxDepth !== undefined && m.depth > limits.maxDepth) {
     over("a nesting depth of", m.depth, limits.maxDepth, m.deepest);
   }
@@ -618,12 +685,18 @@ export function projectedTypes(model: Model): Decl[] {
  * The provider-ready schema of the model type `name` for `profile`, and what moved to the
  * decoder. Throws a {@link CodegenError} naming the schema path when the type uses something no
  * structured output schema describes (`llm-unsupported`) or the projection is over a limit of the
- * profile (`llm-limit`).
+ * profile (`llm-limit`). `schemas`, the set the model was built from, lets errors point at a
+ * field's own place in its schema.
  */
-export function projectType(model: Model, name: string, profile: Profile): Projection {
+export function projectType(
+  model: Model,
+  name: string,
+  profile: Profile,
+  schemas: SchemaSet = [],
+): Projection {
   const decl = model.decls.find((d) => d.name === name);
   if (decl === undefined) throw new Error(`no type ${name}`);
-  const p = new Projector(model, profile);
+  const p = new Projector(model, profile, schemas);
   let root: Node;
   if (decl.kind === "struct") {
     root = p.decl(decl, "", "");
@@ -642,10 +715,11 @@ export function projectType(model: Model, name: string, profile: Profile): Proje
     });
   }
   const defs = [...p.defs.keys()].sort();
-  const schema: JsonObject =
+  const written: Node =
     defs.length === 0
       ? root
       : { ...root, $defs: Object.fromEntries(defs.map((n) => [n, p.defs.get(n) ?? {}])) };
+  const schema = stripRefDescriptions(written) as JsonObject;
   checkLimits(schema, decl, profile);
   const changes = [...p.changes].sort((a, b) => (a.pointer < b.pointer ? -1 : a.pointer > b.pointer ? 1 : 0));
   return { type: decl.name, profile: profile.name, schema, changes };

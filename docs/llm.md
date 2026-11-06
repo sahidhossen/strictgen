@@ -15,7 +15,7 @@ LLM providers take a JSON Schema for structured output, but only a subset of it,
 | `llm.out` | The folder the schemas go to, as `<out>/<profile>/<Type>.json`. strictgen clears it before writing, like the other folders it owns |
 | `llm.cleanup` | Adds the cleanup helper to every configured language. Off by default |
 
-`strictgen generate` writes the schemas with the other targets and `strictgen check` compares them. `strictgen llm --profile openai Order` prints one schema on stdout and what moved to the decoder on stderr, or both as JSON with `--json`. The type is named as the generated code names it, and every schema root and `$defs` entry has one.
+`strictgen generate` writes the schemas with the other targets and `strictgen check` compares them. `strictgen llm --profile openai Order` prints one schema on stdout and what moved to the decoder on stderr, or both as JSON with `--json`. The type is named as the generated code names it, and every schema root and `$defs` entry has one. The profile is a built in one, a path ending in `.json`, or a profile file `llm.profiles` lists whose `name` is the one given. To find it, `strictgen llm` reads only the `name` of each listed file, and checks in full only the file that has it (or, for a file that isn't a JSON object with a name, the file named `<name>.json`), so a broken file for another profile doesn't stop it. `generate` and `check` check every listed profile.
 
 ## Profiles
 
@@ -23,7 +23,7 @@ A profile is a JSON file that `profiles/profile.schema.json` describes. strictge
 
 | Profile | Provider | Keeps | Maps as | Recursion |
 | ------- | -------- | ----- | ------- | --------- |
-| `openai` | OpenAI structured outputs, `strict: true` | `const`, `pattern`, `format` (date-time, date, uuid), `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems` | entries | yes |
+| `openai` | OpenAI structured outputs, `strict: true` | `const`, `pattern`, `format` (date-time, date, uuid), `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems` | entries | yes, but see `maxDepth` below |
 | `anthropic` | Anthropic structured outputs | `const`, `format` (date-time, date, uuid), `minItems` up to 1 | entries | no |
 | `gemini` | Gemini API structured output with a JSON Schema | `format` (date-time, date), `minimum`, `maximum`, `minItems`, `maxItems` | object | no |
 
@@ -53,12 +53,14 @@ The real schema stays the source. A projection is generated from it, never edite
 - **An optional field becomes required and nullable**: `"anyOf": [<type>, { "type": "null" }]`. The model sends `null` for a field it leaves out, and the decoder reads `null` as absent. For a union, `null` is one more branch.
 - **A tagged union becomes `anyOf`** of its branches, each with its tag as a `const`, or as a one value `enum` for a profile without `const`. An untagged union becomes `anyOf` of its variants.
 - **A type that isn't an object at the root**, like an enum or a union, is wrapped as `{ "value": <type> }`, since providers want an object there. The decoder reads the `value` key.
-- **A map** becomes, with `entries`, an array of `{ "key": ..., "value": ... }` objects, its key limits as item limits. A key given twice fails in the decoder. With `object`, it stays an object with an `additionalProperties` schema.
+- **A map** becomes, with `entries`, an array of `{ "key": ..., "value": ... }` objects. Its `minProperties` and `maxProperties` become the array's `minItems` and `maxItems`, and the changes list them by those names, but they count keys: a key given twice fails in the decoder, so entries and keys are the same number. With `object`, it stays an object with an `additionalProperties` schema.
 - **A constraint the profile doesn't accept** is left out, and a short hint goes into the description instead, so the model still tries to follow it: `"A note for the packer. At most 80 characters."`. The decoder checks it.
-- **Every type is inlined**, so a description never sits beside a `$ref`. Only a type that contains itself goes to `$defs`, for a profile with `recursion`. For one without, it fails with `llm-unsupported`.
+- **Every type is inlined**, so a description never sits beside a `$ref`. Only a type that contains itself goes to `$defs`, for a profile with `recursion`. For one without, it fails with `llm-unsupported`. Where such a type is used, its `$defs` entry keeps the type's own description. The description of the field that uses it, with its hints, is kept for an optional field, on the `anyOf` that makes it nullable, and is left out everywhere else, like on a required field, since it would have to sit beside the `$ref`.
 - **Field and type descriptions** are kept. A field's own description replaces the description of the type it refers to.
 
 Hints are fixed sentences, the same on every run: `at least 2 characters`, `at most 5 items`, `greater than 0`, `a multiple of 6`, `matching the regular expression ^[A-Z]{3}$`, `an RFC 3339 date, like 2026-01-31`, `no two items equal`, `each key at most once`.
+
+Limits are counted the way the provider meets the schema: each `$ref` is followed to its `$defs` entry where it is used, so a definition counts at the depth of each use, and its properties, enum values and `anyOf` schemas count once per use. A `$defs` name counts once.
 
 Some schemas can't be projected. A value of any type (`{}`) and named keys beside a map of the other keys fail with `llm-unsupported`, naming the schema path. A projection over a profile limit fails with `llm-limit`:
 
@@ -68,7 +70,7 @@ order.json#: llm-limit: the openai schema for Order has a nesting depth of 11, a
 
 | Limit | Counts |
 | ----- | ------ |
-| `maxDepth` | Object and array schemas nested on one path, the root counting as 1 |
+| `maxDepth` | Object and array schemas nested on one path, the root counting as 1. A type that contains itself nests without bound, and providers don't say how they count it, so with a `maxDepth` it fails with `llm-limit`. The built in `openai` profile has one, so it refuses recursive types. A profile file without `maxDepth` takes them, if the provider does |
 | `maxProperties` | Properties of every object in the schema, `$defs` included |
 | `maxEnumValues` | Values of every `enum` |
 | `maxStringSize` | Characters of every property name, `$defs` name, string enum value and string const |

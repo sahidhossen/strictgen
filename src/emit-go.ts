@@ -122,7 +122,7 @@ function goHead(options: GoOptions, doc: string): string {
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   const ctx = context(model, options.read === "report");
-  checkNames(model);
+  checkNames(model, options.cleanup === true);
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
     contents: goFile(
@@ -243,9 +243,11 @@ function goFile(head: string, packages: readonly string[], parts: readonly strin
 }
 
 /** Every package-level name must be unique, since all schemas share one package. */
-function checkNames(model: Model): void {
+function checkNames(model: Model, cleanup: boolean): void {
   // An enum constant like CodeTooDeep, from an enum named code, would clash with the helpers.
   const owners = new Map<string, string>(CODES.map((name) => [name, GO_HELPERS]));
+  // The cleanup step's function is in the helpers too, when it is on.
+  if (cleanup) owners.set("CleanLLMJSON", GO_HELPERS);
   const claim = (name: string, path: string): void => {
     const other = owners.get(name);
     if (other !== undefined)

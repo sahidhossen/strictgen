@@ -275,6 +275,76 @@
     "output": "[1,\u00a0]"
   },
   {
+    "name": "an odd backslash run before a quote escapes it",
+    "input": "[\"a\\\\\\\",]\",]",
+    "output": "[\"a\\\\\\\",]\"]"
+  },
+  {
+    "name": "an even backslash run before a quote ends the string",
+    "input": "[\"a\\\\\\\\\",]",
+    "output": "[\"a\\\\\\\\\"]"
+  },
+  {
+    "name": "a string ending in a backslash without a closing quote stays",
+    "input": "[\"x\\",
+    "output": "[\"x\\"
+  },
+  {
+    "name": "a backslash before a comma in an unterminated string keeps it",
+    "input": "[\"x\\,]",
+    "output": "[\"x\\,]"
+  },
+  {
+    "name": "a backslash before an astral character, then a trailing comma",
+    "input": "{\"a\":\"\\\ud83d\ude00\",}",
+    "output": "{\"a\":\"\\\ud83d\ude00\"}"
+  },
+  {
+    "name": "backticks inside a string inside a fence stay",
+    "input": "```json\n{\"a\":\"```\",}\n```",
+    "output": "{\"a\":\"```\"}"
+  },
+  {
+    "name": "a line of backticks inside a string ends the fence",
+    "input": "```json\n{\"a\":\"\n```\"}\n```",
+    "output": "{\"a\":\"\n```\"}"
+  },
+  {
+    "name": "a bare CR before the closing fence keeps the fence",
+    "input": "```json\n{}\r```",
+    "output": "```json\n{}\r```"
+  },
+  {
+    "name": "a lone CR as the line break keeps the fence",
+    "input": "```json\r{}\r```",
+    "output": "```json\r{}\r```"
+  },
+  {
+    "name": "a tab and spaces after the closing fence go",
+    "input": "```json\n{}\n```\t  ",
+    "output": "{}"
+  },
+  {
+    "name": "an unclosed fence keeps the fence, but not the trailing comma",
+    "input": "```json\n[1,]",
+    "output": "```json\n[1]"
+  },
+  {
+    "name": "a byte order mark, a fence and a trailing comma all go",
+    "input": "\ufeff```json\n{\"a\":1,}\n```",
+    "output": "{\"a\":1}"
+  },
+  {
+    "name": "astral characters inside a fence stay",
+    "input": "```json\n[\"\ud83d\ude00\",\"a\ud83d\ude00b\",]\n```",
+    "output": "[\"\ud83d\ude00\",\"a\ud83d\ude00b\"]"
+  },
+  {
+    "name": "an astral character in the info string keeps the fence",
+    "input": "```\ud83d\ude00\n{}\n```",
+    "output": "```\ud83d\ude00\n{}\n```"
+  },
+  {
     "name": "keys and values are never changed",
     "input": "{\"Name\":\"  x  \",\"n\":01,\"t\":tru,}",
     "output": "{\"Name\":\"  x  \",\"n\":01,\"t\":tru}"

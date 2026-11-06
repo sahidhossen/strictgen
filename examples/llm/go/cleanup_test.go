@@ -8,6 +8,21 @@ import (
 	"testing"
 )
 
+// TestCleanupInvalidUTF8 checks that bytes which aren't UTF-8, which Rust and TypeScript strings
+// can't hold, pass through as they are: the steps only look at ASCII and the byte order mark.
+func TestCleanupInvalidUTF8(t *testing.T) {
+	cases := []struct{ in, want []byte }{
+		{[]byte{0xff, ',', ']'}, []byte{0xff, ']'}},
+		{[]byte{'[', '"', '\\', 0xff, '"', ',', ']'}, []byte{'[', '"', '\\', 0xff, '"', ']'}},
+		{[]byte{0xef, 0xbb, '{', '}'}, []byte{0xef, 0xbb, '{', '}'}},
+	}
+	for _, c := range cases {
+		if got := CleanLLMJSON(c.in); !bytes.Equal(got, c.want) {
+			t.Errorf("CleanLLMJSON(%q) = %q, expected %q", c.in, got, c.want)
+		}
+	}
+}
+
 // TestCleanupVectors runs the shared cleanup vectors through CleanLLMJSON. Rust and TypeScript
 // run the same file, so the three languages clean every input to the same output.
 func TestCleanupVectors(t *testing.T) {

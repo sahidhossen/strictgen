@@ -12,6 +12,7 @@ import type { Projection } from "./llm-project.js";
 import { projectedTypes, projectType, schemaText } from "./llm-project.js";
 import type { EmittedFile } from "./common.js";
 import type { Model } from "./model.js";
+import type { SchemaSet } from "./schema.js";
 import { CodegenError, loadSchemas } from "./schema.js";
 
 /**
@@ -29,8 +30,9 @@ export class LlmError extends Error {
  * The files of the LLM output, relative to `llm.out`: `<profile>/<Type>.json` for every schema
  * root and `$defs` entry. Throws a {@link CodegenError} when a type can't be projected for a
  * profile, or two type names differ only in case, which would be one file on some systems.
+ * `schemas`, the set the model was built from, lets errors point at a field's own place.
  */
-export function emitLlm(model: Model, profiles: readonly Profile[]): EmittedFile[] {
+export function emitLlm(model: Model, profiles: readonly Profile[], schemas: SchemaSet = []): EmittedFile[] {
   const types = projectedTypes(model);
   const seen = new Map<string, string>();
   for (const decl of types) {
@@ -49,7 +51,7 @@ export function emitLlm(model: Model, profiles: readonly Profile[]): EmittedFile
   return profiles.flatMap((profile) =>
     types.map((decl) => ({
       name: `${profile.name}/${decl.name}.json`,
-      contents: schemaText(projectType(model, decl.name, profile).schema),
+      contents: schemaText(projectType(model, decl.name, profile, schemas).schema),
     })),
   );
 }
@@ -59,13 +61,14 @@ export function llmProfiles(config: Config, llm: LlmConfig): Profile[] {
   return configProfiles(llm.profiles, basename(config.file));
 }
 
-/** The model of a config's schemas, as every target sees it. */
-export function configModel(config: Config): Model {
+/** The schemas of a config and their model, as every target sees it. */
+export function configModel(config: Config): { schemas: SchemaSet; model: Model } {
   const schemas = loadSchemas(config.schemas, config.idBase === undefined ? {} : { idBase: config.idBase });
-  return buildModel(schemas, {
+  const model = buildModel(schemas, {
     ...(config.ids === undefined ? {} : { ids: config.ids }),
     validation: config.validation,
   });
+  return { schemas, model };
 }
 
 /**
@@ -80,7 +83,7 @@ export function llmProjection(
   path: (p: string) => string,
 ): Projection {
   const profile = namedProfile(config, profileName, path);
-  const model = configModel(config);
+  const { schemas, model } = configModel(config);
   const types = projectedTypes(model).map((d) => d.name);
   if (!types.includes(type)) {
     const some = types.slice(0, 8).join(", ");
@@ -89,5 +92,5 @@ export function llmProjection(
         `entry as the generated code names it, like ${some}${types.length > 8 ? ", ..." : ""}`,
     );
   }
-  return projectType(model, type, profile);
+  return projectType(model, type, profile, schemas);
 }

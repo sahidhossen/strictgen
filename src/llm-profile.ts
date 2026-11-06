@@ -4,6 +4,7 @@
  * them. A profile file a config names by its path replaces the built in profile of its name.
  */
 import { existsSync, readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { Config, LlmProfileRef } from "./config.js";
@@ -317,10 +318,24 @@ export function configProfiles(refs: readonly LlmProfileRef[], configFile: strin
 export function namedProfile(config: Config, name: string, path: (p: string) => string): Profile {
   if (name.endsWith(".json")) return loadProfile(path(name), name);
   for (const ref of config.llm?.profiles ?? []) {
-    if ("file" in ref) {
-      const profile = loadProfile(ref.file, ref.shown);
-      if (profile.name === name) return profile;
-    }
+    if ("file" in ref && couldName(ref.file, name)) return loadProfile(ref.file, ref.shown);
   }
   return builtinProfile(name, "--profile");
+}
+
+/**
+ * True when the profile file at `path` could be the profile `name`: its `name` field says so, or,
+ * when the file can't be read as a JSON object with a string name, its file name does. So a
+ * broken file doesn't stop the printing of another profile, while generate still checks them all.
+ */
+function couldName(path: string, name: string): boolean {
+  let value: unknown;
+  try {
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    value = undefined;
+  }
+  const written =
+    typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Raw).name : undefined;
+  return typeof written === "string" ? written === name : basename(path) === `${name}.json`;
 }
