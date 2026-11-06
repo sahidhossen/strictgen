@@ -31,7 +31,7 @@ Pick typify for a Rust-only project, for broad JSON Schema support, or when you 
 
 [json-schema-to-typescript](https://github.com/bcherny/json-schema-to-typescript) compiles JSON Schema to TypeScript declarations: types only, no run time checks. Its `additionalProperties` option defaults to `true` for a schema that doesn't set it, so open objects get an index signature. Its schema model is draft 4, with most of drafts 6 and 7, and a list of 2019-09 and 2020-12 keywords it ignores.
 
-Pick it when you need types for a large or loose schema and validate data with a validator such as [Ajv](https://ajv.js.org), which supports drafts up to 2020-12. strictgen differs in generating the decoder too, so the type and the check can't drift, and in failing generation on most keywords it can't check rather than ignoring them. Two object keywords are still read without being checked, and will fail generation too ([schemas.md](schemas.md#not-checked-yet)).
+Pick it when you need types for a large or loose schema and validate data with a validator such as [Ajv](https://ajv.js.org), which supports drafts up to 2020-12. strictgen differs in generating the decoder too, so the type and the check can't drift, and in failing generation on keywords it can't check rather than ignoring them.
 
 ## go-jsonschema
 
@@ -60,7 +60,7 @@ Pick BAML when you want the whole LLM workflow in one tool, and when getting a u
 ## Where strictgen differs
 
 - **Proven agreement.** The [conformance suite](../conformance) runs every case through Rust, Go and TypeScript, in both read modes, through the public entry points and the LLM decoders, and fails on any difference in the result, the error, the unknown keys or the bytes written again. A differential fuzzer runs random payloads and near misses through the same decoders on every pull request, and a longer run every night
-- **No silent drops.** An unknown key fails the decode, or is reported in `report` mode. A keyword strictgen can't check the same way in every language fails generation instead of being ignored, with one known gap that is being closed ([schemas.md](schemas.md#not-checked-yet))
+- **No silent drops.** An unknown key fails the decode, or is reported in `report` mode. A keyword strictgen can't check the same way in every language fails generation instead of being ignored
 - **Breaking checks.** [`strictgen breaking`](breaking-changes.md) compares two versions of the schemas and says who each change breaks: strict consumers, all consumers or producers
 - **LLM profiles.** The same schema becomes the subset each provider accepts ([llm.md](llm.md)), and the decoders check what the provider couldn't
 

@@ -7,7 +7,7 @@ import { HEADER } from "./common.js";
 import { emitRust } from "./emit-rust.js";
 import { emitTypeScript } from "./emit-ts.js";
 import type { Decl, Model } from "./model.js";
-import type { Json, JsonObject } from "./schema.js";
+import type { JsonObject } from "./schema.js";
 import { CodegenError, schemaSet } from "./schema.js";
 
 const BASE = "https://example.com/schemas/v1/";
@@ -364,21 +364,6 @@ describe("exactly-one oneOf of required keys", () => {
       hint: 'add "additionalProperties": false',
     });
   });
-
-  it("allows an at least one anyOf, a rule the types don't carry", () => {
-    const rule = build(
-      defs({
-        flagRule: {
-          type: "object",
-          properties: { if: { type: "string" }, rollout: { type: "integer" } },
-          anyOf: [{ required: ["if"] }, { required: ["rollout"] }],
-          unevaluatedProperties: false,
-        },
-      }),
-    );
-    expect(find(rule, "FlagRule")).toMatchObject({ kind: "struct" });
-    expect(rustOf(rule)).toContain("    pub r#if: Option<String>,\n");
-  });
 });
 
 describe("maps", () => {
@@ -444,6 +429,22 @@ describe("maps", () => {
     expect(rust).toContain("    pub rest: BTreeMap<CurrencyCode, String>,");
     expect(rust).toContain("            rest: object.rest()?,\n");
     expect(tsOf(priced)).toContain("  default: string;\n  [key: string]: string;\n");
+  });
+
+  it.each([
+    ["an unknown keyword", { foo: 1 }, "lib.json#/$defs/prices/propertyNames/anyOf/0/foo"],
+    ["a constraint", { maxLength: 2 }, "lib.json#/$defs/prices/propertyNames/anyOf/0/maxLength"],
+    ["a condition", { if: {} }, "lib.json#/$defs/prices/propertyNames/anyOf/0/if"],
+  ])("reject %s beside a named key's const", (_, extra, path) => {
+    const bad = defs({
+      prices: {
+        type: "object",
+        propertyNames: { anyOf: [{ const: "default", ...extra }, { type: "string" }] },
+        properties: { default: { type: "string" } },
+        additionalProperties: { type: "string" },
+      },
+    });
+    expect(failure(bad).path).toBe(path);
   });
 });
 
@@ -550,108 +551,179 @@ describe("string families", () => {
   });
 });
 
-describe("if/then", () => {
-  const files = {
-    commands: schema("commands", {
-      title: "Batch",
-      type: "object",
-      properties: {
-        kind: { description: "Kind.", enum: ["order", "user"] },
-        commands: { description: "Commands.", type: "array" },
+describe("conditions no decoder checks", () => {
+  const contact = (extra: JsonObject): Record<string, JsonObject> =>
+    defs({
+      contact: {
+        type: "object",
+        properties: { email: { type: "string" }, phone: { type: "string" } },
+        unevaluatedProperties: false,
+        ...extra,
       },
-      required: ["kind", "commands"],
-      unevaluatedProperties: false,
-      allOf: [
-        {
-          if: { properties: { kind: { const: "order" } }, required: ["kind"] },
-          then: { properties: { commands: { items: { $ref: "#/$defs/orderCommand" } } } },
-        },
-        {
-          if: { properties: { kind: { const: "user" } }, required: ["kind"] },
-          then: { properties: { commands: { items: { $ref: "#/$defs/userCommand" } } } },
-        },
-      ],
-      $defs: {
-        orderCommand: { description: "Order commands.", oneOf: [{ $ref: "#/$defs/createOrder" }] },
-        userCommand: { description: "User commands.", oneOf: [{ $ref: "#/$defs/renameUser" }] },
-        createOrder: {
-          description: "Insert.",
-          type: "object",
-          properties: { op: { description: "Op.", const: "createOrder" } },
-          required: ["op"],
-          unevaluatedProperties: false,
-        },
-        renameUser: {
-          description: "Rename a user.",
-          type: "object",
-          properties: { op: { description: "Op.", const: "renameUser" } },
-          required: ["op"],
-          unevaluatedProperties: false,
-        },
-      },
-    }),
+    });
+  const atLeastOne = { anyOf: [{ required: ["email"] }, { required: ["phone"] }] };
+  const condition = {
+    if: { properties: { email: { const: "" } }, required: ["email"] },
+    then: { required: ["phone"] },
   };
 
-  it("lift array items only a then branch declares into one tagged union", () => {
-    const model = build(files);
-    const batch = find(model, "Batch");
-    expect(batch.kind === "struct" && batch.fields[1]?.type).toEqual({
-      kind: "array",
-      items: { kind: "ref", name: "BatchCommandsItem" },
-    });
-    expect(find(model, "BatchCommandsItem")).toMatchObject({
-      kind: "tagged",
-      tag: "op",
-      variants: [
-        { value: "createOrder", type: "CreateOrder" },
-        { value: "renameUser", type: "RenameUser" },
-      ],
+  it("reject an at least one anyOf beside properties, pointing to oneOf or required", () => {
+    expect(failure(contact(atLeastOne))).toMatchObject({
+      rule: "misplaced-keyword",
+      path: "lib.json#/$defs/contact/anyOf",
+      reason: "anyOf beside properties is not checked by the decoders",
+      hint: 'for exactly one of the keys, use "oneOf" with the same branches; for all of them, list them in "required"',
     });
   });
 
-  /** The commands schema with a shipment batch whose then branch allows `items`. */
-  function withShipmentBatch(items: JsonObject): Record<string, JsonObject> {
-    const root = structuredClone(files.commands) as Record<string, Json>;
-    (root.properties as Record<string, Json>).kind = {
-      description: "Kind.",
-      enum: ["order", "shipment", "user"],
-    };
-    (root.allOf as JsonObject[]).push({
-      if: { properties: { kind: { const: "shipment" } }, required: ["kind"] },
-      then: { properties: { commands: { items } } },
-    });
-    return { commands: root };
-  }
-
-  it("make one variant of a def that two then branches both allow", () => {
-    const model = build(withShipmentBatch({ oneOf: [{ $ref: "#/$defs/createOrder" }] }));
-    expect(find(model, "BatchCommandsItem")).toMatchObject({
-      kind: "tagged",
-      variants: [
-        { value: "createOrder", type: "CreateOrder" },
-        { value: "renameUser", type: "RenameUser" },
-      ],
+  it("reject an at least one anyOf in an allOf part", () => {
+    expect(failure(contact({ allOf: [atLeastOne] }))).toMatchObject({
+      rule: "misplaced-keyword",
+      path: "lib.json#/$defs/contact/allOf/0/anyOf",
     });
   });
 
-  it("reject a def that one then branch repeats, even one an earlier branch allows", () => {
-    const insert = { $ref: "#/$defs/createOrder" };
-    expect(failure(withShipmentBatch({ oneOf: [insert, insert] })).message).toContain(
-      "repeat its values",
-    );
+  it("reject if, then and else, pointing to a tagged union", () => {
+    expect(failure(contact(condition))).toMatchObject({
+      rule: "unsupported-keyword",
+      path: "lib.json#/$defs/contact/if",
+      reason: "unsupported keyword if: no decoder checks if, then or else",
+      hint: 'for a shape per case, use a tagged union: a "oneOf" of closed objects, each with a required const tag property and the keys of its case',
+    });
   });
 
-  it("reject a conditional property the object doesn't declare", () => {
-    const bad = defs({
-      thing: {
+  it.each([
+    ["an if in an allOf part", { allOf: [condition] }, "lib.json#/$defs/contact/allOf/0/if"],
+    ["a then without if", { then: { required: ["phone"] } }, "lib.json#/$defs/contact/then"],
+    ["an else without if", { else: { required: ["phone"] } }, "lib.json#/$defs/contact/else"],
+  ])("reject %s", (_, extra, path) => {
+    expect(failure(contact(extra))).toMatchObject({ rule: "unsupported-keyword", path });
+  });
+
+  it("reject a condition anywhere, not only beside properties", () => {
+    const union = defs({ x: { oneOf: [{ type: "string", if: { const: "a" } }, { type: "integer" }] } });
+    expect(failure(union).path).toBe("lib.json#/$defs/x/oneOf/0/if");
+    const items = defs({ x: { type: "array", items: { type: "string", else: { const: "a" } } } });
+    expect(failure(items).path).toBe("lib.json#/$defs/x/items/else");
+  });
+
+  it("reject then branches that give array items per case, which no decoder ties to the case", () => {
+    const batch = defs({
+      batch: {
         type: "object",
-        properties: { kind: { type: "string" } },
-        if: { properties: { kind: { const: "a" } } },
-        then: { properties: { extra: true }, required: ["extra"] },
+        properties: { kind: { enum: ["order", "user"] }, commands: { type: "array" } },
+        required: ["kind", "commands"],
+        unevaluatedProperties: false,
+        allOf: [
+          {
+            if: { properties: { kind: { const: "order" } }, required: ["kind"] },
+            then: { properties: { commands: { items: { type: "string" } } } },
+          },
+        ],
+      },
+    });
+    expect(failure(batch)).toMatchObject({
+      rule: "unsupported-keyword",
+      path: "lib.json#/$defs/batch/allOf/0/if",
+    });
+  });
+});
+
+describe("allOf parts and bases close nothing on their own", () => {
+  const order = (part: JsonObject, extra: JsonObject = {}): Record<string, JsonObject> =>
+    defs({
+      ...extra,
+      order: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        allOf: [part],
         unevaluatedProperties: false,
       },
     });
-    expect(failure(bad).path).toBe("lib.json#/$defs/thing/then/properties/extra");
+
+  it.each([false, true, { type: "string" }])(
+    "reject unevaluatedProperties %j in an allOf part",
+    (value) => {
+      expect(
+        failure(order({ properties: { note: { type: "string" } }, unevaluatedProperties: value })),
+      ).toMatchObject({
+        rule: "misplaced-keyword",
+        path: "lib.json#/$defs/order/allOf/0/unevaluatedProperties",
+        hint: 'remove it, and close the object that holds the allOf with "unevaluatedProperties": false',
+      });
+    },
+  );
+
+  it("reject an unevaluatedProperties schema in an allOf base", () => {
+    const base = { type: "object", properties: { note: { type: "string" } }, unevaluatedProperties: { type: "string" } };
+    expect(failure(order({ $ref: "#/$defs/base" }, { base }))).toMatchObject({
+      rule: "misplaced-keyword",
+      path: "lib.json#/$defs/base/unevaluatedProperties",
+    });
+  });
+
+  it("keep a closed base, which is a type of its own too", () => {
+    const base = { type: "object", properties: { note: { type: "string" } }, unevaluatedProperties: false };
+    expect(build(order({ $ref: "#/$defs/base" }, { base })).decls.map((d) => d.name)).toEqual([
+      "Base",
+      "Order",
+    ]);
+  });
+});
+
+describe("type beside $ref", () => {
+  const ref = (target: JsonObject, type: string): Record<string, JsonObject> =>
+    defs({ target, x: { $ref: "#/$defs/target", type } });
+
+  it.each([
+    [{ type: "string" }, "string"],
+    [{ type: "integer" }, "number"],
+    [{ enum: ["a", "b"] }, "string"],
+    [{ const: true }, "boolean"],
+    [{ const: 3 }, "integer"],
+  ])("allow %j with type %s, which says nothing new", (target, type) => {
+    expect(find(build(ref(target, type)), "X")).toMatchObject({ kind: "alias" });
+  });
+
+  it.each([
+    [{ type: "string" }, "object"],
+    [{ type: "number" }, "integer"],
+    [{ enum: ["a"] }, "integer"],
+    [{ oneOf: [{ type: "string" }, { type: "integer" }] }, "string"],
+  ])("reject %j with type %s, which no decoder would check", (target, type) => {
+    expect(failure(ref(target, type))).toMatchObject({
+      rule: "type-mismatch",
+      path: "lib.json#/$defs/x/type",
+      hint: 'remove "type", the def the $ref names gives the type',
+    });
+  });
+});
+
+describe("keys forbidden beside $ref", () => {
+  const card = { type: "object", properties: { last4: { type: "string" } }, additionalProperties: false };
+  const wire = { type: "object", properties: { iban: { type: "string" } }, additionalProperties: false };
+  const forbid = (target: JsonObject, extra: JsonObject = {}): Record<string, JsonObject> =>
+    defs({ ...extra, target, x: { $ref: "#/$defs/target", properties: { iban: false } } });
+
+  it.each([
+    ["a closed object without the key", card, {}],
+    ["a union none of whose branches has the key", { oneOf: [{ $ref: "#/$defs/card" }, { type: "string" }] }, { card }],
+    ["a string", { type: "string" }, {}],
+  ])("allow %s, which already rejects it", (_, target, extra) => {
+    expect(find(build(forbid(target, extra)), "X")).toMatchObject({ kind: "alias" });
+  });
+
+  it.each([
+    ["a closed object with the key", wire, {}],
+    ["a union with a branch that has the key", { oneOf: [{ $ref: "#/$defs/card" }, { $ref: "#/$defs/wire" }] }, { card, wire }],
+    ["a map", { type: "object", additionalProperties: { type: "string" } }, {}],
+    ["any JSON value", {}, {}],
+  ])("reject %s, since no decoder would check it", (_, target, extra) => {
+    expect(failure(forbid(target, extra))).toMatchObject({
+      rule: "ref-siblings",
+      path: "lib.json#/$defs/x/properties/iban",
+      hint: "make a def without iban, and name that one",
+    });
   });
 });
 
@@ -763,7 +835,7 @@ describe("unsupported constructs", () => {
         anyOf: [{ type: "object" }],
         unevaluatedProperties: false,
       },
-      "lib.json#/$defs/x/anyOf/0/type",
+      "lib.json#/$defs/x/anyOf",
     ],
     [
       "an integer map key",

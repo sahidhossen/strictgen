@@ -66,9 +66,6 @@ const STRUCTURAL = new Set([
   "anyOf",
   "allOf",
   "not",
-  "if",
-  "then",
-  "else",
   "properties",
   "required",
   "additionalProperties",
@@ -80,6 +77,13 @@ const STRUCTURAL = new Set([
 const TYPES = new Set(["object", "array", "string", "integer", "number", "boolean"]);
 /** The formats decoders check. They stay strings, so they re-encode byte for byte. */
 const FORMATS: ReadonlySet<string> = new Set<Format>(["date-time", "date", "uuid"]);
+/**
+ * Keywords of a condition. No decoder checks one, so each fails generation rather than
+ * being read for the type and then ignored.
+ */
+const CONDITIONS: ReadonlySet<string> = new Set(["if", "then", "else"]);
+const CONDITION_HINT =
+  'for a shape per case, use a tagged union: a "oneOf" of closed objects, each with a required const tag property and the keys of its case';
 /** The hint for a type name that clashes or can't be used. */
 const RENAME = RENAME_TYPE;
 /** The hint for a type that contains itself through aliases. */
@@ -121,10 +125,6 @@ interface Ctx {
 interface Prop {
   readonly schema: JsonObject;
   readonly loc: Loc;
-}
-
-interface Conditional {
-  readonly branches: readonly { readonly schema: JsonObject; readonly loc: Loc }[];
 }
 
 interface Branch {
@@ -314,6 +314,14 @@ function schemaObject(value: Json | undefined, loc: Loc): JsonObject {
 
 function checkKeywords(schema: JsonObject, loc: Loc, root: boolean): void {
   for (const key of Object.keys(schema)) {
+    if (CONDITIONS.has(key)) {
+      fail(
+        at(loc, key),
+        "unsupported-keyword",
+        `unsupported keyword ${key}: no decoder checks if, then or else`,
+        CONDITION_HINT,
+      );
+    }
     const known =
       ANNOTATIONS.has(key) ||
       CONSTRAINTS.has(key) ||
@@ -421,7 +429,7 @@ function typeOf(
       noConstraints(schema, loc, "to a boolean");
       return { kind: schema.type };
     case "array":
-      return arrayType(ctx, schema, loc, name, undefined);
+      return arrayType(ctx, schema, loc, name);
     case "object":
       return objectType(ctx, schema, loc, name, source);
     default:
@@ -469,7 +477,58 @@ function refType(ctx: Ctx, schema: JsonObject, loc: Loc): TypeExpr {
       'use it in "allOf" beside "unevaluatedProperties": false, or close it',
     );
   }
+  if (schema.properties !== undefined) {
+    // A key forbidden beside $ref holds only when the def already rejects it: no decoder checks it.
+    for (const name of Object.keys(schemaObject(schema.properties, at(loc, "properties")))) {
+      if (holdsKey(ctx, schema, loc, name, new Set()))
+        fail(
+          at(loc, "properties", name),
+          "ref-siblings",
+          `the def ${schema.$ref} can hold the key ${name}, and no decoder checks a key forbidden beside $ref`,
+          `make a def without ${name}, and name that one`,
+        );
+    }
+  }
+  if (schema.type !== undefined) {
+    // A type beside $ref only holds when it is the target's own, else no decoder checks it.
+    const target = jsonTypeOf(deref(ctx, schema, loc).schema);
+    if (target !== schema.type && !(schema.type === "number" && target === "integer"))
+      fail(
+        at(loc, "type"),
+        "type-mismatch",
+        `type ${String(schema.type)} beside $ref doesn't match the type of the def it names`,
+        'remove "type", the def the $ref names gives the type',
+      );
+  }
   return { kind: "ref", name: nameOf(ctx, key) };
+}
+
+/** True when a value of the schema can be an object with the key: an open object, a map, any value. */
+function holdsKey(ctx: Ctx, value: Json, loc: Loc, key: string, seen: Set<string>): boolean {
+  const target = deref(ctx, value, loc);
+  const s = target.schema;
+  const place = where(target.loc);
+  if (seen.has(place)) return false;
+  seen.add(place);
+  if (s.oneOf !== undefined && s.type === undefined)
+    return arrayAt(s.oneOf, at(target.loc, "oneOf")).some((branch, i) =>
+      holdsKey(ctx, branch, at(target.loc, "oneOf", i), key, seen),
+    );
+  if (s.type !== "object") return jsonTypeOf(s) === undefined;
+  if (s.additionalProperties !== false && s.unevaluatedProperties !== false) return true;
+  const props = new Map<string, Prop>();
+  collect(ctx, s, target.loc, props, new Set());
+  return props.has(key);
+}
+
+/** The JSON type every value of a schema has, when the schema says it, like "string" for an enum. */
+function jsonTypeOf(schema: JsonObject): string | undefined {
+  if (typeof schema.type === "string") return schema.type;
+  if (schema.enum !== undefined) return "string";
+  const value = schema.const;
+  if (typeof value === "string" || typeof value === "boolean") return typeof value;
+  if (typeof value === "number" && Number.isInteger(value)) return "integer";
+  return undefined;
 }
 
 function constType(
@@ -543,7 +602,6 @@ function arrayType(
   schema: JsonObject,
   loc: Loc,
   name: string,
-  lifted: TypeExpr | undefined,
 ): TypeExpr {
   only(schema, loc, ["type", "items", "allOf"]);
   if (schema.allOf !== undefined) {
@@ -570,7 +628,6 @@ function arrayType(
         ...(schema.uniqueItems === true ? { uniqueItems: true as const } : {}),
       }
     : {};
-  if (lifted !== undefined) return { kind: "array", items: lifted, ...limits };
   if (schema.items === undefined)
     return fail(
       loc,
@@ -855,21 +912,17 @@ const STRUCT_KEYWORDS = [
   "required",
   "allOf",
   "oneOf",
-  "anyOf",
-  "if",
-  "then",
-  "else",
   "unevaluatedProperties",
   "additionalProperties",
   "propertyNames",
 ];
 
 function structDecl(ctx: Ctx, name: string, schema: JsonObject, loc: Loc, source?: Source): Decl {
+  noAnyOf(schema, loc);
   only(schema, loc, STRUCT_KEYWORDS);
   const props = new Map<string, Prop>();
   const required = new Set<string>();
-  const conditionals: Conditional[] = [];
-  collect(ctx, schema, loc, props, required, conditionals);
+  collect(ctx, schema, loc, props, required);
   const closed = checkClosing(schema, loc);
   const rest = isObject(schema.additionalProperties)
     ? restOf(ctx, schema, loc, name, props)
@@ -901,8 +954,7 @@ function structDecl(ctx: Ctx, name: string, schema: JsonObject, loc: Loc, source
         `add ${key} to "properties"`,
       );
   }
-  const fields = fieldsOf(ctx, name, props, required, liftItems(ctx, name, conditionals, props));
-  if (schema.anyOf !== undefined) requiredOnly(schema.anyOf, at(loc, "anyOf"), props); // An at least one rule.
+  const fields = fieldsOf(ctx, name, props, required);
   const base = { name, doc: docOf(schema), path: where(loc), schema: ctx.file, source };
   if (schema.oneOf === undefined) {
     return { ...base, kind: "struct", fields, closed, forbidden: [], rest };
@@ -913,6 +965,20 @@ function structDecl(ctx: Ctx, name: string, schema: JsonObject, loc: Loc, source
     { ...base, kind: "struct", fields, closed, forbidden: [], rest },
     choices,
     loc,
+  );
+}
+
+/**
+ * An object's anyOf, like "at least one of email or phone", is a condition no decoder checks,
+ * so it fails generation.
+ */
+function noAnyOf(schema: JsonObject, loc: Loc): void {
+  if (schema.anyOf === undefined) return;
+  fail(
+    at(loc, "anyOf"),
+    "misplaced-keyword",
+    "anyOf beside properties is not checked by the decoders",
+    'for exactly one of the keys, use "oneOf" with the same branches; for all of them, list them in "required"',
   );
 }
 
@@ -951,15 +1017,9 @@ function fieldsOf(
   name: string,
   props: ReadonlyMap<string, Prop>,
   required: ReadonlySet<string>,
-  lifted: ReadonlyMap<string, TypeExpr>,
 ): Field[] {
   return [...props].map(([key, prop]) => {
-    const fieldName = `${name}${pascal(key)}`;
-    const liftedItems = lifted.get(key);
-    const type =
-      liftedItems === undefined
-        ? typeOf(ctx, prop.schema, prop.loc, fieldName)
-        : arrayType(ctx, prop.schema, prop.loc, fieldName, liftedItems);
+    const type = typeOf(ctx, prop.schema, prop.loc, `${name}${pascal(key)}`);
     return { name: key, doc: docOf(prop.schema), type, required: required.has(key), boxed: false };
   });
 }
@@ -999,16 +1059,13 @@ function collect(
   loc: Loc,
   props: Map<string, Prop>,
   required: Set<string>,
-  conditionals: Conditional[],
 ): void {
   if (schema.allOf !== undefined) {
     arrayAt(schema.allOf, at(loc, "allOf")).forEach((entry, i) => {
       const entryLoc = at(loc, "allOf", i);
       const fragment = schemaObject(entry, entryLoc);
       checkKeywords(fragment, entryLoc, false);
-      if (fragment.if !== undefined) {
-        conditionals.push(conditional(fragment, entryLoc));
-      } else if (fragment.$ref !== undefined) {
+      if (fragment.$ref !== undefined) {
         only(fragment, entryLoc, ["$ref"]);
         if (typeof fragment.$ref !== "string")
           fail(at(entryLoc, "$ref"), "invalid-schema", "$ref must be a string");
@@ -1017,14 +1074,27 @@ function collect(
         if (target.type !== "object")
           fail(entryLoc, "type-mismatch", "an allOf base must be an object");
         checkFragment(target, keyLoc(key));
-        collect(ctx, target, keyLoc(key), props, required, conditionals);
+        if (target.unevaluatedProperties !== undefined && target.unevaluatedProperties !== false)
+          fail(
+            at(keyLoc(key), "unevaluatedProperties"),
+            "misplaced-keyword",
+            "unevaluatedProperties other than false in an allOf base is not checked by the decoders",
+            'remove it, and close the object that names the base with "unevaluatedProperties": false',
+          );
+        collect(ctx, target, keyLoc(key), props, required);
       } else {
+        if (fragment.unevaluatedProperties !== undefined)
+          fail(
+            at(entryLoc, "unevaluatedProperties"),
+            "misplaced-keyword",
+            "unevaluatedProperties in an allOf part is not checked by the decoders",
+            'remove it, and close the object that holds the allOf with "unevaluatedProperties": false',
+          );
         checkFragment(fragment, entryLoc);
-        collect(ctx, fragment, entryLoc, props, required, conditionals);
+        collect(ctx, fragment, entryLoc, props, required);
       }
     });
   }
-  if (schema.if !== undefined) conditionals.push(conditional(schema, loc));
   if (schema.properties !== undefined) {
     const own = schemaObject(schema.properties, at(loc, "properties"));
     for (const [key, value] of Object.entries(own)) {
@@ -1063,16 +1133,8 @@ function collect(
 }
 
 function checkFragment(fragment: JsonObject, loc: Loc): void {
-  only(fragment, loc, [
-    "type",
-    "properties",
-    "required",
-    "allOf",
-    "if",
-    "then",
-    "else",
-    "unevaluatedProperties",
-  ]);
+  noAnyOf(fragment, loc);
+  only(fragment, loc, ["type", "properties", "required", "allOf", "unevaluatedProperties"]);
   noConstraints(fragment, loc, "to an allOf part of an object", (key) =>
     MAP_CONSTRAINTS.includes(key)
       ? 'list the keys the object needs in "required" instead'
@@ -1080,90 +1142,6 @@ function checkFragment(fragment: JsonObject, loc: Loc): void {
   );
   if (fragment.type !== undefined && fragment.type !== "object")
     fail(at(loc, "type"), "type-mismatch", "expected type object");
-}
-
-function conditional(schema: JsonObject, loc: Loc): Conditional {
-  only(schema, loc, [
-    "type",
-    "if",
-    "then",
-    "else",
-    "properties",
-    "required",
-    "unevaluatedProperties",
-    "allOf",
-  ]);
-  noConstraints(schema, loc, "beside if", "put it on the property it limits");
-  const branches: { schema: JsonObject; loc: Loc }[] = [];
-  for (const key of ["then", "else"] as const) {
-    if (schema[key] !== undefined) {
-      const branch = schemaObject(schema[key], at(loc, key));
-      noConstraints(branch, at(loc, key), `in ${key}`, "put it on the property it limits");
-      branches.push({ schema: branch, loc: at(loc, key) });
-    }
-  }
-  return { branches };
-}
-
-/**
- * Checks if/then properties exist on the object, and lifts array items that
- * only a then branch declares, like the commands of a batch per target kind.
- */
-function liftItems(
-  ctx: Ctx,
-  name: string,
-  conditionals: readonly Conditional[],
-  props: ReadonlyMap<string, Prop>,
-): Map<string, TypeExpr> {
-  const items = new Map<string, Branch[]>();
-  for (const { branches } of conditionals) {
-    for (const branch of branches) {
-      const own = branch.schema.properties;
-      if (own === undefined) continue;
-      for (const [key, value] of Object.entries(schemaObject(own, at(branch.loc, "properties")))) {
-        const prop = props.get(key);
-        const propLoc = at(branch.loc, "properties", key);
-        if (prop === undefined)
-          fail(
-            propLoc,
-            "undeclared-key",
-            `conditional property ${key} is not declared on the object`,
-            `add ${key} to the object's "properties"`,
-          );
-        if (isObject(value)) {
-          noConstraints(value, propLoc, "in a conditional property", "declare it on the object's property");
-        }
-        if (
-          isObject(value) &&
-          value.items !== undefined &&
-          prop.schema.type === "array" &&
-          prop.schema.items === undefined
-        ) {
-          const list = items.get(key) ?? [];
-          list.push({ schema: value.items, loc: at(propLoc, "items") });
-          items.set(key, list);
-        }
-      }
-    }
-  }
-  const lifted = new Map<string, TypeExpr>();
-  for (const [key, branches] of items) {
-    const itemName = `${name}${pascal(key)}Item`;
-    const [first] = branches;
-    if (branches.length === 1 && first !== undefined) {
-      lifted.set(key, typeOf(ctx, first.schema, first.loc, itemName));
-      continue;
-    }
-    const loc = props.get(key)?.loc ?? { file: "", pointer: "" };
-    const doc = `One item of ${key}.`;
-    lifted.set(
-      key,
-      hoist(ctx, itemName, loc, () =>
-        unionDecl(ctx, itemName, branches, loc, doc, undefined, true),
-      ),
-    );
-  }
-  return lifted;
 }
 
 /** Reads branches that only require keys, like `{ "properties": { "href": true }, "required": ["href"] }`. */
@@ -1227,6 +1205,9 @@ function restOf(
   const others = arrayAt(keySchema.anyOf, at(namesLoc, "anyOf")).filter((branch, i) => {
     const branchLoc = at(namesLoc, "anyOf", i);
     if (!isObject(branch) || typeof branch.const !== "string") return true;
+    checkKeywords(branch, branchLoc, false);
+    only(branch, branchLoc, ["const"]);
+    noConstraints(branch, branchLoc, "beside const", "remove it, the const is the only value");
     if (!props.has(branch.const))
       fail(
         branchLoc,
@@ -1254,11 +1235,9 @@ function unionDecl(
   loc: Loc,
   doc: string,
   source?: Source,
-  shared = false,
 ): Decl {
   const base = { name, doc, path: where(loc), schema: ctx.file, source };
-  const perBranch = branches.map((b) => leavesOf(ctx, b));
-  const leaves = shared ? distinctLeaves(ctx, perBranch) : perBranch.flat();
+  const leaves = branches.flatMap((b) => leavesOf(ctx, b));
   const tag = tagOf(ctx, leaves, loc);
   if (tag !== undefined) {
     const variants: TaggedVariant[] = leaves.map((leaf, i) => {
@@ -1329,26 +1308,6 @@ function leavesOf(ctx: Ctx, branch: Branch): Branch[] {
   );
 }
 
-/**
- * The leaves of `then` branches that list the same item union, like the commands an
- * order batch and a shipment batch share: a def an earlier branch already allows
- * gives no second variant. A def one branch lists twice is kept every time, so
- * the tag check still rejects it as the schema mistake it is.
- */
-function distinctLeaves(ctx: Ctx, perBranch: readonly (readonly Branch[])[]): Branch[] {
-  const earlier = new Set<string>();
-  return perBranch.flatMap((leaves) => {
-    const keys = leaves.map((leaf) => where(deref(ctx, leaf.schema, leaf.loc).loc));
-    const repeated = (key: string): boolean => keys.indexOf(key) !== keys.lastIndexOf(key);
-    const kept = leaves.filter((_, i) => {
-      const key = keys[i] ?? "";
-      return !earlier.has(key) || repeated(key);
-    });
-    for (const key of keys) earlier.add(key);
-    return kept;
-  });
-}
-
 /** The `const` tag every leaf shares, with distinct values, if there is one. */
 function tagOf(
   ctx: Ctx,
@@ -1363,7 +1322,7 @@ function tagOf(
       return undefined;
     const props = new Map<string, Prop>();
     const required = new Set<string>();
-    collect(ctx, s, target.loc, props, required, []);
+    collect(ctx, s, target.loc, props, required);
     const found = new Map<string, string>();
     for (const [key, prop] of props) {
       if (typeof prop.schema.const === "string" && required.has(key))
