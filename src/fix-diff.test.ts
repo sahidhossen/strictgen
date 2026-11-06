@@ -82,6 +82,7 @@ describe("unifiedDiff", () => {
     expect(diff.filter((l) => /^[-+][^-+]/.test(l))).toEqual(["+new", "-line 1500"]);
   });
 
+  // Runs patch many times (about 4s alone), so it gets more than the 5s default on a busy suite.
   it("gives patches that a patch tool applies, for many random edits", () => {
     // A seeded generator, so a failure repeats.
     let seed = 7;
@@ -120,5 +121,5 @@ describe("unifiedDiff", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
-  });
+  }, 30_000);
 });

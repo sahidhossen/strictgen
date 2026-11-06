@@ -645,7 +645,8 @@ function gitIn(cwd: string, ...args: string[]): void {
 const CONFIG = { schemas: "schemas", targets: { typescript: { out: "ts" } } };
 const REPORT_CONFIG = { schemas: "schemas", targets: { typescript: { out: "ts", read: "report" } } };
 
-describe("strictgen breaking", () => {
+// These tests run git many times, so they get more than the 5s default when the suite is busy.
+describe("strictgen breaking", { timeout: 30_000 }, () => {
   const before = order({ total: { type: "integer" } }, ["total"]);
   const after = order({ total: { type: "integer" }, note: { type: "string" } }, ["total"]);
 
