@@ -448,6 +448,15 @@ describe("payload generator fails closed", () => {
     expect(() => new PayloadGenerator(model).valid("Pair")).toThrow("can't find 3 unique items");
   });
 
+  it("misses a multipleOf next to the value and on both sides of zero, where the range takes them", () => {
+    const model = lib({ step: { type: "integer", minimum: -50, maximum: 50, multipleOf: 5 } });
+    const found = (base: number): number[] => new PayloadGenerator(model).nearMisses("Step", base).filter((m) => m.code === "not_multiple_of").map((m) => m.payload as number);
+    expect(found(20)).toEqual([21, -1, 1, -4, -6]);
+    // Only what the range takes: none below zero for a range that starts at 0.
+    const positive = lib({ step: { type: "integer", minimum: 0, maximum: 50, multipleOf: 5 } });
+    expect(new PayloadGenerator(positive).nearMisses("Step", 50).filter((m) => m.code === "not_multiple_of").map((m) => m.payload)).toEqual([49, 1]);
+  });
+
   it("fails for an integer range with no multiple in it", () => {
     const model = lib({ odd: { type: "integer", minimum: 1, maximum: 5, multipleOf: 10 } });
     expect(() => new PayloadGenerator(model).valid("Odd")).toThrow("no multiple of 10 is within its bounds");

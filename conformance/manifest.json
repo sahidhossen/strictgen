@@ -29,7 +29,7 @@
     "Marks": {"valid": 3, "invalid": 2},
     "Negation": {"valid": 1, "invalid": 1},
     "Note": {"valid": 1, "invalid": 2},
-    "Order": {"valid": 11, "invalid": 41},
+    "Order": {"valid": 12, "invalid": 42},
     "OrderId": {"valid": 2, "invalid": 2},
     "Parcel": {"valid": 4, "invalid": 0},
     "Part": {"valid": 1, "invalid": 1},

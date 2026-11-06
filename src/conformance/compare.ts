@@ -152,7 +152,8 @@ export function compareRun(run: Run, marks: readonly Mark[]): Disagreement[] {
     row(field, Object.fromEntries(values));
   };
   // LLM decoders are strict in every read mode.
-  const want = run.variant.decoder === "llm" ? run.case.strict : expected(run.case, run.variant.mode);
+  const labelMode = run.variant.decoder === "llm" ? "strict" : run.variant.mode;
+  const want = (run.case.unlabelled ?? []).includes(labelMode) ? undefined : expected(run.case, labelMode);
 
   // A decoder that threw or panicked is a bug, even when every language crashed alike.
   for (const l of ran) {
@@ -162,24 +163,27 @@ export function compareRun(run: Run, marks: readonly Mark[]): Disagreement[] {
 
   // The cleanup step returns text, which must be exactly the vector's output in every language.
   if (run.variant.decoder === "cleanup") {
-    add("result", [...compared.map((l) => [l, result(l).accepted ? "accepted" : "rejected"] as const), ["expected", "accepted"]]);
+    add("result", [
+      ...compared.map((l) => [l, result(l).accepted ? "accepted" : "rejected"] as const),
+      ...(want === undefined ? [] : [["expected", "accepted"] as const]),
+    ]);
     add("cleaned", [
       ...compared.flatMap((l) => (result(l).accepted ? [[l, result(l).encoded ?? NONE] as const] : [])),
-      ["expected", run.case.cleaned ?? NONE],
+      ...(want === undefined ? [] : [["expected", run.case.cleaned ?? NONE] as const]),
     ]);
     return rows;
   }
 
   add("result", [
     ...compared.map((l) => [l, result(l).accepted ? "accepted" : "rejected"] as const),
-    ["expected", want.accepted ? "accepted" : "rejected"],
+    ...(want === undefined ? [] : [["expected", want.accepted ? "accepted" : "rejected"] as const]),
   ]);
 
   const rejecting = compared.filter((l) => !result(l).accepted);
   for (const field of ERROR_FIELDS) {
     add(field, [
       ...rejecting.map((l) => [l, result(l).error?.[field] ?? NONE] as const),
-      ...(!want.accepted && (field === "path" || field === "code") ? [["expected", want[field]] as const] : []),
+      ...(want !== undefined && !want.accepted && (field === "path" || field === "code") ? [["expected", want[field]] as const] : []),
     ]);
   }
 
@@ -196,12 +200,12 @@ export function compareRun(run: Run, marks: readonly Mark[]): Disagreement[] {
   const accepting = compared.filter((l) => result(l).accepted);
   add("unknown", [
     ...accepting.map((l) => [l, JSON.stringify(result(l).unknown)] as const),
-    ...(want.accepted ? [["expected", JSON.stringify(want.unknown)] as const] : []),
+    ...(want?.accepted === true ? [["expected", JSON.stringify(want.unknown)] as const] : []),
   ]);
   const before = rows.length;
   add("encoded", [
     ...accepting.map((l) => [l, canonicalEncoding(result(l))] as const),
-    ...(want.accepted ? [["expected", expectedEncoding(run.case, want)] as const] : []),
+    ...(want?.accepted === true ? [["expected", expectedEncoding(run.case, want)] as const] : []),
   ]);
 
   // Once the canonical bytes agree, the bytes as written must agree too, but for the spellings

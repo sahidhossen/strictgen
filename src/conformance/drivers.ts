@@ -1,15 +1,15 @@
 /**
  * Generates every language for the conformance schemas into a temporary folder, once per
  * generated package (a read mode, and the LLM map shapes the code reads, see `packages`), builds
- * one Rust and one Go driver binary over them, and runs requests through each: the binaries read
- * a batch over stdin, TypeScript runs in process. Every driver answers in the format of
- * `protocol.ts`.
+ * one Rust and one Go driver binary over them, and runs requests through each: every driver is a
+ * process that reads a batch over stdin, TypeScript a Node process running `ts-runner.ts`, so a
+ * timeout stops any of them. Every driver answers in the format of `protocol.ts`.
  */
 
 import { spawnSync } from "node:child_process";
 import { closeSync, copyFileSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 import ts from "typescript";
 
@@ -17,11 +17,13 @@ import type { Config } from "../config.js";
 import { parseConfig } from "../config.js";
 import { GO_FIXTURES } from "../emit-go.js";
 import { configModel } from "../examples.js";
-import { goLlmName, rustLlmName, tsLlmName } from "../llm-decoders.js";
+import { goLlmName, rustLlmName } from "../llm-decoders.js";
 import type { Decl, Model } from "../model.js";
 import { configTargets } from "../targets.js";
-import type { ErrorFields, Language, Maps, Mode, Request, Result } from "./protocol.js";
-import { CRASH, DriverError, MAPS, MODES, packageName, parseResult, requestLine } from "./protocol.js";
+import type { Language, Maps, Mode, Request, Result } from "./protocol.js";
+import { DriverError, MAPS, MODES, packageName, parseResult, requestLine } from "./protocol.js";
+import type { TsModule } from "./ts-runner.js";
+import { RUNNER_START, runRequest, RunnerError } from "./ts-runner.js";
 
 /** How long building one driver may take, a cold Rust build included. */
 export const BUILD_TIMEOUT = 15 * 60_000;
@@ -502,7 +504,7 @@ export interface Driver {
 }
 
 /** Runs a binary driver over a batch: requests from a file on stdin, results to a file on stdout. */
-export function binaryDriver(language: Language, binary: string, scratch: string, timeout = RUN_TIMEOUT): Driver {
+export function binaryDriver(language: Language, binary: string, scratch: string, timeout = RUN_TIMEOUT, args: readonly string[] = []): Driver {
   return {
     language,
     run: (requests) => {
@@ -513,7 +515,7 @@ export function binaryDriver(language: Language, binary: string, scratch: string
       const stdout = openSync(output, "w");
       let result: Spawned;
       try {
-        result = spawn(binary, [], { timeout, stdin, stdout });
+        result = spawn(binary, args, { timeout, stdin, stdout });
       } finally {
         closeSync(stdin);
         closeSync(stdout);
@@ -569,122 +571,53 @@ export function buildGo(conformance: string, out: string, packages: readonly Pac
   return binaryDriver("go", binary, out);
 }
 
-export type Fn = (...args: unknown[]) => unknown;
+export type { Fn, TsModule } from "./ts-runner.js";
 
-/** The generated TypeScript of one read mode, by export name. */
-export interface TsModule {
-  readonly fn: (name: string) => Fn;
-  readonly DecodeError: abstract new (...args: never[]) => Error;
-}
-
-/** Transpiles the TypeScript `generateAll` wrote for one package, and imports it. */
-async function loadTypeScript(out: string, name: string): Promise<TsModule> {
+/** Transpiles the TypeScript `generateAll` wrote for one package, beside it, for the runner to import. */
+function transpilePackage(out: string, name: string): void {
   const dir = join(out, "ts", name);
   writeFileSync(join(out, "package.json"), '{ "type": "module" }\n');
   for (const file of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
-    const js = ts.transpileModule(readFileSync(join(dir, file), "utf8"), {
-      compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext },
-    }).outputText;
-    writeFileSync(join(dir, file.replace(/\.ts$/, ".js")), js);
+    writeFileSync(join(dir, file.replace(/\.ts$/, ".js")), transpile(readFileSync(join(dir, file), "utf8")));
   }
-  const module = (await import(pathToFileURL(join(dir, "index.js")).href)) as Record<string, unknown>;
-  const value = (fn: string): unknown => {
-    if (!(fn in module)) throw new DriverError(`the generated TypeScript of ${name} exports no ${fn}`);
-    return module[fn];
-  };
-  return { fn: (fn) => value(fn) as Fn, DecodeError: value("DecodeError") as TsModule["DecodeError"] };
 }
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
-
-function hexBytes(hex: string): Uint8Array {
-  return new Uint8Array(Buffer.from(hex, "hex"));
+function transpile(source: string): string {
+  return ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.ESNext } }).outputText;
 }
 
-/** Runs one request through the generated TypeScript, as the binaries do. `modules` are by package name. */
+/**
+ * Writes the TypeScript runner (`ts-runner.ts`) as JavaScript into `out`, from the built module
+ * next to this one, or from its source when the runner runs from source, as under vitest.
+ */
+function writeRunner(out: string): string {
+  const here = new URL(import.meta.url);
+  const fromSource = here.pathname.endsWith(".ts");
+  const source = readFileSync(fileURLToPath(new URL(fromSource ? "./ts-runner.ts" : "./ts-runner.js", here)), "utf8");
+  const file = join(out, "ts-runner.mjs");
+  writeFileSync(file, `${fromSource ? transpile(source) : source}${RUNNER_START}`);
+  return file;
+}
+
+/**
+ * Runs one request through the generated TypeScript in this process, as the runner does in its
+ * own. `modules` are by package name. For tests: the runs go through {@link typeScriptDriver}.
+ */
 export function runTs(modules: Readonly<Record<string, TsModule>>, request: Request): Result {
-  // decodeXFromJson and reportXFromJson are the public entry points, and what the fixture tests
-  // call, so both entries decode the same way.
-  if (request.entry !== "public" && request.entry !== "registry") throw new DriverError(`entry ${String(request.entry)} is not supported`);
-  if (request.decoder !== "normal" && request.decoder !== "llm" && request.decoder !== "cleanup") {
-    throw new DriverError(`decoder ${String(request.decoder)} is not supported`);
-  }
-  const m = modules[request.package];
-  if (m === undefined) throw new DriverError(`no generated package ${request.package}`);
-  const rejected = (error: ErrorFields): Result => ({
-    id: request.id,
-    accepted: false,
-    error,
-    unknown: null,
-    encoded: null,
-    encodeError: null,
-  });
-  let text: string;
   try {
-    text = UTF8.decode(hexBytes(request.hex));
-  } catch {
-    // The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them. The
-    // runner only sends text to the LLM decoders and the cleanup step, as the other drivers need.
-    if (request.decoder !== "normal") throw new DriverError(`the ${request.decoder} input of request ${String(request.id)} is not UTF-8`);
-    return rejected({ path: "", code: "invalid_json", expected: null, found: null, message: "not UTF-8 text" });
-  }
-  if (request.decoder === "cleanup") {
-    let cleaned: unknown;
-    try {
-      cleaned = m.fn("cleanLlmJson")(text);
-    } catch (error) {
-      return rejected({ path: "", code: CRASH, expected: null, found: null, message: String(error) });
-    }
-    if (typeof cleaned !== "string") return rejected({ path: "", code: CRASH, expected: null, found: null, message: "cleanLlmJson returned no string" });
-    return { id: request.id, accepted: true, error: null, unknown: [], encoded: cleaned, encodeError: null };
-  }
-  const decode =
-    request.decoder === "llm"
-      ? m.fn(tsLlmName(request.type))
-      : request.mode === "report"
-        ? m.fn(`report${request.type}FromJson`)
-        : m.fn(`decode${request.type}FromJson`);
-  const encode = m.fn(`encode${request.type}ToJson`);
-  let value: unknown;
-  let unknown: readonly string[] = [];
-  try {
-    const decoded = decode(text);
-    // An LLM decoder is strict in every read mode, and returns the value alone.
-    if (request.mode === "report" && request.decoder === "normal") {
-      ({ value, unknown } = decoded as { value: unknown; unknown: string[] });
-    } else {
-      value = decoded;
-    }
+    return runRequest(modules, request);
   } catch (error) {
-    if (!(error instanceof m.DecodeError)) {
-      return rejected({ path: "", code: CRASH, expected: null, found: null, message: String(error) });
-    }
-    const e = error as unknown as { path: string; code: string; expected?: string; found?: string };
-    return rejected({
-      path: e.path,
-      code: e.code,
-      expected: e.expected ?? null,
-      found: e.found ?? null,
-      message: error.message,
-    });
-  }
-  try {
-    return { id: request.id, accepted: true, error: null, unknown, encoded: encode(value) as string, encodeError: null };
-  } catch (error) {
-    return {
-      id: request.id,
-      accepted: true,
-      error: null,
-      unknown,
-      encoded: null,
-      encodeError: error instanceof Error ? error.message : String(error),
-    };
+    if (error instanceof RunnerError) throw new DriverError(error.message);
+    throw error;
   }
 }
 
-/** The TypeScript driver, in process, over the code `generateAll` wrote under `out`. */
-export async function typeScriptDriver(out: string, packages: readonly Package[]): Promise<Driver> {
-  const modules: Record<string, TsModule> = {};
-  for (const p of packages) modules[p.name] = await loadTypeScript(out, p.name);
-  return { language: "ts", run: (requests) => requests.map((r) => runTs(modules, r)) };
+/**
+ * The TypeScript driver over the code `generateAll` wrote under `out`: a Node process per batch,
+ * running `ts-runner.ts`, stopped like the binaries when a batch takes longer than `timeout`.
+ */
+export function typeScriptDriver(out: string, packages: readonly Package[], timeout = RUN_TIMEOUT): Driver {
+  for (const p of packages) transpilePackage(out, p.name);
+  const runner = writeRunner(out);
+  return binaryDriver("ts", process.execPath, out, timeout, [runner, out, ...packages.map((p) => p.name)]);
 }

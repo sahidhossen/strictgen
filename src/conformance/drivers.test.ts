@@ -1,11 +1,14 @@
-import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import type { Fn, TsModule } from "./drivers.js";
-import { binaryDriver, runTs } from "./drivers.js";
+import { tsLlmName } from "../llm-decoders.js";
+import type { Fn, Package, TsModule } from "./drivers.js";
+import { binaryDriver, runTs, typeScriptDriver } from "./drivers.js";
 import type { Request } from "./protocol.js";
+import { CRASH } from "./protocol.js";
+import { RUNNER_CRASH, runnerLlmName } from "./ts-runner.js";
 import { removeScratch, withScratch } from "./suite.js";
 
 class FakeDecodeError extends Error {
@@ -127,6 +130,61 @@ describe("the TypeScript driver", () => {
   it("refuses LLM and cleanup input that isn't UTF-8, which the runner never sends", () => {
     expect(() => runTs(modules, { ...request(""), decoder: "llm", hex: "ff" })).toThrow("is not UTF-8");
     expect(() => runTs(modules, { ...request(""), decoder: "cleanup", hex: "ff" })).toThrow("is not UTF-8");
+  });
+});
+
+describe("the TypeScript driver process", () => {
+  const out = mkdtempSync(join(tmpdir(), "strictgen-ts-driver-"));
+  afterAll(() => rmSync(out, { recursive: true, force: true }));
+  // A stand-in for one generated package: the runner imports its index.ts, transpiled.
+  mkdirSync(join(out, "ts", "strict"), { recursive: true });
+  writeFileSync(
+    join(out, "ts", "strict", "index.ts"),
+    `export class DecodeError extends Error {
+  constructor(readonly path: string, readonly code: string) {
+    super(path + ": " + code);
+  }
+}
+export function decodeOrderFromJson(text: string): unknown {
+  if (text === "loop") for (;;) {}
+  if (text === "bad") throw new DecodeError("/id", "missing_key");
+  return { text };
+}
+export function encodeOrderToJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+`,
+  );
+  const packages = [{ name: "strict" } as Package];
+  /** How long the TypeScript driver's batches take here, a cold start of Node included. */
+  const PROCESS_TIMEOUT = 30_000;
+
+  it("runs a batch of requests in a Node process of its own", { timeout: PROCESS_TIMEOUT }, () => {
+    const driver = typeScriptDriver(out, packages);
+    expect(driver.language).toBe("ts");
+    const results = driver.run([
+      { ...request("ok"), id: 0 },
+      { ...request("bad"), id: 1 },
+    ]);
+    expect(results.map((r) => [r.id, r.accepted, r.encoded, r.error?.code ?? null])).toEqual([
+      [0, true, '{"text":"ok"}', null],
+      [1, false, null, "missing_key"],
+    ]);
+  });
+
+  it("stops a decoder that never returns, like the binaries", { timeout: PROCESS_TIMEOUT }, () => {
+    const driver = typeScriptDriver(out, packages, 2000);
+    expect(() => driver.run([{ ...request("loop"), id: 0 }])).toThrow("the ts driver took longer than 2s and was stopped");
+  });
+
+  it("fails cleanly on a request it can't run", { timeout: PROCESS_TIMEOUT }, () => {
+    const driver = typeScriptDriver(out, packages);
+    expect(() => driver.run([{ ...request("ok"), id: 0, package: "report" }])).toThrow("the ts driver failed (exit 2): no generated package report");
+  });
+
+  it("names the crash code and the LLM decoders as the rest of the runner does", () => {
+    expect(RUNNER_CRASH).toBe(CRASH);
+    expect(runnerLlmName("Order")).toBe(tsLlmName("Order"));
   });
 });
 

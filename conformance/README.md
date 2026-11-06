@@ -85,7 +85,7 @@ Every case also runs through the LLM decoders (`decodeXFromLlm`, `DecodeXFromLlm
 
 - A valid case must decode, and its value must encode to the same canonical bytes as the case itself: the LLM value equals the normal value
 - An invalid case must fail with its strict error, since LLM decoders are strict in every read mode, at the path in the payload: `/value/...` under the wrapper, `/labels/0/value` for a member of a map read from entries, `/labels/0/key` when the member's key breaks the key's type. A mark's path moves the same way
-- Invalid cases whose meaning the LLM form changes are left out, and the run says how many and why, for each variant: text the projection can't read as one JSON value (a key given twice, bytes that aren't UTF-8), `null` for an optional key, which means absent there, an array where a map goes, which is that map's entries for code that reads entries, and nesting that crosses the depth limit in one form only
+- Invalid cases whose meaning the LLM form changes are left out, and the run says how many and why, for each variant: text the projection can't read as one JSON value (a key given twice, bytes that aren't UTF-8), `null` for an optional key that causes the error (the null itself, or one that keeps an untagged union from taking its value), which means absent there, an array where a map goes, which is that map's entries for code that reads entries, and nesting that crosses the depth limit in one form only
 - Each valid case adds near misses only the LLM form has, each with its own expectation: no `value` key, a key beside it, the value without the object around it, entries that are a string, repeat a key, lack a key or a value, have a third key, a number for a key or an array for an entry, a payload cut short, a key given twice, and, for code that reads one shape, a case's one map in the other shape
 - Each invalid case that fails a constraint adds the same payload with a third key in its first entry, which must fail first with `unknown_key` there, since the structure of the whole value is checked before any constraint
 
@@ -117,13 +117,34 @@ Marks that let the bytes as written differ in one way only, once the canonical b
 
 ## How it runs
 
-The runner (`src/conformance`) generates every language for `schemas/` into a temporary folder, once per package. It builds one Rust binary and one Go binary over the generated code, and loads the generated TypeScript in process. Each binary reads every case of the run in one process: one JSON request per line on stdin, like `{"id": 0, "type": "Order", "mode": "strict", "decoder": "normal", "entry": "public", "package": "strict", "hex": "7b7d"}`, and one JSON result per line on stdout:
+The runner (`src/conformance`) generates every language for `schemas/` into a temporary folder, once per package. It builds one Rust binary and one Go binary over the generated code, and transpiles the generated TypeScript for a Node program, `src/conformance/ts-runner.ts`. Each driver reads every case of the run in one process, which is stopped when it takes too long, so a decoder that never returns fails the run instead of hanging it: one JSON request per line on stdin, like `{"id": 0, "type": "Order", "mode": "strict", "decoder": "normal", "entry": "public", "package": "strict", "hex": "7b7d"}`, and one JSON result per line on stdout:
 
 ```json
 {"id": 0, "accepted": false, "error": {"path": "/id", "code": "missing_key", "expected": null, "found": null, "message": "/id: missing key"}, "unknown": null, "encoded": null, "encodeError": null}
 ```
 
 The input is hex, since a case may be bytes that aren't UTF-8. `decoder` picks what reads it: `normal`, `llm`, or `cleanup` for the cleanup step, whose result carries the text it returned in `encoded`. `entry` picks the public entry point or the fixture registry, and `package` the generated code: `strict` and `report`, `strict_llm_both`, `report_llm_both`, `strict_llm_entries` and `strict_llm_objects` for code generated with `llm`, and `report_llm_vectors` for `examples/llm`. Cargo keeps its build in `driver/rust/target`, so later runs only rebuild the generated code. The temporary folder is removed when the run ends, fails or is stopped with Ctrl-C.
+
+## Fuzzing
+
+```bash
+pnpm fuzz --seed 1 --runs 3000      # what every pull request runs
+pnpm fuzz --runs 100000             # a random seed, printed first, like the nightly run
+pnpm fuzz --seed 7 --start 812 --runs 1   # one run of a long run alone
+pnpm fuzz --seed 7 --start 812 --runs 1 --save go   # keep its shrunk case, with Go's answer as the expectation
+```
+
+Each run seeds the payload generator of `src/payloads.ts` from the seed and its own index, so run 812 of seed 7 is the same whatever runs before it. It picks a type with cases, then makes one valid payload of it, up to three of its near misses that fail the same way in both read modes, one unknown key, which fails in strict mode and is reported in report mode, and one cleanup input. Every payload runs through every variant above, in batches through the same drivers, the LLM decoders included, in the LLM form of each map shape, with the near misses only that form has. The cleanup input is the valid payload with a byte order mark, white space, a code fence and trailing commas, at random, and the cleanup step must give back exactly the payload, in every language.
+
+Nobody knows the right answer for a random payload, so the languages must agree with each other on every field compared above, and with the generator's labels: a valid payload is accepted with no unknown keys and encodes to its own canonical bytes, and a near miss fails with the generator's path and code, in Rust and Go as in TypeScript. In report mode the unknown key's payload is accepted with that one key reported. Near misses of `multipleOf` include values on both sides of zero, where a remainder changes sign.
+
+A fuzz payload has no entry in `marks.json`, so its marks come from the payload: `html-escaping` and `line-separator-escaping` when it holds `<`, `>`, `&`, U+2028 or U+2029, `number-spelling` when a number has a fraction or an exponent, and `ts-unsafe-integer` at the first integer past 2^53 - 1. The marked language must still do exactly what the kind states, but a fuzz mark need not be needed, since most payloads that could differ don't.
+
+A disagreement fails the run. It prints the seed, the run, what the generator changed, the payload as JSON and as hex, and the table, then shrinks the payload: it removes keys and items, shortens strings and keys and simplifies numbers, one step at a time, in a fixed order, keeping each step only while the languages still disagree on the same fields, split the same way (like `result: go | rust,ts`). A payload read through the LLM decoders is shrunk in its normal JSON and projected again. When the languages agree with each other but not with the generator's label, there is nothing to shrink, and the label is checked against [`docs/error-codes.md`](../docs/error-codes.md).
+
+`--save <language>` writes the shrunk case as `cases/<Type>/{valid,invalid}/fuzz-<hash>.json`, named by the hash of its text, with the expectation that language gives in strict and report mode and the type's count in `manifest.json`, and prints every language's answer beside the saved one. The language is the one the spec says is right, which the fuzzer can't decide; without it, the case is only printed. It writes nothing when that language crashed, when the case would need a mark, or when the input isn't a payload in normal JSON, like an LLM-only near miss or a cleanup input. Then fix the generator in the same pull request.
+
+Exit codes as for `pnpm conformance`: 0 when every run agrees, 1 on a disagreement, 2 when the run can't happen.
 
 ## Adding a case
 

@@ -25,6 +25,13 @@
       "exclusiveMaximum": 50,
       "multipleOf": 6
     },
+    "adjustment": {
+      "description": "A stock adjustment in steps of 5, from -50 to 50.",
+      "type": "integer",
+      "minimum": -50,
+      "maximum": 50,
+      "multipleOf": 5
+    },
     "price": {
       "description": "The unit price, from 0.5 up to but not including 1000.",
       "type": "number",

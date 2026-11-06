@@ -99,6 +99,35 @@ describe("cases in the LLM form", () => {
     expect(objects[0]?.case.strict).toEqual({ accepted: false, path: "/labels", code: "wrong_type" });
   });
 
+  it("leave out a union case only for the nulls that cause its error", () => {
+    const U = model({
+      refund: {
+        title: "Refund",
+        type: "object",
+        properties: {
+          to: {
+            oneOf: [
+              { type: "object", properties: { last4: { type: "string" }, note: { type: "string" } }, required: ["last4"], additionalProperties: false },
+              { type: "object", properties: { iban: { type: "string" }, note: { type: "string" } }, required: ["iban"], additionalProperties: false },
+            ],
+          },
+        },
+        required: ["to"],
+        additionalProperties: false,
+      },
+    });
+    const skipped = new Map<string, string>();
+    const cases = [
+      // Without its null note, the first branch takes it: the LLM form holds.
+      invalid("Refund", '{"to":{"last4":"1","note":null}}', "/to", "wrong_type", "Refund/invalid/null-note"),
+      // last4 is the wrong type with or without the note: the null is not the cause.
+      invalid("Refund", '{"to":{"last4":5,"note":null}}', "/to", "wrong_type", "Refund/invalid/bad-last4"),
+    ];
+    const out = llmCases(U, cases, [], new Set(["Refund"]), { shape: "objects", readsEntries: false }, skipped);
+    expect(skipped).toEqual(new Map([["Refund/invalid/null-note", SKIPS.null]]));
+    expect(out.map((c) => [c.case.id, c.case.strict])).toEqual([["Refund/invalid/bad-last4", { accepted: false, path: "/to", code: "wrong_type" }]]);
+  });
+
   it("add the near misses only the LLM form has, labelled by hand", () => {
     const misses = run([valid("Sizes", '{"a":1}')], "entries")
       .slice(1)
