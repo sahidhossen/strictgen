@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/user.json",
+  "title": "User",
+  "description": "A user account.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/userId" },
+    "email": { "description": "The address the user signs in with.", "type": "string" },
+    "displayName": {
+      "description": "The name shown to other users, when the user set one.",
+      "type": "string"
+    },
+    "role": { "$ref": "#/$defs/role" },
+    "labels": {
+      "description": "Free-form labels, by name.",
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "createdAt": { "$ref": "https://example.com/schemas/v1/common.json#/$defs/timestamp" },
+    "quota": {
+      "description": "How many seats the user may hand out, by role.",
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/role" },
+      "additionalProperties": { "type": "integer" }
+    }
+  },
+  "required": ["id", "email", "role", "labels", "createdAt"],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "contact": {
+      "description": "How to reach a user: by email or by phone, exactly one of them.",
+      "type": "object",
+      "properties": {
+        "name": { "description": "Who to ask for.", "type": "string" },
+        "email": { "description": "An email address.", "type": "string" },
+        "phone": { "description": "A phone number.", "type": "string" }
+      },
+      "required": ["name"],
+      "oneOf": [{ "required": ["email"] }, { "required": ["phone"] }],
+      "unevaluatedProperties": false
+    },
+    "role": {
+      "description": "What the user may do.",
+      "enum": ["owner", "admin", "member"]
+    }
+  }
+}

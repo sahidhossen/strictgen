@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/shipment.json",
+  "title": "Shipment",
+  "description": "A shipment, with patterns, formats and unique items that every language checks the same way.",
+  "type": "object",
+  "properties": {
+    "id": { "description": "The shipment's UUID.", "type": "string", "format": "uuid" },
+    "tracking": { "$ref": "#/$defs/trackingNumber" },
+    "shippedAt": { "description": "When it left, an RFC 3339 date-time.", "type": "string", "format": "date-time" },
+    "deliverBy": {
+      "description": "The last day of delivery, a date in this century.",
+      "type": "string",
+      "pattern": "^20",
+      "format": "date"
+    },
+    "labels": {
+      "description": "Up to three different labels of at most 5 characters.",
+      "type": "array",
+      "items": { "type": "string", "maxLength": 5 },
+      "maxItems": 3,
+      "uniqueItems": true
+    },
+    "parcels": {
+      "description": "The parcels, no two the same.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/parcel" },
+      "uniqueItems": true
+    },
+    "notes": {
+      "description": "Notes by a lower case topic.",
+      "type": "object",
+      "propertyNames": { "type": "string", "pattern": "^[a-z]+$" },
+      "additionalProperties": { "type": "string" }
+    },
+    "extra": {
+      "description": "Any JSON values, no two equal.",
+      "type": "array",
+      "items": {},
+      "uniqueItems": true
+    },
+    "text": { "$ref": "#/$defs/text" }
+  },
+  "required": ["id", "tracking", "shippedAt"],
+  "additionalProperties": false,
+  "$defs": {
+    "trackingNumber": {
+      "description": "Two letters, nine digits and two letters, like AB123456789US.",
+      "type": "string",
+      "maxLength": 13,
+      "pattern": "^[A-Z]{2}\\d{9}[A-Z]{2}$"
+    },
+    "parcel": {
+      "description": "One parcel.",
+      "type": "object",
+      "properties": {
+        "weight": { "description": "In kilograms.", "type": "number" },
+        "size": { "description": "Its size code.", "type": "string" }
+      },
+      "required": ["weight"],
+      "additionalProperties": false
+    },
+    "labelCodes": {
+      "description": "Different codes of three upper case letters.",
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[A-Z]{3}$" },
+      "uniqueItems": true
+    },
+    "day": { "description": "A date.", "type": "string", "format": "date" },
+    "longWord": {
+      "description": "Up to 1000 characters that aren't white space, then maybe one white space character and up to 250 more. Close to the largest pattern strictgen takes.",
+      "type": "string",
+      "pattern": "^\\S{1,1000}(?:\\s\\S{1,250})?$"
+    },
+    "text": {
+      "description": "Patterns whose meaning differs between regex engines unless strictgen spells it out.",
+      "type": "object",
+      "properties": {
+        "anywhere": { "description": "Holds an x anywhere: patterns are unanchored.", "type": "string", "pattern": "x" },
+        "dot": { "description": "a, one character but a line break, then c.", "type": "string", "pattern": "^a.c$" },
+        "space": { "description": "One white space character, as ECMAScript reads \\s.", "type": "string", "pattern": "^\\s$" },
+        "word": { "description": "ASCII word characters only.", "type": "string", "pattern": "^\\w+$" },
+        "digits": { "description": "ASCII digits only.", "type": "string", "pattern": "^\\d+$" },
+        "end": { "description": "Exactly a: $ is the end of the string, not before a final line break.", "type": "string", "pattern": "^a$" },
+        "astral": { "description": "Characters outside the BMP, one code point each.", "type": "string", "pattern": "^[^a-z]{2}$" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

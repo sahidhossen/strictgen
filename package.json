@@ -21,6 +21,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "hygiene": "scripts/hygiene.sh",
+    "conformance": "pnpm build && node dist/conformance/main.js",
     "vectors:llm": "STRICTGEN_WRITE_VECTORS=1 vitest run src/llm-vectors.test.ts",
     "examples": "pnpm build && node dist/cli.js generate --config examples/basic/strictgen.json && node dist/cli.js generate --config examples/report/strictgen.json && node dist/cli.js generate --config examples/llm/strictgen.json",
     "examples:check": "pnpm build && node dist/cli.js check --config examples/basic/strictgen.json && node dist/cli.js check --config examples/report/strictgen.json && node dist/cli.js check --config examples/llm/strictgen.json"

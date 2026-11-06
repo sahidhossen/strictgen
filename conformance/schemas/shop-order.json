@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/shop-order.json",
+  "title": "ShopOrder",
+  "description": "An order a shop sends in a webhook. The shop adds keys over time, which report mode accepts and reports.",
+  "type": "object",
+  "properties": {
+    "id": { "description": "The order ID, like `ord_7d2k`.", "type": "string" },
+    "customer": { "$ref": "#/$defs/customer" },
+    "lines": {
+      "description": "What was ordered.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/item" }
+    },
+    "payment": { "$ref": "#/$defs/payment" },
+    "delivery": { "$ref": "#/$defs/delivery" },
+    "notes": {
+      "description": "Notes on the order, by the team that wrote them.",
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/note" }
+    },
+    "attributes": { "$ref": "#/$defs/attributes" },
+    "placedAt": { "description": "When the order was placed, an RFC 3339 date-time.", "type": "string", "format": "date-time" },
+    "coupon": { "description": "A coupon code, like SPRING-10.", "type": "string", "pattern": "^[A-Z]+-\\d+$" },
+    "gifts": {
+      "description": "Items given away with the order, no two the same once decoded.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/item" },
+      "uniqueItems": true
+    }
+  },
+  "required": ["id", "customer", "lines", "payment"],
+  "unevaluatedProperties": false,
+  "$defs": {
+    "attributes": {
+      "description": "The sales channel, and any other attribute the shop sets, by name.",
+      "type": "object",
+      "properties": {
+        "channel": { "description": "Where the order was placed, like `web`.", "type": "string" }
+      },
+      "additionalProperties": { "type": "string" }
+    },
+    "carrier": {
+      "description": "Who delivers the order.",
+      "type": "object",
+      "properties": {
+        "name": { "description": "The carrier's name, at most 20 characters.", "type": "string", "maxLength": 20 }
+      },
+      "required": ["name"],
+      "unevaluatedProperties": false
+    },
+    "courier": {
+      "description": "Delivery to the door, tracked by a code.",
+      "type": "object",
+      "properties": {
+        "carrier": { "$ref": "#/$defs/carrier" },
+        "trackingCode": { "description": "The carrier's tracking code.", "type": "string" }
+      },
+      "required": ["carrier", "trackingCode"],
+      "unevaluatedProperties": false
+    },
+    "customer": {
+      "description": "Who placed the order, reachable by email or by phone, exactly one of them.",
+      "type": "object",
+      "properties": {
+        "name": { "description": "The customer's name.", "type": "string" },
+        "email": { "description": "An email address.", "type": "string" },
+        "phone": { "description": "A phone number.", "type": "string" }
+      },
+      "required": ["name"],
+      "oneOf": [{ "required": ["email"] }, { "required": ["phone"] }],
+      "unevaluatedProperties": false
+    },
+    "delivery": {
+      "description": "How the order reaches the customer: by courier or picked up at a location.",
+      "oneOf": [{ "$ref": "#/$defs/courier" }, { "$ref": "#/$defs/pickup" }]
+    },
+    "item": {
+      "description": "One item of the order.",
+      "type": "object",
+      "properties": {
+        "sku": { "description": "The item's stock keeping unit.", "type": "string" },
+        "quantity": { "description": "How many were ordered, at least 1.", "type": "integer", "minimum": 1 }
+      },
+      "required": ["sku", "quantity"],
+      "unevaluatedProperties": false
+    },
+    "note": {
+      "description": "A note a team wrote on the order.",
+      "type": "object",
+      "properties": {
+        "text": { "description": "What the note says.", "type": "string" }
+      },
+      "required": ["text"],
+      "unevaluatedProperties": false
+    },
+    "payment": {
+      "description": "How the order is paid, picked by its `type` key.",
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "card" },
+            "last4": { "description": "The last four digits of the card number.", "type": "string" }
+          },
+          "required": ["type", "last4"],
+          "unevaluatedProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "type": { "const": "invoice" },
+            "dueDays": { "description": "Days until the invoice is due.", "type": "integer" }
+          },
+          "required": ["type", "dueDays"],
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "pickup": {
+      "description": "Collection by the customer at a location the carrier runs.",
+      "type": "object",
+      "properties": {
+        "carrier": { "$ref": "#/$defs/carrier" },
+        "location": { "description": "Where to collect the order.", "type": "string" }
+      },
+      "required": ["carrier", "location"],
+      "unevaluatedProperties": false
+    },
+    "tags": {
+      "description": "At most three tags of at most 10 characters each.",
+      "type": "array",
+      "items": { "type": "string", "maxLength": 10 },
+      "maxItems": 3
+    }
+  }
+}

@@ -1,0 +1,22 @@
+[package]
+name = "conformance-driver"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Decodes conformance requests with the Rust code strictgen generates for conformance/schemas"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "conformance_driver"
+path = "src/lib.rs"
+
+[[bin]]
+name = "conformance-driver"
+path = "src/main.rs"
+
+[dependencies]
+# The schemas use pattern, which the generated code checks with the regex crate.
+regex = "1.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }

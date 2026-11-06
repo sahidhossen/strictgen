@@ -9,13 +9,15 @@ Eight schemas and what strictgen generates from them.
 | `rust/src/generated/` | The Rust types, a module per schema. `rust/` is a crate that depends on `serde`, `serde_json` and, since the schemas use `pattern`, `regex`. `tests/fixtures.rs` and `tests/errors.rs` are written by hand |
 | `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go`, `aliases_test.go` (every fixture through `json.Unmarshal` too), `codes_test.go` and `encode_test.go` are written by hand |
 | `ts/generated/` | The TypeScript types and their decoders, with `helpers.ts`, which they share |
-| `fixtures/` | JSON documents each language must accept (`valid/`) or reject (`invalid/`) |
+| `fixtures/` | A few JSON documents each language must accept (`valid/`) or reject (`invalid/`), to show the fixture tests. The full set is in [`conformance/`](../../conformance) |
 
 `strictgen.json` configures the three targets. IDs are on, with `{ "file": "common", "suffix": "Id" }`, so `userId` and `eventId` become their own types.
 
 ## Fixtures
 
 A fixture for a schema's root type lives in `fixtures/<schema>/valid` or `fixtures/<schema>/invalid`, and one for a def in `fixtures/<schema>/<def>/valid` or `invalid`. The Rust and Go tests decode every fixture with the type generated for its folder. The repository tests run them through the TypeScript decoders too, from the JSON text. A valid case must decode and encode again to the same JSON value, and an invalid case must fail with the `path` and `code` in the `<case>.expect.json` next to it, which the Rust, Go and TypeScript runs check (see [`docs/error-codes.md`](../../docs/error-codes.md)).
+
+These fixtures are a small sample. The cross-language proof, with every case compared across Rust, Go and TypeScript in both read modes, is the conformance suite in [`conformance/`](../../conformance), run with `pnpm conformance`.
 
 ```bash
 cd examples/basic/rust && cargo test
