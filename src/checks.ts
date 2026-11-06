@@ -13,13 +13,15 @@
  *   constraints before its value's
  * - a union's checks are those of the branch that decoded. Constraints never pick the branch
  *
- * A value's own constraints run in this order: `minLength`, `maxLength` for strings, counted in
- * code points; `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf` for
- * integers and numbers; `minItems`, `maxItems` for arrays; `minProperties`, `maxProperties` for
- * maps. The walk stops at the first one that fails.
+ * A value's own constraints run in this order: `minLength`, `maxLength` (counted in code
+ * points), `pattern`, `format` for strings; `minimum`, `exclusiveMinimum`, `maximum`,
+ * `exclusiveMaximum`, `multipleOf` for integers and numbers; `minItems`, `maxItems`,
+ * `uniqueItems` for arrays, all before any item; `minProperties`, `maxProperties` for maps. The
+ * walk stops at the first one that fails.
  */
+import { compare } from "./common.js";
 import { numberText } from "./errors.js";
-import type { Decl, IntegerType, NumberType, TypeExpr } from "./model.js";
+import type { Decl, IntegerType, NumberType, Pattern, TypeExpr } from "./model.js";
 
 /** One numeric check: the operator, the bound and the bound as errors show it. */
 export interface Limit {
@@ -47,17 +49,70 @@ export function limitsOf(type: IntegerType | NumberType): Limit[] {
 export function hasOwnChecks(type: TypeExpr): boolean {
   switch (type.kind) {
     case "string":
-      return type.minLength !== undefined || type.maxLength !== undefined;
+      return (
+        type.minLength !== undefined ||
+        type.maxLength !== undefined ||
+        type.match !== undefined ||
+        type.format !== undefined
+      );
     case "integer":
     case "number":
       return limitsOf(type).length > 0;
     case "array":
-      return type.minItems !== undefined || type.maxItems !== undefined;
+      return (
+        type.minItems !== undefined || type.maxItems !== undefined || type.uniqueItems === true
+      );
     case "map":
       return type.minProperties !== undefined || type.maxProperties !== undefined;
     default:
       return false;
   }
+}
+
+/**
+ * Every pattern the declarations check, once each, sorted by how the schema writes it. Emitters
+ * compile them once, as a table, and a check names its pattern by its index here.
+ */
+export function patternsOf(decls: Iterable<Decl>): Pattern[] {
+  const found = new Map<string, Pattern>();
+  const walk = (type: TypeExpr): void => {
+    switch (type.kind) {
+      case "string":
+        if (type.match !== undefined) found.set(type.match.source, type.match);
+        return;
+      case "array":
+        walk(type.items);
+        return;
+      case "map":
+        walk(type.key);
+        walk(type.value);
+        return;
+      default:
+        return;
+    }
+  };
+  for (const decl of decls) {
+    switch (decl.kind) {
+      case "struct":
+        decl.fields.forEach((f) => walk(f.type));
+        if (decl.rest !== undefined) {
+          walk(decl.rest.key);
+          walk(decl.rest.value);
+        }
+        break;
+      case "untagged":
+        decl.variants.forEach((v) => walk(v.type));
+        break;
+      case "alias":
+      case "id":
+        walk(decl.type);
+        break;
+      case "enum":
+      case "tagged":
+        break;
+    }
+  }
+  return [...found.values()].sort((a, b) => compare(a.source, b.source));
 }
 
 /**
@@ -105,11 +160,12 @@ export class Checks {
   }
 
   /**
-   * True for an alias that Rust and Go generate as a type of its own: one with constraints to
-   * check that stands for a type that can't check them, like a list of codes or a string with
-   * a length range. The type of its own carries the check, so the standard entry points, Rust's
-   * `from_json` and Go's `json.Unmarshal`, run it. An alias of another declaration stays an
-   * alias, since that declaration checks itself.
+   * True for an alias that Rust generates as a type of its own: one with constraints to check
+   * that stands for a type that can't check them, like a list of codes or a string with a
+   * format. The type of its own carries the check, so Rust's standard entry point, `from_json`,
+   * runs it. An alias of another declaration stays an alias, since that declaration checks
+   * itself. Go makes every alias but one of another declaration a type of its own, constraints
+   * or not, so `json.Unmarshal` reads it strictly (src/emit-go.ts).
    */
   ownType(decl: Decl): boolean {
     return decl.kind === "alias" && decl.type.kind !== "ref" && this.#checked.has(decl.name);

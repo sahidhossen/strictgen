@@ -667,7 +667,7 @@ export function decodeInteger(json: unknown, path: string): number {
 
 /**
  * A decoder of a string typed as a family of strings by its pattern, like order. followed by
- * any text. It checks that the value is a string; the pattern itself is not checked yet.
+ * any text. It checks that the value is a string; matches checks the pattern itself.
  */
 export function family<T extends string>(): Decoder<T> {
   return decodeString as Decoder<T>;
@@ -859,13 +859,153 @@ export function limits(decode: Decoder<number>, list: readonly Limit[]): Decoder
   };
 }
 
-/** A decoder of a JSON array whose items decode with item, with between min and max of them. */
-export function array<T>(item: Decoder<T>, min?: number, max?: number): Decoder<T[]> {
+/**
+ * A decoder of a string, with decode, in a format: date-time and date as RFC 3339 writes them,
+ * uuid as RFC 9562's text form. docs/error-codes.md writes out each grammar.
+ */
+export function format<T extends string>(decode: Decoder<T>, name: "date-time" | "date" | "uuid"): Decoder<T> {
+  const valid = name === "date-time" ? isDateTime : name === "date" ? isDate : isUuid;
+  const expected = name === "date-time" ? "a date-time" : name === "date" ? "a date" : "a UUID";
+  return (json, path) => {
+    const value = decode(json, path);
+    if (checking() && !valid(value)) throw new DecodeError(path, ErrorCode.BadFormat, expected, quote(value));
+    return value;
+  };
+}
+
+/** The number count ASCII digits from start of text stand for, or -1 when they aren't all digits. */
+function digitsAt(text: string, start: number, count: number): number {
+  if (start + count > text.length) return -1;
+  let n = 0;
+  for (let i = start; i < start + count; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x30 || c > 0x39) return -1;
+    n = n * 10 + c - 0x30;
+  }
+  return n;
+}
+
+/** True when text starts with a full-date: YYYY-MM-DD, a day the month has, Gregorian leap years. */
+function dateAt(text: string): boolean {
+  const year = digitsAt(text, 0, 4);
+  const month = digitsAt(text, 5, 2);
+  const day = digitsAt(text, 8, 2);
+  if (year < 0 || text[4] !== "-" || text[7] !== "-" || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = month === 2 ? (leap ? 29 : 28) : month === 4 || month === 6 || month === 9 || month === 11 ? 30 : 31;
+  return day <= days;
+}
+
+/** A date: an RFC 3339 full-date, like 2024-02-29. */
+function isDate(text: string): boolean {
+  return text.length === 10 && dateAt(text);
+}
+
+/**
+ * A date-time: an RFC 3339 date-time, like 2024-02-29T23:59:60.5-01:30. T and Z may be lower
+ * case, a fraction has one digit or more, and a leap second is 23:59:60 in UTC.
+ */
+function isDateTime(text: string): boolean {
+  if (text.length < 20 || !dateAt(text) || (text[10] !== "T" && text[10] !== "t")) return false;
+  const hour = digitsAt(text, 11, 2);
+  const minute = digitsAt(text, 14, 2);
+  const second = digitsAt(text, 17, 2);
+  if (text[13] !== ":" || text[16] !== ":" || hour < 0 || hour > 23 || minute < 0 || minute > 59) return false;
+  if (second < 0 || second > 60) return false;
+  let i = 19;
+  if (text[i] === ".") {
+    const start = ++i;
+    while (digitsAt(text, i, 1) >= 0) i++;
+    if (i === start) return false;
+  }
+  let offset = 0;
+  if (text[i] === "Z" || text[i] === "z") {
+    i++;
+  } else if (text[i] === "+" || text[i] === "-") {
+    const hours = digitsAt(text, i + 1, 2);
+    const minutes = digitsAt(text, i + 4, 2);
+    if (text[i + 3] !== ":" || hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return false;
+    offset = (hours * 60 + minutes) * (text[i] === "-" ? -1 : 1);
+    i += 6;
+  } else {
+    return false;
+  }
+  if (i !== text.length) return false;
+  return second !== 60 || (((hour * 60 + minute - offset) % 1440) + 1440) % 1440 === 1439;
+}
+
+/** A UUID: RFC 9562's text form, 8-4-4-4-12 hex digits in either case, of any version. */
+function isUuid(text: string): boolean {
+  if (text.length !== 36) return false;
+  for (let i = 0; i < 36; i++) {
+    const c = text.charCodeAt(i);
+    if (i === 8 || i === 13 || i === 18 || i === 23) {
+      if (c !== 0x2d) return false;
+    } else if (!((c >= 0x30 && c <= 0x39) || (c >= 0x41 && c <= 0x46) || (c >= 0x61 && c <= 0x66))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * A value's RFC 8785 canonical JSON: object keys sorted by UTF-16 code units, numbers as
+ * JavaScript writes them with -0 as 0, and strings escaped as JSON.stringify does. Two values
+ * are equal when their canonical JSON is, so 1 and 1.0 are equal and key order doesn't count.
+ */
+function canonical(value: unknown): string {
+  if (typeof value === "number") return Object.is(value, -0) ? "0" : String(value);
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return "[" + (value as readonly unknown[]).map(canonical).join(",") + "]";
+  const holder = value as Readonly<Record<string, unknown>>;
+  const keys = Object.keys(holder).sort();
+  return "{" + keys.map((key) => JSON.stringify(key) + ":" + canonical(holder[key])).join(",") + "}";
+}
+
+/**
+ * Decodes the items with item, structure only, so they can be compared before their own
+ * constraints are checked.
+ */
+function structureOf<T>(item: Decoder<T>, items: readonly unknown[], length: number, path: string): T[] {
+  const saved = phase;
+  phase = 2;
+  try {
+    const out: T[] = [];
+    for (let i = 0; i < length; i++) {
+      const itemPath = at(path, i);
+      out.push(item(guard(itemPath, () => items[i]), itemPath));
+    }
+    return out;
+  } finally {
+    phase = saved;
+  }
+}
+
+/** Fails at the first item equal to one before it, comparing decoded values by canonical JSON. */
+function checkUnique(path: string, values: readonly unknown[]): void {
+  const seen = new Map<string, number>();
+  values.forEach((value, i) => {
+    const key = canonical(value);
+    const first = seen.get(key);
+    if (first !== undefined) {
+      throw new DecodeError(at(path, i), ErrorCode.NotUnique, "unique items", "a repeat of item " + String(first));
+    }
+    seen.set(key, i);
+  });
+}
+
+/**
+ * A decoder of a JSON array whose items decode with item, with between min and max of them,
+ * and with unique set, no two equal. Equal means the same RFC 8785 canonical JSON once decoded,
+ * as in Rust and Go, and the error is at the later of the two.
+ */
+export function array<T>(item: Decoder<T>, min?: number, max?: number, unique = false): Decoder<T[]> {
   return (json, path) => {
     if (!guard(path, () => Array.isArray(json))) throw mismatch(path, "an array", json);
     const items = json as readonly unknown[];
     const length = guard(path, () => items.length);
     if (checking()) checkCount(path, length, min, max, "item", "items");
+    if (unique && checking()) checkUnique(path, structureOf(item, items, length, path));
     const out: T[] = [];
     for (let i = 0; i < length; i++) {
       const itemPath = at(path, i);
@@ -1293,4 +1433,39 @@ export function toJson(value: unknown): string {
     for (let i = later.length - 1; i >= 0; i--) steps.push(later[i] as Step);
   }
   return parts.join("");
+}
+
+/**
+ * The patterns schemas check: each compiled once from its portable form, which Rust's regex and
+ * Go's RE2 read the same way, and as the schema writes it, for errors.
+ */
+const PATTERNS: readonly (readonly [RegExp, string])[] = [
+  [new RegExp("^20", "u"), "^20"],
+  [new RegExp("^[A-Z]{2}[0-9]{9}[A-Z]{2}$", "u"), "^[A-Z]{2}\\d{9}[A-Z]{2}$"],
+  [new RegExp("^[A-Z]{3}$", "u"), "^[A-Z]{3}$"],
+  [new RegExp("^[^a-z]{2}$", "u"), "^[^a-z]{2}$"],
+  [new RegExp("^[a-z]+$", "u"), "^[a-z]+$"],
+  [new RegExp("^[0-9]+$", "u"), "^\\d+$"],
+  [new RegExp("^[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$", "u"), "^\\s$"],
+  [new RegExp("^[0-9A-Z_a-z]+$", "u"), "^\\w+$"],
+  [new RegExp("^a$", "u"), "^a$"],
+  [new RegExp("^a[^\u000a\u000d\u2028\u2029]c$", "u"), "^a.c$"],
+  [new RegExp("x", "u"), "x"],
+];
+
+/**
+ * A decoder of a string, with decode, that matches the pattern at index in PATTERNS. As JSON
+ * Schema says, a pattern matches anywhere in the string unless it anchors itself with ^ or $.
+ */
+export function matches<T extends string>(decode: Decoder<T>, index: number): Decoder<T> {
+  const entry = PATTERNS[index];
+  if (entry === undefined) throw new Error("no pattern " + String(index));
+  const [regex, source] = entry;
+  return (json, path) => {
+    const value = decode(json, path);
+    if (checking() && !regex.test(value)) {
+      throw new DecodeError(path, ErrorCode.PatternMismatch, "matching " + source, quote(value));
+    }
+    return value;
+  };
 }

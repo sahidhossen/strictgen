@@ -583,7 +583,13 @@ describe("TypeScript scalars, ids, aliases and consts", () => {
   }, COMPILE_TIMEOUT);
 
   it("decode aliases as their target, and fields through their types' decoders", () => {
-    const value = { order: "o1", status: "closed", version: 1, at: "t", orders: ["a", "b"] };
+    const value = {
+      order: "o1",
+      status: "closed",
+      version: 1,
+      at: "2024-01-02T03:04:05Z",
+      orders: ["a", "b"],
+    };
     expect(m.fn("decodeLine")(value)).toEqual(value);
     expect(failure(m, "Line", { ...value, orders: ["a", 1] })).toBe(
       "/orders/1: wrong type, expected a string, found 1",
@@ -1013,6 +1019,134 @@ describe("TypeScript constraints", () => {
   }, COMPILE_TIMEOUT);
 });
 
+describe("TypeScript patterns, formats and unique items", () => {
+  const entries: JsonObject = {
+    item: closed(
+      {
+        code: { type: "string", maxLength: 4, pattern: "^[A-Z]+$" },
+        day: { type: "string", pattern: "^20", format: "date" },
+        at: { type: "string", format: "date-time" },
+        id: { type: "string", format: "uuid" },
+        dot: { type: "string", pattern: "^a.c$" },
+        space: { type: "string", pattern: "^\\s$" },
+        digits: { type: "string", pattern: "\\d" },
+        tags: {
+          type: "array",
+          items: { type: "string", maxLength: 1 },
+          maxItems: 3,
+          uniqueItems: true,
+        },
+        values: { type: "array", items: {}, uniqueItems: true },
+        byCode: {
+          type: "object",
+          propertyNames: { type: "string", pattern: "^[a-z]+$" },
+          additionalProperties: { type: "integer" },
+        },
+      },
+      [],
+    ),
+    lines: { type: "array", items: closed({ sku: { type: "string" } }, ["sku"]), uniqueItems: true },
+  };
+  let m: Loaded;
+  let r: Loaded;
+  beforeAll(async () => {
+    m = await load(libModel(entries));
+    r = await load(libModel(entries), { read: "report" });
+  }, COMPILE_TIMEOUT);
+
+  it("compile each pattern once, in its portable form, in the helpers", () => {
+    const helpers = emitTypeScript(libModel(entries)).find((f) => f.name === "helpers.ts")?.contents ?? "";
+    expect(helpers).toContain('  [new RegExp("[0-9]", "u"), "\\\\d"],\n');
+    expect(helpers).toContain('  [new RegExp("^a[^\\u000a\\u000d\\u2028\\u2029]c$", "u"), "^a.c$"],\n');
+    const out = lib(entries);
+    expect(out).toContain("h.matches(h.length(h.decodeString, undefined, 4), 2)");
+    expect(out).toContain('h.format(h.matches(h.family<`20${string}`>(), 1), "date")');
+    expect(out).toContain("h.array(h.length(h.decodeString, undefined, 1), undefined, 3, true)");
+    expect(lib({ plain: { type: "string" } })).not.toContain("PATTERNS");
+  });
+
+  it("match a pattern anywhere unless it anchors itself, reading it as ECMAScript does", () => {
+    expect(m.fn("decodeItem")({ digits: "a1b" })).toEqual({ digits: "a1b" });
+    expect(failure(m, "Item", { digits: "a١b" })).toBe(
+      '/digits: pattern mismatch, expected matching \\d, found "a١b"',
+    );
+    expect(failure(m, "Item", { dot: "a\rc" })).toContain("/dot: pattern mismatch");
+    expect(failure(m, "Item", { dot: "a\u2028c" })).toContain("/dot: pattern mismatch");
+    expect(m.fn("decodeItem")({ dot: "a\u{1f600}c" })).toEqual({ dot: "a\u{1f600}c" });
+    expect(m.fn("decodeItem")({ space: "\u00a0" })).toEqual({ space: "\u00a0" });
+    expect(failure(m, "Item", { space: "\u0085" })).toContain("/space: pattern mismatch");
+  });
+
+  it("check the length, then the pattern, then the format", () => {
+    expect(failure(m, "Item", { code: "ABCDE" })).toContain("/code: too long");
+    expect(failure(m, "Item", { code: "abc" })).toBe(
+      '/code: pattern mismatch, expected matching ^[A-Z]+$, found "abc"',
+    );
+    expect(failure(m, "Item", { day: "1999-13-01" })).toContain("/day: pattern mismatch");
+    expect(failure(m, "Item", { day: "2023-02-29" })).toBe(
+      '/day: bad format, expected a date, found "2023-02-29"',
+    );
+  });
+
+  it("check date-time, date and uuid by their grammars", () => {
+    for (const at of ["1998-12-31T23:59:60Z", "1998-12-31T15:59:60.5-08:00", "2024-01-02t03:04:05z"]) {
+      expect(m.fn("decodeItem")({ at })).toEqual({ at });
+    }
+    for (const at of ["1998-12-31T22:59:60Z", "2024-01-02 03:04:05Z", "2024-01-02T03:04:05", "2024-01-02T03:04:05.Z"]) {
+      expect(failure(m, "Item", { at })).toBe(`/at: bad format, expected a date-time, found "${at}"`);
+    }
+    expect(m.fn("decodeItem")({ id: "123E4567-e89b-12d3-a456-426614174000" })).toBeDefined();
+    expect(failure(m, "Item", { id: "123e4567e89b12d3a456426614174000" })).toBe(
+      '/id: bad format, expected a UUID, found "123e4567e89b12d3a456426614174000"',
+    );
+  });
+
+  it("check a map key's pattern, in code point order", () => {
+    expect(failure(m, "Item", { byCode: { b: 1, Z: 2, A: 3 } })).toContain("/byCode/A: pattern mismatch");
+  });
+
+  it("compare items by canonical JSON, after the count and before the items, at the repeat", () => {
+    expect(failure(m, "Item", { tags: ["a", "b", "a"] })).toBe(
+      "/tags/2: not unique, expected unique items, found a repeat of item 0",
+    );
+    expect(failure(m, "Item", { tags: ["a", "a", "b", "c"] })).toContain("/tags: too long");
+    expect(failure(m, "Item", { tags: ["long", "b", "b"] })).toContain("/tags/2: not unique");
+    expect(failure(m, "Item", { values: [{ a: 1, b: [2] }, { b: [2.0], a: 1 }] })).toContain(
+      "/values/1: not unique",
+    );
+    expect(failure(m, "Item", { values: [0, -0] })).toContain("/values/1: not unique");
+    expect(failureFromJson(m, "Item", '{"values":[1,1.0]}')).toContain("/values/1: not unique");
+    expect(m.fn("decodeItem")({ values: [1, "1", [1], { a: 1 }, null] })).toBeDefined();
+  });
+
+  it("compare decoded items in report mode, so unknown keys don't count, and note them once", () => {
+    expect(() => r.fn("reportLinesFromJson")('[{"sku":"a","x":1},{"sku":"a","y":2}]')).toThrow(
+      "/1: not unique, expected unique items, found a repeat of item 0",
+    );
+    expect(r.fn("reportLinesFromJson")('[{"sku":"a","x":1},{"sku":"b","x":1}]')).toEqual({
+      value: [{ sku: "a" }, { sku: "b" }],
+      unknown: ["/0/x", "/1/x"],
+    });
+  });
+
+  it("check an id's pattern, which types nothing", async () => {
+    const ids = build({ common: schema("common", { $defs: { orderId: { type: "string", pattern: "^ord_" } } }) });
+    expect(emitTypeScript(ids)[0]?.contents).toContain("  return h.matches(h.decodeString, 0)(json, path) as OrderId;\n");
+    const loaded = await load(ids);
+    expect(loaded.fn("decodeOrderId")("ord_1")).toBe("ord_1");
+    expect(failure(loaded, "OrderId", "x")).toBe('pattern mismatch, expected matching ^ord_, found "x"');
+  }, COMPILE_TIMEOUT);
+
+  it("leave patterns, formats and unique items unchecked with validation off", async () => {
+    const off = await load(buildModel(schemaSet({ lib: schema("lib", { $defs: entries }) }), { validation: false }));
+    expect(off.fn("decodeItem")({ code: "abc", at: "x", tags: ["a", "a"] })).toEqual({
+      code: "abc",
+      at: "x",
+      tags: ["a", "a"],
+    });
+  }, COMPILE_TIMEOUT);
+});
+
 describe("TypeScript any values, non-null values and recursion", () => {
   const model = libModel({
     holder: closed({ any: {}, nonNull: { not: { const: null } }, list: { type: "array", items: {} } }),
@@ -1280,9 +1414,11 @@ describe("TypeScript string families", () => {
     expect(text).toContain("  byRef?: Record<`order.${string}`, number>;\n");
   });
 
-  it("decode a family as a string, the pattern not checked yet, as in Rust and Go", () => {
+  it("decode a family as a string and check its pattern, as in Rust and Go", () => {
     expect(m.fn("decodeOrderRef")("order.1")).toBe("order.1");
-    expect(m.fn("decodeOrderRef")("user.1")).toBe("user.1");
+    expect(failure(m, "OrderRef", "user.1")).toBe(
+      'pattern mismatch, expected matching ^order\\..+$, found "user.1"',
+    );
     expect(failure(m, "OrderRef", 1)).toBe("wrong type, expected a string, found 1");
     const note = { ref: "order.1", refs: ["order.2"], byRef: { "order.3": 1 } };
     expect(m.fn("decodeNote")(note)).toEqual(note);

@@ -1,0 +1,9 @@
+{
+  "id": "ord_7d2k",
+  "customer": { "name": "Ada", "email": "ada@example.com" },
+  "payment": { "type": "card", "last4": "4242" },
+  "lines": [{ "sku": "A-1", "quantity": 1 }],
+  "placedAt": "2024-02-29T23:59:60Z",
+  "coupon": "SPRING-10",
+  "gifts": [{ "sku": "G-1", "quantity": 1, "note": "a" }, { "sku": "G-2", "quantity": 1 }]
+}

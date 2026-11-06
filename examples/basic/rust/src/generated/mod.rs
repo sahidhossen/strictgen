@@ -21,6 +21,7 @@ mod event;
 mod helpers;
 mod order;
 mod payment_method;
+mod shipment;
 mod subscription;
 mod user;
 
@@ -29,5 +30,6 @@ pub use event::*;
 pub use helpers::{Decode, DecodeError, NonNullJson};
 pub use order::*;
 pub use payment_method::*;
+pub use shipment::*;
 pub use subscription::*;
 pub use user::*;

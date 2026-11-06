@@ -11,5 +11,7 @@ publish = false
 name = "example_basic"
 
 [dependencies]
+# The schemas use pattern, which the generated code checks with the regex crate.
+regex = "1.10"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }

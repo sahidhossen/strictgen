@@ -4,6 +4,7 @@ export * from "./common.js";
 export * from "./event.js";
 export * from "./order.js";
 export * from "./payment-method.js";
+export * from "./shipment.js";
 export * from "./subscription.js";
 export * from "./user.js";
 export { DecodeError, EncodeError, type DecodeResult, ErrorCode } from "./helpers.js";

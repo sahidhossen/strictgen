@@ -5,8 +5,8 @@ One schema generated in report mode for every language: unknown keys are accepte
 | Path | What it is |
 | ---- | ---------- |
 | `strictgen.json` | The config: the three targets, each with `"read": "report"` |
-| `schemas/order.json` | An order a shop sends in a webhook: a customer reachable by email or by phone, exactly one, lines of items, a payment picked by its `type` key, a delivery by courier or pickup (an untagged union), notes by team (a map of objects), attributes (named keys beside a map of the others) and tags (a list with limits), generated as a type of its own in Rust and Go |
-| `rust/src/generated/` | The Rust types. `rust/` is a crate that depends on `serde` and `serde_json` only. `tests/fixtures.rs` and `tests/aliases.rs` are written by hand |
+| `schemas/order.json` | An order a shop sends in a webhook: a customer reachable by email or by phone, exactly one, lines of items, a payment picked by its `type` key, a delivery by courier or pickup (an untagged union), notes by team (a map of objects), attributes (named keys beside a map of the others), tags (a list with limits), generated as a type of its own in Rust and Go, a coupon with a pattern, a date-time and gifts, a list of unique items |
+| `rust/src/generated/` | The Rust types. `rust/` is a crate that depends on `serde`, `serde_json` and, since the schema uses `pattern`, `regex`. `tests/fixtures.rs` and `tests/aliases.rs` are written by hand |
 | `go/` | The Go types, standard library only. `go.mod`, `fixtures_test.go` and `aliases_test.go` are written by hand |
 | `ts/generated/` | The TypeScript types and their decoders, with `helpers.ts` |
 | `fixtures/` | JSON documents each language must accept (`valid/`) or reject (`invalid/`) |

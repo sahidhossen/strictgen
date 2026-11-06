@@ -289,6 +289,15 @@ pub struct Order {
     /// The `attributes` key.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub attributes: Option<Attributes>,
+    /// When the order was placed, an RFC 3339 date-time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub placed_at: Option<String>,
+    /// A coupon code, like SPRING-10.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub coupon: Option<String>,
+    /// Items given away with the order, no two the same once decoded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gifts: Option<Vec<Line>>,
 }
 
 impl helpers::Decode for Order {
@@ -302,6 +311,9 @@ impl helpers::Decode for Order {
             delivery: object.optional("delivery")?,
             notes: object.optional("notes")?,
             attributes: object.optional("attributes")?,
+            placed_at: object.optional("placedAt")?,
+            coupon: object.optional("coupon")?,
+            gifts: object.optional("gifts")?,
         };
         object.finish(&[])?;
         Ok(value)
@@ -314,6 +326,18 @@ impl helpers::Decode for Order {
         )?;
         if let Some(value) = &self.delivery {
             helpers::within("delivery", helpers::Decode::check(value))?;
+        }
+        if let Some(value) = &self.placed_at {
+            helpers::within("placedAt", helpers::check_date_time(value))?;
+        }
+        if let Some(value) = &self.coupon {
+            helpers::within("coupon", helpers::check_pattern(value, 0))?;
+        }
+        if let Some(value) = &self.gifts {
+            helpers::within(
+                "gifts",
+                helpers::check_unique_items(value, None, None, helpers::Decode::check),
+            )?;
         }
         Ok(())
     }

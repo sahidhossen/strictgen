@@ -269,6 +269,12 @@ type Order struct {
 	Notes *map[string]Note `json:"notes,omitempty"`
 	// The attributes key.
 	Attributes *Attributes `json:"attributes,omitempty"`
+	// When the order was placed, an RFC 3339 date-time.
+	PlacedAt *string `json:"placedAt,omitempty"`
+	// A coupon code, like SPRING-10.
+	Coupon *string `json:"coupon,omitempty"`
+	// Items given away with the order, no two the same once decoded.
+	Gifts *[]Line `json:"gifts,omitempty"`
 }
 
 // UnmarshalJSON decodes strictly: missing required keys and explicit nulls fail. Unknown keys
@@ -285,6 +291,9 @@ func (v *Order) decode(n *node) *DecodeError {
 		optional(d, "delivery", &out.Delivery, decodeType[Delivery])
 		optional(d, "notes", &out.Notes, decodeMap(decodeString, decodeType[Note]))
 		optional(d, "attributes", &out.Attributes, decodeType[Attributes])
+		optional(d, "placedAt", &out.PlacedAt, decodeString)
+		optional(d, "coupon", &out.Coupon, decodeString)
+		optional(d, "gifts", &out.Gifts, decodeSlice(decodeType[Line]))
 	}, func() { *v = out })
 }
 
@@ -296,6 +305,21 @@ func (v Order) check() *DecodeError {
 	if v.Delivery != nil {
 		if err := (*v.Delivery).check(); err != nil {
 			return err.at("delivery")
+		}
+	}
+	if v.PlacedAt != nil {
+		if err := checkString(*v.PlacedAt, -1, -1, checkDateTime); err != nil {
+			return err.at("placedAt")
+		}
+	}
+	if v.Coupon != nil {
+		if err := checkString(*v.Coupon, -1, -1, patterns[0].check); err != nil {
+			return err.at("coupon")
+		}
+	}
+	if v.Gifts != nil {
+		if err := checkUniqueItems(*v.Gifts, -1, -1, func(item Line) *DecodeError { return item.check() }); err != nil {
+			return err.at("gifts")
 		}
 	}
 	return nil

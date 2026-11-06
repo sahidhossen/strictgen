@@ -6,5 +6,6 @@ helpers.go linguist-generated=true
 order.go linguist-generated=true
 payment_method.go linguist-generated=true
 registry_test.go linguist-generated=true
+shipment.go linguist-generated=true
 subscription.go linguist-generated=true
 user.go linguist-generated=true

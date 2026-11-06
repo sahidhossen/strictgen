@@ -10,7 +10,7 @@ func fixtureDecoders() map[string]func([]byte) (any, error) {
 	return map[string]func([]byte) (any, error){
 		"common/eventId":             asAny(decodeType[EventId]),
 		"common/orderId":             asAny(decodeType[OrderId]),
-		"common/timestamp":           asAny(decodeString),
+		"common/timestamp":           asAny(decodeType[Timestamp]),
 		"common/userId":              asAny(decodeType[UserId]),
 		"event":                      asAny(decodeType[Event]),
 		"event/eventType":            asAny(decodeType[EventType]),
@@ -22,6 +22,12 @@ func fixtureDecoders() map[string]func([]byte) (any, error) {
 		"payment-method/bankAccount": asAny(decodeType[BankAccount]),
 		"payment-method/card":        asAny(decodeType[Card]),
 		"payment-method/wallet":      asAny(decodeType[Wallet]),
+		"shipment":                   asAny(decodeType[Shipment]),
+		"shipment/day":               asAny(decodeType[Day]),
+		"shipment/labelCodes":        asAny(decodeType[LabelCodes]),
+		"shipment/parcel":            asAny(decodeType[Parcel]),
+		"shipment/text":              asAny(decodeType[Text]),
+		"shipment/trackingNumber":    asAny(decodeType[TrackingNumber]),
 		"subscription":               asAny(decodeType[Subscription]),
 		"user":                       asAny(decodeType[User]),
 		"user/contact":               asAny(decodeType[Contact]),
@@ -34,6 +40,36 @@ func asAny[T any](decode func(*node) (T, *DecodeError)) func([]byte) (any, error
 	return func(data []byte) (any, error) {
 		v, err := decodeRoot(data, decode)
 		return v, err
+	}
+}
+
+// fixtureTypes maps each fixture folder whose type json.Unmarshal can decode to a function that
+// returns a new value of that type, so tests can decode every fixture through json.Unmarshal too.
+func fixtureTypes() map[string]func() json.Unmarshaler {
+	return map[string]func() json.Unmarshaler{
+		"common/eventId":             func() json.Unmarshaler { return new(EventId) },
+		"common/orderId":             func() json.Unmarshaler { return new(OrderId) },
+		"common/timestamp":           func() json.Unmarshaler { return new(Timestamp) },
+		"common/userId":              func() json.Unmarshaler { return new(UserId) },
+		"event":                      func() json.Unmarshaler { return new(Event) },
+		"event/eventType":            func() json.Unmarshaler { return new(EventType) },
+		"order":                      func() json.Unmarshaler { return new(Order) },
+		"order/code":                 func() json.Unmarshaler { return new(Code) },
+		"order/codes":                func() json.Unmarshaler { return new(Codes) },
+		"order/line":                 func() json.Unmarshaler { return new(Line) },
+		"payment-method/bankAccount": func() json.Unmarshaler { return new(BankAccount) },
+		"payment-method/card":        func() json.Unmarshaler { return new(Card) },
+		"payment-method/wallet":      func() json.Unmarshaler { return new(Wallet) },
+		"shipment":                   func() json.Unmarshaler { return new(Shipment) },
+		"shipment/day":               func() json.Unmarshaler { return new(Day) },
+		"shipment/labelCodes":        func() json.Unmarshaler { return new(LabelCodes) },
+		"shipment/parcel":            func() json.Unmarshaler { return new(Parcel) },
+		"shipment/text":              func() json.Unmarshaler { return new(Text) },
+		"shipment/trackingNumber":    func() json.Unmarshaler { return new(TrackingNumber) },
+		"subscription":               func() json.Unmarshaler { return new(Subscription) },
+		"user":                       func() json.Unmarshaler { return new(User) },
+		"user/contact":               func() json.Unmarshaler { return new(Contact) },
+		"user/role":                  func() json.Unmarshaler { return new(Role) },
 	}
 }
 
@@ -50,16 +86,23 @@ func unmarshalers() []json.Unmarshaler {
 		new(Contact),
 		new(ContactEmail),
 		new(ContactPhone),
+		new(Day),
 		new(Event),
 		new(EventId),
 		new(EventType),
+		new(LabelCodes),
 		new(Line),
 		new(NonNullJson),
 		new(Order),
 		new(OrderId),
 		new(OrderSize),
+		new(Parcel),
 		new(Role),
+		new(Shipment),
 		new(Subscription),
+		new(Text),
+		new(Timestamp),
+		new(TrackingNumber),
 		new(User),
 		new(UserId),
 		new(Wallet),

@@ -21,7 +21,7 @@ Decoding stops at the first problem. Keys are checked in schema order, then unkn
 
 ## Constraints
 
-The decoders check `minLength`, `maxLength`, `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems`, `minProperties` and `maxProperties`, unless the config sets `"validation": false`. Every language checks them in one fixed order, so they report the same first error:
+The decoders check `minLength`, `maxLength`, `pattern`, `format`, `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems`, `uniqueItems`, `minProperties` and `maxProperties`, unless the config sets `"validation": false`. Every language checks them in one fixed order, so they report the same first error:
 
 1. Structure first. A value whose structure doesn't fit its type, anywhere, fails with that error: a wrong type, a missing or unknown key, a bad tag, a value outside an enum. No constraint is checked then, even one that comes earlier in the value
 2. Then one walk over the decoded value, which stops at the first constraint that fails:
@@ -30,7 +30,7 @@ The decoders check `minLength`, `maxLength`, `minimum`, `exclusiveMinimum`, `max
    - an array's items by index
    - a map's keys in code point order (the byte order of their UTF-8, not the input order), each key's own constraints before its value's
    - a union's checks are those of the branch that decoded. Constraints never pick the branch: a value that fits a variant's structure is that variant, and breaking its constraints is an error, not a reason to try the next one
-3. A value's own constraints in this order: `minLength`, `maxLength`; `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`; `minItems`, `maxItems`; `minProperties`, `maxProperties`
+3. A value's own constraints in this order: `minLength`, `maxLength`, `pattern`, `format`; `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`; `minItems`, `maxItems`, `uniqueItems`, all before any item is checked; `minProperties`, `maxProperties`
 
 How each one compares:
 
@@ -38,6 +38,9 @@ How each one compares:
 - Integers compare exactly. Their bounds and `multipleOf` must be safe integers, from -9007199254740991 to 9007199254740991, which every language holds, or generation fails
 - Numbers compare as the nearest 64-bit float to the number as spelled, for the value and for the bound, in every language: Go parses its `json.Number` with `strconv.ParseFloat`, Rust reads a number that isn't an integer with Rust's own parser into a `serde_json::Number` and compares its `as_f64()`, and TypeScript compares the `number` it read. So `1E3` and `1000` are the same number, and a value too close to a bound to tell apart as a float is equal to it
 - `multipleOf` applies to integers only. On a number generation fails, since float division rounds differently from language to language
+- `pattern` matches anywhere in the string, as JSON Schema says: `x` holds for `axb`. Anchor it with `^` and `$` to match the whole string. See [patterns](#patterns)
+- `format` is checked by one hand-written grammar per format in every language, no regex or date library. See [formats](#formats)
+- `uniqueItems` compares the decoded items by their [RFC 8785](https://www.rfc-editor.org/rfc/rfc8785) canonical JSON: object keys in any order, numbers as 64-bit floats (`1`, `1.0` and `1e0` are equal, and so are `0` and `-0`), strings by their characters (`"a"` and `"\u0061"` are equal). The error is at the later of the two items, with the index of the earlier in `found`. In report mode unknown keys are not part of the decoded value, so two items that differ only in unknown keys are equal
 
 An error at a value shows, in `expected` and `found`:
 
@@ -48,6 +51,9 @@ An error at a value shows, in `expected` and `found`:
 | `too_small` | `>= 0.5` for `minimum`, `> 0` for `exclusiveMinimum` | the value |
 | `too_large` | `<= 99` for `maximum`, `< 1000` for `exclusiveMaximum` | the value |
 | `not_multiple_of` | `a multiple of 6` | the value |
+| `pattern_mismatch` | `matching ` and the pattern as the schema writes it, like `matching ^[A-Z]{3}$` | the string |
+| `bad_format` | `a date-time`, `a date` or `a UUID` | the string |
+| `not_unique` | `unique items` | `a repeat of item 0`, the index of the earlier item |
 
 A number in these errors is written the way JavaScript writes it, in every language: the shortest digits that read back as the same float, like `0.1`, `1000` for `1E3`, `1e-7` and `1e+21`, and `-0`. It is not the spelling in the input, which TypeScript doesn't keep.
 
@@ -55,11 +61,54 @@ A number in these errors is written the way JavaScript writes it, in every langu
 /note: too long, expected at most 5 characters, found 6 characters
 /price: too large, expected < 1000, found 1000
 /attributes/a: too short, expected at least 3 characters, found 1 character
+/tracking: pattern mismatch, expected matching ^[A-Z]{2}\d{9}[A-Z]{2}$, found "AB12345678US"
+/shippedAt: bad format, expected a date-time, found "2024-01-02 03:04:05Z"
+/labels/2: not unique, expected unique items, found a repeat of item 0
 ```
 
-A constraint that can't be checked the same way in every language, or isn't checked yet, fails generation rather than being ignored: `multipleOf` on a number and `uniqueItems` (`unsupported-constraint`), a constraint where it doesn't apply, like `maxLength` on an integer, beside `$ref` or `enum`, or `minProperties` on an object with named properties (`misplaced-keyword`), and a value out of range, like a negative `minLength` (`invalid-constraint`). `pattern` and `format` are read but not checked yet.
+A constraint that can't be checked the same way in every language fails generation rather than being ignored: `multipleOf` on a number (`unsupported-constraint`), a pattern outside the [portable subset](#patterns) (`unsupported-pattern`), a format other than `date-time`, `date` and `uuid` (`unsupported-format`), a `not` beside a string, like `{ "type": "string", "not": { "enum": ["admin"] } }` (`unsupported-not`), a constraint where it doesn't apply, like `maxLength` on an integer, beside `$ref` or `enum`, or `minProperties` on an object with named properties (`misplaced-keyword`), and a value out of range, like a negative `minLength` or a `uniqueItems` that isn't a boolean (`invalid-constraint`). With `"validation": false` the checks are left out, but such a constraint still fails generation.
 
-Every entry point checks: in Rust, `T::from_json` and `T::report_from_json`, through the `Decode` trait's `check` method; in Go, `json.Unmarshal` (through `UnmarshalJSON`), `Report[T]` and the `DecodeX` and `ReportX` functions of tagged unions; in TypeScript, `decodeX`, `decodeXFromJson`, `reportX`, `reportXFromJson` and their `tryDecode` forms. A def with constraints that stands for a type that can't carry them, like `codes` for a list of at most two codes or `code` for a string of 3 characters, is generated as a type of its own in Rust and Go so that it can: a newtype in Rust (`pub struct Codes(pub Vec<Code>)`, which serializes as the list) and a defined type in Go (`type Codes []Code`). TypeScript keeps a type alias, since its decoders check either way. A def that only refers to another type, or has no constraints, stays an alias in every language.
+### Patterns
+
+A pattern is read as JSON Schema says, as an ECMAScript regular expression with the `u` flag, then rewritten into one portable form that Rust's [`regex`](https://docs.rs/regex) crate, Go's `regexp` (RE2) and ECMAScript read the same way. Each language compiles it once. The subset:
+
+| Syntax | Meaning in every language |
+| ------ | ------------------------- |
+| Characters, and `\` before any of `^$\.*+?()[]{}\|/` | the character itself. Matching is case-sensitive, code point by code point, so `😀` is one character |
+| `^`, `$` | the start and the end of the whole string. `$` does not match before a final line feed |
+| `.` | any character but `\n`, `\r`, U+2028 and U+2029, as in ECMAScript. Go and Rust alone would match the last three |
+| `\d`, `\D` | `[0-9]` and its complement, ASCII only. Rust alone would take any Unicode digit, like `٣` |
+| `\w`, `\W` | `[0-9A-Za-z_]` and its complement, ASCII only |
+| `\s`, `\S` | ECMAScript's white space and line terminators: tab to carriage return, space, U+00A0, U+1680, U+2000 to U+200A, U+2028, U+2029, U+202F, U+205F, U+3000 and U+FEFF, and the complement. Go alone would take ASCII white space without `\v`, Rust U+0085 too |
+| `[...]`, `[^...]` | a class of characters and ranges, with the escapes above, `\-` and `\b` (backspace) inside |
+| `\t`, `\n`, `\v`, `\f`, `\r`, `\0`, `\cX`, `\xHH`, `\uHHHH`, `\u{H...}` | the character they name; a surrogate pair of `\u` escapes is one character |
+| `(...)`, `(?:...)`, `\|` | groups and alternatives |
+| `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`, and their lazy forms | repeats, counts up to 1000, also when nested repeats multiply. A lazy repeat matches the same strings as a greedy one |
+
+Generation fails, with the reason and the character it is at, on everything else: lookaheads and lookbehinds and backreferences (Rust's `regex` and RE2 have neither), named groups, word boundaries `\b` and `\B` (Unicode in Rust, ASCII elsewhere), Unicode property escapes like `\p{L}` (the engines know different properties), inline flags, repeat counts above 1000, a class that matches nothing, and anything that isn't valid ECMAScript with the `u` flag.
+
+Rust checks patterns with the `regex` crate, which the generated code uses only when a schema has a `pattern`. Add it to your crate then, next to `serde` and `serde_json`:
+
+```toml
+[dependencies]
+regex = "1.10"
+```
+
+ECMAScript matches by backtracking, so in TypeScript a pattern with nested repeats, like `^(a+)+$`, can take a long time on a long input that almost matches. Rust and Go match in linear time. Prefer patterns without nested repeats, or limit the length with `maxLength`, which is checked first.
+
+### Formats
+
+| Format | Grammar |
+| ------ | ------- |
+| `date` | [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339#section-5.6) `full-date`: `YYYY-MM-DD`, ASCII digits, a month from 01 to 12 and a day the month has, with Gregorian leap years (2000-02-29 holds, 1900-02-29 does not). The year runs from 0000 to 9999 |
+| `date-time` | RFC 3339 `date-time`: a `date`, `T`, then `HH:MM:SS` with an hour from 00 to 23, a minute from 00 to 59 and a second from 00 to 60, then an optional fraction of a dot and one digit or more, then `Z` or an offset `+HH:MM` or `-HH:MM` (hours 00 to 23, minutes 00 to 59, `-00:00` included). `T` and `Z` may be lower case, as RFC 3339 allows. A second of 60, a leap second, holds only when the time is 23:59 in UTC once the offset is taken off, like `1998-12-31T23:59:60Z` or `1998-12-31T15:59:60-08:00`. No space for `T`, no offset without a colon, nothing before or after |
+| `uuid` | [RFC 9562](https://www.rfc-editor.org/rfc/rfc9562#section-4) text form: 32 hex digits in groups of 8, 4, 4, 4 and 12, joined by `-`. Upper and lower case digits both hold, as RFC 9562 says input is case-insensitive, and the version and variant are not checked, so the nil and max UUIDs hold. No braces and no `urn:uuid:` prefix |
+
+The string is kept as it is, so it encodes back byte for byte.
+
+Every entry point checks: in Rust, `T::from_json` and `T::report_from_json`, through the `Decode` trait's `check` method; in Go, `json.Unmarshal` (through `UnmarshalJSON`), `Report[T]` and the `DecodeX` and `ReportX` functions of tagged unions; in TypeScript, `decodeX`, `decodeXFromJson`, `reportX`, `reportXFromJson` and their `tryDecode` forms. A def with constraints that stands for a type that can't carry them, like `codes` for a list of at most two codes or `code` for a string of 3 characters, is generated as a type of its own in Rust so that it can: a newtype (`pub struct Codes(pub Vec<Code>)`, which serializes as the list). In Go every def that isn't a `$ref` to another def is a defined type, like `type Codes []Code` or `type Name string`, with an `UnmarshalJSON` that reads with the strict parser, so `json.Unmarshal` into it rejects what Rust and TypeScript reject, like `1e400` for a number or a key given twice, whether or not it has constraints. TypeScript keeps a type alias, since its decoders check either way. A def that only refers to another def stays an alias in every language, and in Rust so does one without constraints.
+
+`json.Unmarshal` checks that its input is JSON before any `UnmarshalJSON` runs, so for text that isn't JSON it returns its own `*json.SyntaxError` rather than an `invalid_json` `DecodeError`. `Report[T]` and the `DecodeX` functions always return the `DecodeError`.
 
 In report mode the same constraints are checked in the same order. Unknown keys are not structure errors there, so a value with unknown keys and a broken constraint fails with the constraint error, and the unknown key hook isn't called for a decode that fails.
 
@@ -96,15 +145,13 @@ Codes are public API: changing one is a major version.
 | `too_small` | too small | a number below its `minimum`, or not above its `exclusiveMinimum` | the bound | the value |
 | `too_large` | too large | a number above its `maximum`, or not below its `exclusiveMaximum` | the bound | the value |
 | `not_multiple_of` | not a multiple | an integer that isn't a multiple of its `multipleOf` | the multiple | the value |
-| `pattern_mismatch` | pattern mismatch | a string that doesn't match its pattern | | |
-| `bad_format` | bad format | a string that isn't in its format | | |
-| `not_unique` | not unique | an array whose items must be unique, with a repeat | | |
+| `pattern_mismatch` | pattern mismatch | a string that doesn't match its pattern | `matching` and the pattern | the string |
+| `bad_format` | bad format | a string that isn't in its format, like date-time | the format, like `a date-time` | the string |
+| `not_unique` | not unique | an array whose items must be unique, with a repeat; `path` is the later item's pointer | `unique items` | `a repeat of item` and the earlier index |
 | `out_of_range_integer` | out of range integer | an integer the language can't hold exactly | the range | the value |
 | `invalid_json` | invalid JSON | text that isn't JSON: a syntax error, invalid UTF-8, a lone surrogate, data after the value, a number out of range | | what was found and the byte offset |
 | `duplicate_key` | duplicate key | an object that gives the same key twice, at the key's pointer | | the key and the byte offset |
 | `too_deep` | too deep | a value inside 128 or more arrays and objects | `at most 127 nested arrays and objects` | the byte offset |
-
-`pattern_mismatch`, `bad_format` and `not_unique` are reserved for `pattern`, `format` and `uniqueItems`, and not reported yet.
 
 Some cases worth knowing:
 

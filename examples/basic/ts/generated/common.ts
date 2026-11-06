@@ -115,12 +115,18 @@ export function encodeOrderIdToJson(value: OrderId): string {
 /** An RFC 3339 date and time in UTC. */
 export type Timestamp = string;
 
+/** Decodes the structure of Timestamp, checking constraints only while h.checked asks for it. */
+function readTimestamp(json: unknown, path: string): Timestamp {
+  return h.format(h.decodeString, "date-time")(json, path);
+}
+
 /**
- * Decodes parsed JSON as Timestamp, strictly. Throws a DecodeError at the JSON Pointer of
- * the first problem, under `path` when given.
+ * Decodes parsed JSON as Timestamp, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
  */
 export function decodeTimestamp(json: unknown, path = ""): Timestamp {
-  return h.decodeString(json, path);
+  return h.checked(json, path, readTimestamp);
 }
 
 /** Like decodeTimestamp, but returns the DecodeError instead of throwing it. */

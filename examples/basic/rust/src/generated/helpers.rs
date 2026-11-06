@@ -956,6 +956,267 @@ pub(super) fn check_length(
     check_count(text.chars().count(), min, max, "character", "characters")
 }
 
+/// Checks the number of items of an array, then that no two are equal, then each item with
+/// item. Two items are equal when their RFC 8785 canonical JSON is, as in Go and TypeScript, so
+/// 1 and 1.0 are equal and key order doesn't count. The error is at the later of the two.
+pub(super) fn check_unique_items<T: Serialize>(
+    items: &[T],
+    min: Option<usize>,
+    max: Option<usize>,
+    item: impl Fn(&T) -> Result<(), DecodeError>,
+) -> Result<(), DecodeError> {
+    check_count(items.len(), min, max, "item", "items")?;
+    let mut seen = HashMap::with_capacity(items.len());
+    for (i, value) in items.iter().enumerate() {
+        let json = serde_json::to_value(value).map_err(|error| {
+            DecodeError::new(
+                DecodeError::WRONG_TYPE,
+                Some("a JSON value".to_owned()),
+                Some(error.to_string()),
+            )
+            .at(&i.to_string())
+        })?;
+        let mut key = String::new();
+        canonical(&json, &mut key);
+        if let Some(first) = seen.get(&key) {
+            return Err(DecodeError::new(
+                DecodeError::NOT_UNIQUE,
+                Some("unique items".to_owned()),
+                Some(format!("a repeat of item {first}")),
+            )
+            .at(&i.to_string()));
+        }
+        seen.insert(key, i);
+    }
+    for (i, value) in items.iter().enumerate() {
+        item(value).map_err(|error| error.at(&i.to_string()))?;
+    }
+    Ok(())
+}
+
+/// Writes a value's RFC 8785 canonical JSON: object keys sorted by UTF-16 code units, numbers as
+/// JavaScript writes them with -0 as 0, and strings escaped as JSON.stringify does.
+fn canonical(value: &serde_json::Value, out: &mut String) {
+    match value {
+        serde_json::Value::Null => out.push_str("null"),
+        serde_json::Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+        // Adding 0.0 turns -0 into 0 and leaves every other number as it is.
+        serde_json::Value::Number(n) => match n.as_f64() {
+            Some(number) => out.push_str(&number_text(number + 0.0)),
+            None => out.push_str(&n.to_string()),
+        },
+        serde_json::Value::String(text) => canonical_string(text, out),
+        serde_json::Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical(item, out);
+            }
+            out.push(']');
+        }
+        serde_json::Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            out.push('{');
+            for (i, key) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                canonical_string(key, out);
+                out.push(':');
+                canonical(&map[key], out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+/// Writes a string as JSON.stringify does: " and \ escaped, \b, \f, \n, \r and \t, and the other
+/// control characters as \u and four lower case hex digits.
+fn canonical_string(text: &str, out: &mut String) {
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{0}'..='\u{1f}' => {
+                let code = u32::from(c);
+                out.push_str("\\u00");
+                for shift in [4, 0] {
+                    out.push(char::from_digit((code >> shift) & 0xf, 16).unwrap_or('0'));
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
+/// Checks that a string matches the pattern at index in PATTERNS. As JSON Schema says, a pattern
+/// matches anywhere in the string unless it anchors itself with ^ or $. The patterns compile
+/// once, on first use.
+pub(super) fn check_pattern(text: &str, index: usize) -> Result<(), DecodeError> {
+    static COMPILED: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
+        PATTERNS
+            .iter()
+            .map(|(regex, _)| {
+                regex::Regex::new(regex)
+                    .expect("strictgen writes every pattern in a form regex compiles")
+            })
+            .collect()
+    });
+    if COMPILED[index].is_match(text) {
+        return Ok(());
+    }
+    Err(DecodeError::new(
+        DecodeError::PATTERN_MISMATCH,
+        Some(format!("matching {}", PATTERNS[index].1)),
+        Some(quote(text)),
+    ))
+}
+
+/// The error for a string that isn't in its format.
+fn bad_format(expected: &str, text: &str) -> DecodeError {
+    DecodeError::new(
+        DecodeError::BAD_FORMAT,
+        Some(expected.to_owned()),
+        Some(quote(text)),
+    )
+}
+
+/// The number count ASCII digits from start of bytes stand for, or None when they aren't all digits.
+fn digits(bytes: &[u8], start: usize, count: usize) -> Option<u32> {
+    bytes
+        .get(start..start + count)?
+        .iter()
+        .try_fold(0, |n, &b| {
+            b.is_ascii_digit().then(|| n * 10 + u32::from(b - b'0'))
+        })
+}
+
+/// True when bytes start with a full-date: YYYY-MM-DD, a day the month has, Gregorian leap years.
+fn date_at(bytes: &[u8]) -> bool {
+    let (Some(year), Some(month), Some(day)) = (
+        digits(bytes, 0, 4),
+        digits(bytes, 5, 2),
+        digits(bytes, 8, 2),
+    ) else {
+        return false;
+    };
+    if bytes[4] != b'-' || bytes[7] != b'-' || !(1..=12).contains(&month) || day < 1 {
+        return false;
+    }
+    let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    let days = match month {
+        2 if leap => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    day <= days
+}
+
+/// Checks that a string is a date: an RFC 3339 full-date, like 2024-02-29.
+pub(super) fn check_date(text: &str) -> Result<(), DecodeError> {
+    if text.len() == 10 && date_at(text.as_bytes()) {
+        Ok(())
+    } else {
+        Err(bad_format("a date", text))
+    }
+}
+
+/// Checks that a string is a date-time: an RFC 3339 date-time, like 2024-02-29T23:59:60.5-01:30.
+/// T and Z may be lower case, a fraction has one digit or more, and a leap second is 23:59:60
+/// in UTC.
+pub(super) fn check_date_time(text: &str) -> Result<(), DecodeError> {
+    if is_date_time(text.as_bytes()) {
+        Ok(())
+    } else {
+        Err(bad_format("a date-time", text))
+    }
+}
+
+fn is_date_time(b: &[u8]) -> bool {
+    if b.len() < 20
+        || !date_at(b)
+        || !matches!(b[10], b'T' | b't')
+        || b[13] != b':'
+        || b[16] != b':'
+    {
+        return false;
+    }
+    let (Some(hour), Some(minute), Some(second)) =
+        (digits(b, 11, 2), digits(b, 14, 2), digits(b, 17, 2))
+    else {
+        return false;
+    };
+    if hour > 23 || minute > 59 || second > 60 {
+        return false;
+    }
+    let mut i = 19;
+    if b[i] == b'.' {
+        i += 1;
+        let start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    let offset: i64 = match b.get(i) {
+        Some(b'Z' | b'z') => {
+            i += 1;
+            0
+        }
+        Some(&sign @ (b'+' | b'-')) => {
+            let (Some(hours), Some(minutes)) = (digits(b, i + 1, 2), digits(b, i + 4, 2)) else {
+                return false;
+            };
+            if b.get(i + 3) != Some(&b':') || hours > 23 || minutes > 59 {
+                return false;
+            }
+            i += 6;
+            let offset = i64::from(hours * 60 + minutes);
+            match sign {
+                b'-' => -offset,
+                _ => offset,
+            }
+        }
+        _ => return false,
+    };
+    if i != b.len() {
+        return false;
+    }
+    second != 60 || (i64::from(hour * 60 + minute) - offset).rem_euclid(1440) == 1439
+}
+
+/// Checks that a string is a UUID: RFC 9562's text form, 8-4-4-4-12 hex digits in either case,
+/// of any version.
+pub(super) fn check_uuid(text: &str) -> Result<(), DecodeError> {
+    let bytes = text.as_bytes();
+    let valid = bytes.len() == 36
+        && bytes.iter().enumerate().all(|(i, &b)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                b == b'-'
+            } else {
+                b.is_ascii_hexdigit()
+            }
+        });
+    if valid {
+        Ok(())
+    } else {
+        Err(bad_format("a UUID", text))
+    }
+}
+
 /// Checks the number of items of an array, then each item with item.
 pub(super) fn check_items<T>(
     items: &[T],
@@ -1080,3 +1341,22 @@ fn number_text(number: f64) -> String {
     let exponent_sign = if exponent < 0 { '-' } else { '+' };
     format!("{sign}{first}{point}e{exponent_sign}{}", exponent.abs())
 }
+
+/// The patterns schemas check: each in the portable form, which Go's RE2 and ECMAScript read
+/// the same way, and as the schema writes it, for errors.
+const PATTERNS: [(&str, &str); 11] = [
+    ("^20", "^20"),
+    ("^[A-Z]{2}[0-9]{9}[A-Z]{2}$", "^[A-Z]{2}\\d{9}[A-Z]{2}$"),
+    ("^[A-Z]{3}$", "^[A-Z]{3}$"),
+    ("^[^a-z]{2}$", "^[^a-z]{2}$"),
+    ("^[a-z]+$", "^[a-z]+$"),
+    ("^[0-9]+$", "^\\d+$"),
+    (
+        "^[\u{9}-\u{d} \u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]$",
+        "^\\s$",
+    ),
+    ("^[0-9A-Z_a-z]+$", "^\\w+$"),
+    ("^a$", "^a$"),
+    ("^a[^\u{a}\u{d}\u{2028}\u{2029}]c$", "^a.c$"),
+    ("x", "x"),
+];

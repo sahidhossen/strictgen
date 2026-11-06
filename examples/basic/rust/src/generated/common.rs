@@ -38,7 +38,19 @@ impl helpers::Decode for OrderId {
 /// An RFC 3339 date and time in UTC.
 ///
 /// Schema: `common.json#/$defs/timestamp`.
-pub type Timestamp = String;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct Timestamp(pub String);
+
+impl helpers::Decode for Timestamp {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_date_time(&self.0)
+    }
+}
 
 /// The ID of a user, like `usr_8f2k`.
 ///

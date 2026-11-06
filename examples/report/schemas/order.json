@@ -19,7 +19,15 @@
       "type": "object",
       "additionalProperties": { "$ref": "#/$defs/note" }
     },
-    "attributes": { "$ref": "#/$defs/attributes" }
+    "attributes": { "$ref": "#/$defs/attributes" },
+    "placedAt": { "description": "When the order was placed, an RFC 3339 date-time.", "type": "string", "format": "date-time" },
+    "coupon": { "description": "A coupon code, like SPRING-10.", "type": "string", "pattern": "^[A-Z]+-\\d+$" },
+    "gifts": {
+      "description": "Items given away with the order, no two the same once decoded.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/line" },
+      "uniqueItems": true
+    }
   },
   "required": ["id", "customer", "lines", "payment"],
   "unevaluatedProperties": false,

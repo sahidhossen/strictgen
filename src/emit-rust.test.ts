@@ -158,7 +158,7 @@ const keywordFields: JsonObject = {
 };
 
 describe("string families", () => {
-  it("keep a patterned string a plain String, the pattern not checked yet", () => {
+  it("keep a patterned field a plain String, and make a patterned def a newtype that checks it", () => {
     const model = buildModel(
       schemaSet({
         lib: schema("lib", {
@@ -177,8 +177,11 @@ describe("string families", () => {
     const out = emitRust(model)
       .map((f) => f.contents)
       .join("\n");
-    expect(out).toContain("pub type OrderRef = String;\n");
+    expect(out).toContain("pub struct OrderRef(pub String);\n");
     expect(out).toContain("    pub r#ref: String,\n");
+    expect(out).toContain('helpers::within("ref", helpers::check_pattern(&self.r#ref, 0))?;');
+    expect(out).toContain('    ("^order\\\\.[^\\u{a}\\u{d}\\u{2028}\\u{2029}]+$", "^order\\\\..+$"),\n');
+    expect(out).toContain("pub(super) fn check_pattern(text: &str, index: usize)");
   });
 });
 
@@ -327,6 +330,85 @@ describe("Rust constraints", () => {
     expect(none.map((f) => f.contents).join("\n")).not.toMatch(/fn (within|check_|limit_error|count)\b/);
   });
 
+});
+
+describe("Rust patterns, formats and unique items", () => {
+  const entries: JsonObject = {
+    item: closed(
+      {
+        code: { type: "string", maxLength: 4, pattern: "^[A-Z]+$" },
+        day: { type: "string", pattern: "^20", format: "date" },
+        at: { type: "string", format: "date-time" },
+        id: { type: "string", format: "uuid" },
+        tags: { type: "array", items: { type: "string", maxLength: 1 }, maxItems: 3, uniqueItems: true },
+        byCode: {
+          type: "object",
+          propertyNames: { type: "string", pattern: "^[a-z]+$" },
+          additionalProperties: { type: "integer" },
+        },
+      },
+    ),
+    stamp: { type: "string", format: "date-time" },
+  };
+  const files = emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: entries }) })));
+  const text = (name: string): string => files.find((f) => f.name === name)?.contents ?? "";
+
+  it("check the length, then the pattern, then the format, one after the other", () => {
+    const lib = text("lib.rs");
+    expect(lib).toContain(
+      'helpers::check_length(value, None, Some(4)).and_then(|()| helpers::check_pattern(value, 1))',
+    );
+    expect(lib).toContain(
+      'helpers::check_pattern(value, 0).and_then(|()| helpers::check_date(value))',
+    );
+    expect(lib).toContain("helpers::check_date_time(value)");
+    expect(lib).toContain("helpers::check_uuid(value)");
+    expect(lib).toContain(
+      "helpers::check_unique_items(value, None, Some(3), |item| helpers::check_length(item, None, Some(1)))",
+    );
+    expect(lib).toContain("|item| helpers::check_pattern(item, 2)");
+  });
+
+  it("make an alias with a format a newtype that checks it", () => {
+    expect(text("lib.rs")).toContain("pub struct Stamp(pub String);\n");
+    expect(text("lib.rs")).toContain("        helpers::check_date_time(&self.0)\n");
+  });
+
+  it("compile the patterns once with the regex crate, from a table in the portable form", () => {
+    const helpers = text("helpers.rs");
+    expect(helpers).toContain(
+      'const PATTERNS: [(&str, &str); 3] = [\n    ("^20", "^20"),\n    ("^[A-Z]+$", "^[A-Z]+$"),\n    ("^[a-z]+$", "^[a-z]+$"),\n];\n',
+    );
+    expect(helpers).toContain("static COMPILED: std::sync::LazyLock<Vec<regex::Regex>>");
+    expect(helpers).toContain("pub(super) fn check_unique_items<T: Serialize>(");
+    expect(helpers).toContain("fn canonical(value: &serde_json::Value, out: &mut String) {");
+  });
+
+  it("check an id's pattern", () => {
+    const ids = emitRust(
+      buildModel(
+        schemaSet({ common: schema("common", { $defs: { orderId: { type: "string", pattern: "^ord_" } } }) }),
+        { ids: { file: "common", suffix: "Id" } },
+      ),
+    );
+    expect(ids.find((f) => f.name === "common.rs")?.contents).toContain("        helpers::check_pattern(&self.0, 0)\n");
+  });
+
+  it("depend on regex only when a schema checks a pattern", () => {
+    const plain = emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: { at: entries.stamp ?? {} } }) })));
+    const all = plain.map((f) => f.contents).join("\n");
+    expect(all).toContain("check_date_time");
+    expect(all).not.toContain("regex");
+  });
+
+  it("write a long pattern row as rustfmt does, so formatting doesn't change it", () => {
+    const long = emitRust(
+      buildModel(schemaSet({ lib: schema("lib", { $defs: { s: { type: "string", pattern: "^\\s$" } } }) })),
+    );
+    expect(long.find((f) => f.name === "helpers.rs")?.contents).toContain(
+      '    (\n        "^[\\u{9}-\\u{d} \\u{a0}\\u{1680}\\u{2000}-\\u{200a}\\u{2028}\\u{2029}\\u{202f}\\u{205f}\\u{3000}\\u{feff}]$",\n        "^\\\\s$",\n    ),\n',
+    );
+  });
 });
 
 describe("Rust constrained aliases", () => {

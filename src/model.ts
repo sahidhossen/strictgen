@@ -31,15 +31,28 @@ export type TypeExpr =
 export interface StringType {
   readonly kind: "string";
   /**
-   * The schema's `pattern`, which no decoder checks yet. TypeScript types a fixed prefix or
-   * suffix family by it, like `order.${string}`. Kept when validation is off.
+   * The schema's `pattern`, as written. TypeScript types a fixed prefix or suffix family by it,
+   * like `order.${string}`. Kept when validation is off.
    */
   readonly pattern?: string;
-  /** The schema's `format`, `date-time` or `date`, which no decoder checks yet. */
-  readonly format?: string;
+  /** The pattern every decoder checks. Absent when the schema has none or validation is off. */
+  readonly match?: Pattern;
+  /** The schema's `format`, which every decoder checks. Absent when validation is off. */
+  readonly format?: Format;
   readonly minLength?: number;
   readonly maxLength?: number;
 }
+
+/** A pattern to check: as the schema writes it, and in the portable form src/pattern.ts gives. */
+export interface Pattern {
+  /** The pattern as written, which errors show. */
+  readonly source: string;
+  /** The portable form, which Rust's regex, Go's RE2 and ECMAScript read the same way. */
+  readonly regex: string;
+}
+
+/** The formats every decoder checks, each by one grammar docs/error-codes.md writes out. */
+export type Format = "date-time" | "date" | "uuid";
 
 /** The bounds of an integer or a number, each inclusive or exclusive. */
 export interface Bounds {
@@ -61,12 +74,14 @@ export interface NumberType extends Bounds {
   readonly kind: "number";
 }
 
-/** An array, with limits on its number of items. */
+/** An array, with limits on its number of items, and whether they must be unique. */
 export interface ArrayType {
   readonly kind: "array";
   readonly items: TypeExpr;
   readonly minItems?: number;
   readonly maxItems?: number;
+  /** No two items are equal, comparing their RFC 8785 canonical JSON. Absent when false. */
+  readonly uniqueItems?: true;
 }
 
 /** A JSON object used as a map, with limits on its number of keys. */

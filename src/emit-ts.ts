@@ -1,4 +1,4 @@
-import { Checks, limitsOf } from "./checks.js";
+import { Checks, limitsOf, patternsOf } from "./checks.js";
 import type { EmittedFile } from "./common.js";
 import { bySchema, commentHeader, compare, DEFAULT_HEADER, declTypes, imports } from "./common.js";
 import type { ReadMode } from "./config.js";
@@ -52,6 +52,8 @@ interface Ctx {
   readonly checks: Checks;
   /** The generated functions of declarations a file calls, like `decodeUserId`. */
   readonly calls: Set<string>;
+  /** The index of each checked pattern in the helpers' table, by the pattern as written. */
+  readonly patterns: ReadonlyMap<string, number>;
 }
 
 /**
@@ -68,6 +70,8 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   if (report && !decoders) throw new Error("report mode needs the decoders");
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   const checks = new Checks(model.decls);
+  const patterns = patternsOf(model.decls);
+  const indexes = new Map(patterns.map((p, i) => [p.source, i]));
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name) || TS_RESERVED.has(decl.name)) {
       throw new CodegenError(
@@ -86,7 +90,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
         `a schema named ${schema} clashes with ${schema}.ts`,
         "rename the schema file",
       );
-    const ctx: Ctx = { decls, report, checks, calls: new Set() };
+    const ctx: Ctx = { decls, report, checks, calls: new Set(), patterns: indexes };
     const body = own.map((decl) => declaration(ctx, decl, decoders)).join("\n");
     const what = decoders ? "Types and decoders" : "Types";
     const head = `${header}\n\n/** ${what} for \`${schema}.json\`. */\n\n`;
@@ -108,7 +112,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   }
   return [
     ...files,
-    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report)}` }] : []),
+    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report, patterns)}` }] : []),
     { name: "index.ts", contents: `${header}\n\n${index.join("")}` },
   ];
 }
@@ -269,14 +273,9 @@ function decodeBody(ctx: Ctx, decl: Decl): string {
     case "enum":
       return `  return h.enumValue(json, path, [${decl.values.map((v) => JSON.stringify(v)).join(", ")}] as const);\n`;
     case "id": {
-      // An id is a branded string, so its pattern types nothing.
-      const { minLength, maxLength } = decl.type;
-      const string = decoder(ctx, {
-        kind: "string",
-        ...(minLength === undefined ? {} : { minLength }),
-        ...(maxLength === undefined ? {} : { maxLength }),
-      });
-      return `  return ${string}(json, path) as ${decl.name};\n`;
+      // An id is a branded string, so its pattern types nothing, though it is checked.
+      const { pattern: _, ...checked } = decl.type;
+      return `  return ${decoder(ctx, checked)}(json, path) as ${decl.name};\n`;
     }
     case "alias":
       return `  return ${decoder(ctx, decl.type)}(json, path);\n`;
@@ -390,10 +389,16 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
       ctx.calls.add(`decode${type.name}`);
       return `decode${type.name}`;
     case "string": {
+      // Each wrapper checks after the decoder it wraps, so the checks run in the order of
+      // src/checks.ts: the length, then the pattern, then the format.
       const text = stringType(type.pattern);
-      const base = text === "string" ? "h.decodeString" : `h.family<${text}>()`;
-      if (type.minLength === undefined && type.maxLength === undefined) return base;
-      return `h.length(${base}, ${limit(type.minLength)}, ${limit(type.maxLength)})`;
+      let out = text === "string" ? "h.decodeString" : `h.family<${text}>()`;
+      if (type.minLength !== undefined || type.maxLength !== undefined)
+        out = `h.length(${out}, ${limit(type.minLength)}, ${limit(type.maxLength)})`;
+      if (type.match !== undefined)
+        out = `h.matches(${out}, ${String(ctx.patterns.get(type.match.source) ?? -1)})`;
+      if (type.format !== undefined) out = `h.format(${out}, ${JSON.stringify(type.format)})`;
+      return out;
     }
     case "integer":
     case "number": {
@@ -413,6 +418,8 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
       return "h.decodeNonNull";
     case "array": {
       const items = decoder(ctx, type.items);
+      if (type.uniqueItems === true)
+        return `h.array(${items}, ${limit(type.minItems)}, ${limit(type.maxItems)}, true)`;
       if (type.minItems === undefined && type.maxItems === undefined) return `h.array(${items})`;
       return `h.array(${items}, ${limit(type.minItems)}, ${limit(type.maxItems)})`;
     }
