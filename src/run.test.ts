@@ -151,7 +151,7 @@ describe("help, version and usage", () => {
   });
 
   it.each([
-    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, dirs, fix'],
+    [["bogus"], 'error: unknown command "bogus". Commands: generate, check, explain, examples, docs, dirs, fix'],
     [["--bogus"], "error: Unknown option '--bogus'"],
     [["generate", "extra"], 'error: unexpected argument "extra"'],
     [["--json"], "error: --json only applies to strictgen dirs and strictgen explain"],

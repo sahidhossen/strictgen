@@ -650,15 +650,20 @@ function read(ctx: Ctx, f: Field, name: string): string {
     : `optional(d, ${key}, &out.${name}, ${decode})`;
 }
 
+/** The Go type of a field, as {@link fieldType} gives it, for a model's declarations. */
+export function goFieldType(decls: ReadonlyMap<string, Decl>, f: Field): string {
+  return fieldType({ decls }, f);
+}
+
 /** The Go type of a field: a pointer when optional or boxed, unless nil already means absent. */
-function fieldType(ctx: Ctx, f: Field): string {
+function fieldType(ctx: Pick<Ctx, "decls">, f: Field): string {
   const type = goType(f.type);
   if (f.required) return f.boxed ? `*${type}` : type;
   return isValue(ctx, f.type) ? type : `*${type}`;
 }
 
 /** Types whose zero value is nil, so an optional one needs no pointer: interfaces and json.RawMessage. */
-function isValue(ctx: Ctx, type: TypeExpr): boolean {
+function isValue(ctx: Pick<Ctx, "decls">, type: TypeExpr): boolean {
   const resolved = resolve(ctx, type);
   if (resolved.kind === "any") return true;
   return resolved.kind === "ref" && ctx.decls.get(resolved.name)?.kind === "tagged";
@@ -668,7 +673,7 @@ function isValue(ctx: Ctx, type: TypeExpr): boolean {
  * Follows aliases to the type they stand for. With `plain`, it stops at a constrained alias,
  * which is a defined type of its own.
  */
-function resolve(ctx: Ctx, type: TypeExpr, plain = false): TypeExpr {
+function resolve(ctx: Pick<Ctx, "decls">, type: TypeExpr, plain = false): TypeExpr {
   let current = type;
   for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
     const decl = ctx.decls.get(current.name);

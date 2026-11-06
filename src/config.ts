@@ -74,10 +74,13 @@ export interface LlmConfig {
   readonly cleanup: boolean;
 }
 
-/** Not yet active. */
+/** How `strictgen docs` writes: a Markdown page per type, or one HTML page with every type. */
+export type DocsFormat = "markdown" | "html";
+
+/** What `strictgen docs` writes, and where. The folder is shared: only generated files are replaced. */
 export interface DocsConfig {
   readonly out: string;
-  readonly format: "markdown";
+  readonly format: DocsFormat;
 }
 
 /** The formatter each language's output goes through, or `none`. */
@@ -107,6 +110,8 @@ export interface Config {
 
 
 const READ_MODES = ["strict", "report"] as const;
+/** The values of `docs.format`. */
+export const DOCS_FORMATS: readonly DocsFormat[] = ["markdown", "html"];
 const ONE_LINE = /^[^\u0000-\u001f\u007f]+$/;
 const GO_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const RUST_PATH = /^[A-Za-z_][A-Za-z0-9_]*(::[A-Za-z_][A-Za-z0-9_]*)*$/;
@@ -388,7 +393,7 @@ function readDocs(r: Reader, value: unknown, path: Resolve): DocsConfig {
   const o = r.object(value, "docs", ["out", "format"]);
   return {
     out: path(r.required(o, "docs", "out"), "docs.out"),
-    format: r.oneOf(o.format, "docs.format", ["markdown"], "markdown"),
+    format: r.oneOf(o.format, "docs.format", DOCS_FORMATS, "markdown"),
   };
 }
 
@@ -439,8 +444,11 @@ function checkFolders(r: Reader, config: Config): void {
       r.fail(folder.option, "holds the schemas folder, and the folder is cleared before writing");
     }
   }
-  for (const [i, a] of folders.entries()) {
-    for (const b of folders.slice(i + 1)) {
+  // The docs folder is shared, so it may hold other folders, but not be or sit in a target's.
+  const docs = config.docs === undefined ? [] : [{ option: "docs.out", path: config.docs.out, owned: false }];
+  const all = [...folders, ...docs];
+  for (const [i, a] of all.entries()) {
+    for (const b of all.slice(i + 1)) {
       if (samePath(a.path, b.path)) r.fail(b.option, `is the same folder as ${a.option}`);
       const [outer, inner] = within(b.path, a.path) ? [a, b] : [b, a];
       if (outer.owned && within(inner.path, outer.path)) {

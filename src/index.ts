@@ -8,6 +8,7 @@ export type {
   Config,
   ConfigFolder,
   DocsConfig,
+  DocsFormat,
   FormatConfig,
   GoConfig,
   LlmConfig,
@@ -17,7 +18,15 @@ export type {
   Targets,
   TypeScriptConfig,
 } from "./config.js";
-export { CONFIG_FILE, ConfigError, configFolders, loadConfig, parseConfig } from "./config.js";
+export {
+  CONFIG_FILE,
+  ConfigError,
+  configFolders,
+  DOCS_FORMATS,
+  loadConfig,
+  parseConfig,
+} from "./config.js";
+export { DOCS_HTML, DOCS_INDEX, docsFiles, docsTarget } from "./docs.js";
 export type { GoOptions } from "./emit-go.js";
 export { emitGo, emitGoAttributes, emitGoFixtures, GO_FIXTURES, GO_PACKAGE } from "./emit-go.js";
 export type { LintAllow, RustOptions } from "./emit-rust.js";
@@ -25,6 +34,8 @@ export { DEFAULT_ALLOW, emitRust, emitRustFixtures } from "./emit-rust.js";
 export { emitRustSchemas } from "./emit-schemas.js";
 export type { TypeScriptOptions } from "./emit-ts.js";
 export { emitTypeScript } from "./emit-ts.js";
+export type { ExamplesOptions } from "./examples.js";
+export { configModel, examples, UnknownTypeError, writeDocs } from "./examples.js";
 export type { Explanation, Failure, TargetExplanation } from "./explain.js";
 export { explain, ExplainError, explanationLines } from "./explain.js";
 export type {
@@ -55,6 +66,8 @@ export {
   writeOutput,
 } from "./main.js";
 export type * from "./model.js";
+export type { GeneratorOptions, NearMiss, Payload } from "./payloads.js";
+export { canonical, GenerateError, inFormat, PayloadGenerator, pointer, Random } from "./payloads.js";
 export type { Json, JsonObject, SchemaFile, SchemaOptions, SchemaSet } from "./schema.js";
 export { CodegenError, idBaseOf, loadSchemas, schemaSet } from "./schema.js";
 export type { RuleId } from "./rules.js";

@@ -33,6 +33,8 @@ strictgen check           # exit 1 if the generated files on disk are out of dat
 strictgen dirs [--json]   # print the folders the targets write to
 strictgen explain user.json#/$defs/address   # show how one type maps in each language
 strictgen fix [--write]   # rewrite the schemas into the supported subset, as a diff or in place
+strictgen examples Order --count 3 [--invalid] [--seed 7] [--array]   # print sample payloads
+strictgen docs [--format markdown|html]   # write a page per type into docs.out
 ```
 
 Every command takes `--config <path>` to read a config other than `strictgen.json` in the current folder, and `--help`. `strictgen --version` prints the version.
@@ -85,6 +87,22 @@ When the type can't be generated, `explain` prints the rule it breaks, the reaso
 - `hoist-defs` turns `definitions` into `$defs`, moves `$defs` written inside a schema up to the root, moves a schema a `$ref` points into, like `#/properties/shipping/properties/address`, into `$defs` under a name taken from its path, like `address` or `shippingAddress` when that is taken, and renames a def a `$ref` can't name, like `order-item` to `orderItem`. Every `$ref` to a moved schema, in any file, follows it
 
 By default it prints a unified diff and writes nothing, so `strictgen fix > fix.patch` gives a patch. `--write` writes the changed files in place instead, even when generation still fails afterwards and the exit code is 1. Only files in the schemas folder are written, and only once every file was rewritten and read back. Each goes to a temporary file first, then all are renamed into place. The renames aren't atomic as a group: if one fails, the error names the files already written. `fix` rejects a schema file with a duplicate key, which generation accepts (it keeps the last value), since a rewrite would drop one of them. A rewritten file keeps its key order, indentation, line endings and the formatting of every part no rule touched. Then `fix` generates every target in memory and prints the first error left, with the file, JSON pointer, rule and hint, and a notice for each thing a rule left as it was. It exits 1 when generation still fails, and 0 when the schemas generate.
+
+### `examples`
+
+`strictgen examples <type>` prints payloads of a type, named as in the generated code, one JSON value per line, or one JSON array with `--array`. They keep every rule and constraint of the schema and hold in the read mode of every configured target. `--count` sets how many (default 1) and `--seed` the seed (default 0): the same seed always gives the same output. `--invalid` prints near misses instead, each a valid payload with one thing changed and the error every decoder must report for it:
+
+```text
+$ strictgen examples Order --invalid --count 2
+{"path":"/note","code":"too_long","change":"a string of 6 characters, one past the maximum","payload":{...}}
+{"path":"/unexpected","code":"unknown_key","change":"added the key \"unexpected\"","payload":{...}}
+```
+
+Strings for a `pattern` are built from the pattern and kept only when it matches them within the length limits. A type the generator can't make a sure payload for, like a pattern no string matches, or a format longer than `maxLength`, exits 1 with the reason rather than print a payload that may be invalid.
+
+### `docs`
+
+`strictgen docs` writes a Markdown page per type and an `index.md` into the folder `docs.out` names, like `"docs": { "out": "docs/types" }`: the type's description, its type in each configured language, its fields with their constraints, a valid example, and links to the types it uses and that use it. `"format": "html"`, or `--format html`, writes one self-contained `index.html` with every type instead, with no external assets. Schema text is escaped for Markdown and HTML. The folder is shared, like a Go package: strictgen only replaces or removes the files it generated, which start with the header as an HTML comment, so hand-written pages beside them stay.
 
 ### Reserved names
 

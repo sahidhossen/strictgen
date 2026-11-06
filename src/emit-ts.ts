@@ -498,6 +498,11 @@ function property(name: string): string {
   return IDENTIFIER.test(name) ? name : asciiString(name);
 }
 
+/** The TypeScript type for a type expression, as generated code names it. */
+export function tsType(type: TypeExpr, decls: ReadonlyMap<string, Decl>): string {
+  return typeText(type, decls);
+}
+
 function typeText(type: TypeExpr, decls: ReadonlyMap<string, Decl>): string {
   switch (type.kind) {
     case "ref":

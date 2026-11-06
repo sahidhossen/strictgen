@@ -12,6 +12,16 @@ export function commentHeader(text: string): string {
 }
 
 /**
+ * The first line of a generated Markdown or HTML file: the header text as an HTML comment. A
+ * `--` in the text, which would end the comment early, is written `- -`.
+ */
+export function markupHeader(text: string): string {
+  let body = text;
+  while (body.includes("--")) body = body.replaceAll("--", "- -");
+  return `<!-- ${body} -->`;
+}
+
+/**
  * Characters no generated comment holds as themselves: control characters but tab, line and
  * paragraph separators, the byte order mark, bidi controls and lone surrogates. Go rejects NUL
  * and the byte order mark anywhere in a file, Rust rejects a bare carriage return in a doc

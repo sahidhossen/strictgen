@@ -88,17 +88,17 @@
       "additionalProperties": false
     },
     "docs": {
-      "description": "Not yet active. A documentation page per type.",
+      "description": "What strictgen docs writes: a Markdown page per type, or one HTML page with every type. The folder is shared: strictgen only replaces or removes the files in it that start with the header.",
       "type": "object",
       "properties": {
         "out": {
-          "description": "The folder the pages are written to.",
+          "description": "The folder the pages are written to. It may not be a target folder or sit inside an owned one.",
           "type": "string",
           "minLength": 1
         },
         "format": {
-          "description": "The page format.",
-          "enum": ["markdown"],
+          "description": "The page format: markdown, a page per type and index.md, or html, one self-contained index.html. strictgen docs --format overrides it.",
+          "enum": ["markdown", "html"],
           "default": "markdown"
         }
       },

@@ -4,13 +4,16 @@ import { parseArgs } from "node:util";
 
 import { differences } from "./check.js";
 import type { Config } from "./config.js";
-import { ConfigError, configFolders, loadConfig } from "./config.js";
+import { ConfigError, configFolders, DOCS_FORMATS, loadConfig } from "./config.js";
+import type { DocsFormat } from "./config.js";
+import { examples, UnknownTypeError, writeDocs } from "./examples.js";
 import { ExplainError, explain, explained, explanationLines } from "./explain.js";
 import { fixCommand } from "./fix-command.js";
 import { formatFiles, FormatterFailedError, FormatterMissingError } from "./format.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import type { OutputFile } from "./main.js";
 import { generateProject, writeOutput } from "./main.js";
+import { GenerateError } from "./payloads.js";
 import { CodegenError } from "./schema.js";
 import { mainOptions } from "./targets.js";
 
@@ -75,6 +78,41 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       HELP_OPTION,
     ],
   },
+  examples: {
+    summary: "Print valid or near-miss sample payloads for one type",
+    usage: "strictgen examples <type> [--count <n>] [--seed <s>] [--invalid] [--array] [--config <path>]",
+    details: [
+      "Prints payloads of the type named as in the generated code, like Order, one JSON value per",
+      "line. They keep every rule and constraint of the schema, and the same seed gives the same",
+      "output. With --invalid, prints near misses instead, each one change away from valid, as",
+      "{ path, code, change, payload }: the error every decoder reports for it, and what changed.",
+      "Payloads hold in the read mode of every target. Exits 1 when the type has no payload the",
+      "generator is sure of, like a pattern it can't match within the length limits.",
+    ],
+    options: [
+      "  --count <n>      How many payloads, from 1 to 10000. Default: 1",
+      "  --seed <s>       The seed, an integer from 0 to 4294967295. Default: 0",
+      "  --invalid        Print near misses with their expected error",
+      "  --array          Print one JSON array instead of one payload per line",
+      CONFIG_OPTION,
+      HELP_OPTION,
+    ],
+  },
+  docs: {
+    summary: "Write a documentation page per type, or one HTML page",
+    usage: "strictgen docs [--format markdown|html] [--config <path>]",
+    details: [
+      "Writes a Markdown page per type and index.md, or one self-contained index.html, into the",
+      "folder docs.out names: each type's description, fields, type in every configured language,",
+      "constraints, a valid example and links to the types it uses. The folder is shared: only",
+      "files that start with the header are replaced or removed, so hand-written pages stay.",
+    ],
+    options: [
+      "  --format <f>     markdown or html. Default: docs.format, else markdown",
+      CONFIG_OPTION,
+      HELP_OPTION,
+    ],
+  },
   dirs: {
     summary: "Print the folders the targets write to",
     usage: "strictgen dirs [--json] [--config <path>]",
@@ -115,7 +153,29 @@ const OPTIONS = {
   write: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean" },
+  count: { type: "string" },
+  seed: { type: "string" },
+  invalid: { type: "boolean" },
+  array: { type: "boolean" },
+  format: { type: "string" },
 } as const;
+
+/** Options only one command takes, by option. */
+const COMMAND_OPTIONS: Readonly<Record<string, string>> = {
+  count: "examples",
+  seed: "examples",
+  invalid: "examples",
+  array: "examples",
+  format: "docs",
+};
+
+/** A whole number from `min` to `max`, from an option's text. */
+function wholeNumber(text: string, option: string, min: number, max: number): number {
+  if (!/^\d+$/.test(text) || Number(text) < min || Number(text) > max) {
+    throw new UsageError(`--${option} must be a whole number from ${String(min)} to ${String(max)}, not ${JSON.stringify(text)}`);
+  }
+  return Number(text);
+}
 
 function mainHelp(): string[] {
   return [
@@ -184,7 +244,7 @@ function dispatch(argv: readonly string[], io: Io): number {
   }
   const { values, positionals } = parsed;
   const name = positionals[0];
-  const most = name === "explain" ? 2 : 1;
+  const most = name === "explain" || name === "examples" ? 2 : 1;
   if (positionals.length > most) {
     throw new UsageError(`unexpected argument ${JSON.stringify(positionals[most])}`);
   }
@@ -209,14 +269,42 @@ function dispatch(argv: readonly string[], io: Io): number {
   if (values.write === true && name !== "fix") {
     throw new UsageError("--write only applies to strictgen fix");
   }
+  for (const [option, only] of Object.entries(COMMAND_OPTIONS)) {
+    if ((values as Record<string, unknown>)[option] !== undefined && name !== only) {
+      throw new UsageError(`--${option} only applies to strictgen ${only}`);
+    }
+  }
   const location = positionals[1];
   if (name === "explain" && location === undefined) {
     throw new UsageError("explain needs a schema location, like user.json#/$defs/address");
   }
+  if (name === "examples" && location === undefined) {
+    throw new UsageError("examples needs a type, like Order");
+  }
+  const format = values.format;
+  if (format !== undefined && !(DOCS_FORMATS as readonly string[]).includes(format)) {
+    throw new UsageError(`--format must be one of ${DOCS_FORMATS.join(", ")}, not ${JSON.stringify(format)}`);
+  }
+  const count = values.count === undefined ? 1 : wholeNumber(values.count, "count", 1, 10_000);
+  const seed = values.seed === undefined ? 0 : wholeNumber(values.seed, "seed", 0, 4_294_967_295);
   const config = loadConfig(values.config, io.cwd);
   switch (name) {
     case "explain":
       return explainCommand(config, io, location ?? "", values.json === true);
+    case "examples": {
+      const { lines, notice } = examples(config, {
+        type: location ?? "",
+        count,
+        seed,
+        invalid: values.invalid === true,
+        array: values.array === true,
+      });
+      for (const line of lines) io.out(line);
+      if (notice !== undefined) io.err(notice);
+      return EXIT_OK;
+    }
+    case "docs":
+      return docs(config, io, format as DocsFormat | undefined);
     case "check":
       return check(config, io);
     case "fix":
@@ -235,12 +323,13 @@ function report(error: unknown, io: Io): number {
     io.err("Run strictgen --help for usage.");
     return EXIT_USAGE;
   }
-  if (error instanceof ConfigError || error instanceof ExplainError) {
+  if (error instanceof ConfigError || error instanceof ExplainError || error instanceof UnknownTypeError) {
     io.err(`error: ${error.message}`);
     return EXIT_USAGE;
   }
   if (
     error instanceof CodegenError ||
+    error instanceof GenerateError ||
     error instanceof FormatterFailedError ||
     error instanceof FormatterMissingError
   ) {
@@ -302,6 +391,20 @@ function explainCommand(config: Config, io: Io, location: string, json: boolean)
   if (json) io.out(JSON.stringify(explanation, null, 2));
   else for (const line of explanationLines(explanation)) io.out(line);
   return explained(explanation) ? EXIT_OK : EXIT_FAILED;
+}
+
+function docs(config: Config, io: Io, format: DocsFormat | undefined): number {
+  if (config.docs === undefined) {
+    throw new ConfigError(
+      shown(io.cwd, config.file),
+      "docs",
+      'is not set. Add "docs": { "out": "docs/types" } to say where the pages go',
+    );
+  }
+  const written = writeDocs(config, format);
+  const what = written.count === 1 ? "1 docs file" : `${String(written.count)} docs files`;
+  io.out(`Wrote ${what} to ${shown(io.cwd, written.dir)}.`);
+  return EXIT_OK;
 }
 
 function dirs(config: Config, io: Io, json: boolean): number {

@@ -11,7 +11,7 @@ import { dirname, join, relative, sep } from "node:path";
 
 import type { BuildOptions } from "./build.js";
 import { buildModel } from "./build.js";
-import { commentHeader, DEFAULT_HEADER } from "./common.js";
+import { commentHeader, DEFAULT_HEADER, markupHeader } from "./common.js";
 import { fsReason, isFsError } from "./fs-error.js";
 import { within } from "./paths.js";
 import type { Model } from "./model.js";
@@ -54,10 +54,14 @@ export function generate(
 
 /**
  * True when `contents` is a generated file: its first line is the header text as a `//`
- * comment, or a `#` comment for files like `.gitattributes`.
+ * comment, a `#` comment for files like `.gitattributes`, or an HTML comment for docs pages.
  */
 export function isGenerated(contents: string, header: string = DEFAULT_HEADER): boolean {
-  return contents.startsWith(`${commentHeader(header)}\n`) || contents.startsWith(`# ${header}\n`);
+  return (
+    contents.startsWith(`${commentHeader(header)}\n`) ||
+    contents.startsWith(`# ${header}\n`) ||
+    contents.startsWith(`${markupHeader(header)}\n`)
+  );
 }
 
 /** Removes the generated files, the ones starting with the header, directly in a shared folder. */
