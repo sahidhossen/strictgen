@@ -170,8 +170,8 @@ export interface JobOptions {
   readonly marks: readonly Mark[];
   readonly packages: readonly Package[];
   readonly modes: readonly Mode[];
-  /** The `examples/llm` folder, for its shared vectors. */
-  readonly vectors: string;
+  /** The `examples/llm` folder, for its shared vectors, which don't run without it. */
+  readonly vectors?: string;
   /** Collects why a case doesn't run through the LLM decoders, by variant name, since each variant leaves out its own. */
   readonly skipped?: Map<string, Skipped>;
 }
@@ -229,7 +229,7 @@ export function suiteJobs(options: JobOptions): Job[] {
     llm({ mode: "strict", decoder: "llm", entry: "public", maps: "entries", shape: "entries" }, true);
     llm({ mode: "strict", decoder: "llm", entry: "public", maps: "objects", shape: "objects" }, true);
   }
-  if (modes.includes("report")) {
+  if (modes.includes("report") && options.vectors !== undefined) {
     const vectors = loadLlmVectors(options.vectors);
     add({ mode: "report", decoder: "llm", entry: "public", vectors: true }, vectors.llm, vectorMarks);
     add({ mode: "report", decoder: "normal", entry: "public", vectors: true }, vectors.normal, vectorMarks);
@@ -361,7 +361,7 @@ export async function runSuite(options: SuiteOptions): Promise<SuiteResult> {
       await tick();
       if (l === "rust") drivers.push(buildRust(options.conformance, out, packages));
       if (l === "go") drivers.push(buildGo(options.conformance, out, packages));
-      if (l === "ts") drivers.push(await typeScriptDriver(out, packages));
+      if (l === "ts") drivers.push(typeScriptDriver(out, packages));
     }
     const requests = jobRequests(jobs);
     const results: Partial<Record<Language, Result[]>> = {};

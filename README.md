@@ -118,7 +118,7 @@ A field named like a keyword is escaped where the language allows it: `r#type` a
 
 ## Conformance
 
-[`conformance/`](conformance) holds the cross-language proof: schemas, and cases each language must accept or reject with the same first error. `pnpm conformance` generates every language, decodes every case in Rust, Go and TypeScript in strict and report mode, and through the LLM decoders, and fails on any difference in the result, the error, the unknown keys or the re-encoded bytes after RFC 8785 canonicalisation, or on a mapping rule or error code without a case. Known differences, like TypeScript integers past 2^53 - 1, are marked with a reason, never skipped. [`conformance/README.md`](conformance/README.md) describes the layout and how to add a case.
+[`conformance/`](conformance) holds the cross-language proof: schemas, and cases each language must accept or reject with the same first error. `pnpm conformance` generates every language, decodes every case in Rust, Go and TypeScript in strict and report mode, and through the LLM decoders, and fails on any difference in the result, the error, the unknown keys or the re-encoded bytes after RFC 8785 canonicalisation, or on a mapping rule or error code without a case. Known differences, like TypeScript integers past 2^53 - 1, are marked with a reason, never skipped. `pnpm fuzz` runs random payloads and near misses of every conformance type through the same decoders, with a fixed seed on every pull request and a long random run every night, and shrinks a disagreement to a small case. [`conformance/README.md`](conformance/README.md) describes the layout, how to add a case and the fuzzer.
 
 ## License
 

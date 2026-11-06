@@ -11,6 +11,7 @@ pnpm install
 pnpm typecheck
 pnpm test
 pnpm conformance   # every conformance case in Rust, Go and TypeScript, see conformance/README.md
+pnpm fuzz --seed 1 --runs 3000   # random payloads through every decoder, as CI runs it
 ```
 
 ## Ground rules

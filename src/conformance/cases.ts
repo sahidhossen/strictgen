@@ -53,6 +53,12 @@ export interface Case {
   readonly compact?: string;
   /** For a cleanup vector: the text the cleanup step must return. */
   readonly cleaned?: string;
+  /**
+   * The read modes the case has no expectation in, so only the languages are compared with each
+   * other there: for a fuzz payload whose error is known in strict mode only, and for the
+   * payloads the fuzzer shrinks, whose error nobody knows. LLM decoders read as strict mode.
+   */
+  readonly unlabelled?: readonly Mode[];
 }
 
 /** The outcome a case expects in a mode. */

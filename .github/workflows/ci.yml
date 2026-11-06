@@ -91,6 +91,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+      # The registry, the git checkouts and the crate's target folder, by Cargo.lock and toolchain.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: examples/${{ matrix.example }}/rust
       # The generated files are formatted by strictgen; this keeps the hand written tests formatted too.
       - run: cargo fmt --check
       - run: cargo check --locked --all-targets
@@ -111,10 +115,12 @@ jobs:
         working-directory: examples/${{ matrix.example }}/go
     steps:
       - uses: actions/checkout@v4
+      # The module and build caches, by the example's go.mod (the examples need no go.sum).
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-          cache: false
+          cache: true
+          cache-dependency-path: examples/${{ matrix.example }}/go/go.mod
       - run: go vet ./...
       # -race also fails on any state the decoders share between goroutines, like an LLM decode's.
       - name: Round trip the fixtures
@@ -137,10 +143,23 @@ jobs:
         with:
           toolchain: 1.97.0
           components: rustfmt, clippy
+      # The driver's dependencies and its target folder, which the suite and the fuzzer build in,
+      # so a run only compiles the generated code again.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            conformance/driver/rust/target
+          key: conformance-rust-${{ runner.os }}-1.97.0-${{ hashFiles('conformance/driver/rust/Cargo.lock') }}
+          restore-keys: conformance-rust-${{ runner.os }}-1.97.0-
+      # The Go build cache, by the driver's go.mod (it has no dependencies, so no go.sum).
       - uses: actions/setup-go@v5
         with:
           go-version: stable
-          cache: false
+          cache: true
+          cache-dependency-path: conformance/driver/go/go.mod
       # The suite fails on a missing toolchain too; this names the versions first.
       - name: Check the toolchains
         run: |
@@ -163,6 +182,11 @@ jobs:
           test -n "$dir"
           (cd "$dir/go" && go vet ./...)
           (cd "$dir/rust" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/conformance/driver/rust/target" cargo clippy --locked --all-targets -- -D warnings -W clippy::pedantic)
+      # Random payloads and near misses of every conformance type through every decoder, with a
+      # fixed seed, so a pull request fails the same way every time. The nightly run takes random
+      # seeds and many more runs.
+      - name: Fuzz with a fixed seed
+        run: pnpm fuzz --seed 1 --runs 3000
 
   hygiene:
     name: Public hygiene

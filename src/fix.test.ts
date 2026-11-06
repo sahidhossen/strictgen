@@ -49,6 +49,9 @@ function schema(body: object, name = "order", title = "Order"): object {
 
 const notes = (result: FixResult): string[] => result.notes.map(noteText);
 
+/** How long a test that compiles schemas with Ajv may take. */
+const AJV_TIMEOUT = 30_000;
+
 describe("close-objects", () => {
   it("adds additionalProperties false to open objects, nested ones too", () => {
     const result = fix({
@@ -386,7 +389,8 @@ describe("merge-allof", () => {
     expect(result.problem?.rule).toBe("closed-with-allof");
   });
 
-  it("means the same as the allOf it replaces, checked with Ajv", () => {
+  // Compiling with Ajv took over vitest's 5s default once under load.
+  it("means the same as the allOf it replaces, checked with Ajv", { timeout: AJV_TIMEOUT }, () => {
     const original = schema({
       type: "object",
       allOf: [
@@ -535,7 +539,7 @@ describe("hoist-defs", () => {
     expect(result.problem).toBeDefined();
   });
 
-  it("means the same as before, checked with Ajv", () => {
+  it("means the same as before, checked with Ajv", { timeout: AJV_TIMEOUT }, () => {
     const original = schema({
       type: "object",
       properties: {

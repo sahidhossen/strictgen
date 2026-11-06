@@ -1,0 +1,137 @@
+name: Nightly fuzz
+
+# A long fuzz run with a random seed. When the languages disagree, it opens an issue with the
+# seed and the shrunk case, or comments on the open one.
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-fuzz
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    name: Fuzz with a random seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      failed: ${{ steps.fuzz.outputs.failed }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            conformance/driver/rust/target
+          key: conformance-rust-${{ runner.os }}-1.97.0-${{ hashFiles('conformance/driver/rust/Cargo.lock') }}
+          restore-keys: conformance-rust-${{ runner.os }}-1.97.0-
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+          cache-dependency-path: conformance/driver/go/go.mod
+      # The fuzzer picks the seed and prints it on its first line. Exit 1 is a disagreement, 2 a
+      # run that couldn't happen; both open an issue.
+      - name: Fuzz
+        id: fuzz
+        run: |
+          set +e
+          pnpm --silent fuzz --runs 100000 > fuzz-run.txt 2>&1
+          code=$?
+          set -e
+          cat fuzz-run.txt
+          if [[ $code -ne 0 ]]; then echo "failed=true" >> "$GITHUB_OUTPUT"; fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+      - name: Write the issue
+        if: steps.fuzz.outputs.failed == 'true'
+        env:
+          CODE: ${{ steps.fuzz.outputs.code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          seed="$(sed -n 's/^fuzz: seed \([0-9]*\),.*/\1/p' fuzz-run.txt | head -n 1)"
+          if [[ "$CODE" == "1" ]]; then
+            echo "Nightly fuzz: the languages disagree (seed ${seed:-unknown})" > title.txt
+            what="The nightly fuzz run found a disagreement between the languages."
+            # From the failing run to the end: the payload, the shrunk case and the tables.
+            details="$(sed -n '/^fuzz: disagreement/,$p' fuzz-run.txt)"
+          else
+            echo "Nightly fuzz: the run failed (seed ${seed:-unknown})" > title.txt
+            what="The nightly fuzz run could not run to the end (exit $CODE)."
+            details="$(tail -n 40 fuzz-run.txt)"
+          fi
+          {
+            echo "$what"
+            echo
+            echo "Seed: ${seed:-unknown}. Run: $RUN_URL"
+            echo
+            echo '```text'
+            printf '%s\n' "$details"
+            echo '```'
+          } > issue.md
+      # The issue is public text: it must pass the hygiene check like any other. When it doesn't,
+      # the issue says only where to look. The denylist stays in this step.
+      - name: Check the issue text
+        if: steps.fuzz.outputs.failed == 'true'
+        env:
+          HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir checked
+          if cat title.txt issue.md | scripts/hygiene.sh --text; then
+            cp title.txt issue.md checked/
+          else
+            echo "Nightly fuzz: the run failed" > checked/title.txt
+            echo "The nightly fuzz run failed. Its report did not pass the hygiene check, so it is only in the run: $RUN_URL" > checked/issue.md
+            cat checked/title.txt checked/issue.md | scripts/hygiene.sh --text
+          fi
+      - if: steps.fuzz.outputs.failed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-issue
+          path: checked/
+          retention-days: 7
+      - name: Fail the run
+        if: steps.fuzz.outputs.failed == 'true'
+        run: exit 1
+
+  report:
+    name: Open an issue
+    needs: fuzz
+    if: always() && needs.fuzz.outputs.failed == 'true'
+    runs-on: ubuntu-latest
+    # Only this job writes, and only issues. It doesn't check out the code.
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: fuzz-issue
+      - name: Open an issue, or comment on the open one
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          open="$(gh issue list --state open --search 'in:title "Nightly fuzz:"' --json number --jq '.[0].number // empty')"
+          if [[ -n "$open" ]]; then
+            gh issue comment "$open" --body-file issue.md
+          else
+            gh issue create --title "$(head -n 1 title.txt)" --body-file issue.md --label bug
+          fi
