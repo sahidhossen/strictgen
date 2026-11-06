@@ -12,7 +12,24 @@ pnpm typecheck
 pnpm test
 pnpm conformance   # every conformance case in Rust, Go and TypeScript, see conformance/README.md
 pnpm fuzz --seed 1 --runs 3000   # random payloads through every decoder, as CI runs it
+pnpm docs:check   # the README and docs snippets match real output
 ```
+
+With rustup, `RUSTUP_TOOLCHAIN=1.97.0` in front of a command picks the Rust toolchain CI uses.
+
+## The proof suite
+
+Every change to what a decoder accepts, rejects or reports goes through the [conformance suite](conformance/README.md), which runs each case through Rust, Go and TypeScript and fails on any difference, and the differential fuzzer, which does the same with random payloads.
+
+- **A new construct or keyword** needs cases in `conformance/cases`: a valid one and an invalid one per mapping rule, and an invalid one per new error code. The suite fails on a rule or code without a case, and `pnpm conformance --coverage` shows what each rule has. [Adding a case](conformance/README.md#adding-a-case) walks through it
+- **A fuzzer failure** prints the seed and the run. `pnpm fuzz --seed <seed> --start <run> --runs 1` runs it alone, and `--save <language>` keeps the shrunk payload as a case, with the language the spec says is right as the expectation. Fix the generator in the same pull request ([Fuzzing](conformance/README.md#fuzzing))
+- **A known difference**, like TypeScript integers past 2^53 - 1, gets a mark in `conformance/marks.json` with its reason, never a skip. A mark no case needs fails the run
+
+The nightly workflow runs the fuzzer with random seeds and opens an issue when it finds a disagreement, or comments on the one already open.
+
+## Docs
+
+The snippets in `README.md` and `docs/` are real output: files, generated code, command output, and what the Rust, Go and TypeScript programs of `examples/quickstart` print. Each sits between `<!-- snippet: ... -->` and `<!-- /snippet -->` markers, and `src/snippets.ts` lists the kinds. After a change, `pnpm docs` writes them again. `pnpm docs:check` fails in CI when one is out of date, and `pnpm test` checks the ones that need no Rust or Go. Don't edit inside the markers by hand.
 
 ## Ground rules
 

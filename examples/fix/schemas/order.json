@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/order.json",
+  "title": "Order",
+  "type": "object",
+  "properties": {
+    "id": { "type": "string" },
+    "payment": {
+      "type": "object",
+      "oneOf": [
+        {
+          "properties": { "method": { "enum": ["card"] }, "last4": { "type": "string" } },
+          "required": ["last4"]
+        },
+        {
+          "properties": { "method": { "const": "wire" }, "iban": { "type": "string" } },
+          "required": ["iban"]
+        }
+      ]
+    },
+    "shipping": { "$ref": "#/definitions/address" }
+  },
+  "required": ["id", "payment"],
+  "definitions": {
+    "address": {
+      "type": "object",
+      "properties": { "street": { "type": "string" }, "city": { "type": "string" } }
+    }
+  }
+}

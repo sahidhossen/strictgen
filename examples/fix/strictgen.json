@@ -1,0 +1,7 @@
+{
+  "$schema": "../../strictgen.schema.json",
+  "schemas": "schemas",
+  "targets": {
+    "typescript": { "out": "ts" }
+  }
+}

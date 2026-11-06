@@ -63,6 +63,7 @@ jobs:
           node dist/cli.js check --config examples/basic/strictgen.json
           node dist/cli.js check --config examples/report/strictgen.json
           node dist/cli.js check --config examples/llm/strictgen.json
+          node dist/cli.js check --config examples/quickstart/strictgen.json
       # check compared the first run with what is committed. A second run must write the
       # same files again, so generation is deterministic.
       - name: Generate again and check that nothing changes
@@ -70,6 +71,7 @@ jobs:
           node dist/cli.js generate --config examples/basic/strictgen.json
           node dist/cli.js generate --config examples/report/strictgen.json
           node dist/cli.js generate --config examples/llm/strictgen.json
+          node dist/cli.js generate --config examples/quickstart/strictgen.json
           git diff --exit-code
           test -z "$(git status --porcelain)"
       - name: Typecheck the TypeScript output
@@ -77,6 +79,7 @@ jobs:
           pnpm exec tsc -p examples/basic/ts/tsconfig.json
           pnpm exec tsc -p examples/report/ts/tsconfig.json
           pnpm exec tsc -p examples/llm/ts/tsconfig.json
+          pnpm exec tsc -p examples/quickstart/ts/tsconfig.json
 
   examples-rust:
     name: Rust example (${{ matrix.example }})
@@ -84,7 +87,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [basic, report, llm]
+        example: [basic, report, llm, quickstart]
     defaults:
       run:
         working-directory: examples/${{ matrix.example }}/rust
@@ -111,7 +114,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        example: [basic, report, llm]
+        example: [basic, report, llm, quickstart]
     defaults:
       run:
         working-directory: examples/${{ matrix.example }}/go
@@ -189,6 +192,47 @@ jobs:
       # seeds and many more runs.
       - name: Fuzz with a fixed seed
         run: pnpm fuzz --seed 1 --runs 3000
+
+  docs:
+    name: Docs are up to date
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # The toolchain of the conformance job. explain output is formatted with its rustfmt.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+          components: rustfmt
+      # The conformance driver's build, which the error code examples decode with, and the
+      # quickstart crate's.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            conformance/driver/rust/target
+            examples/quickstart/rust/target
+          key: docs-rust-${{ runner.os }}-1.97.0-${{ hashFiles('conformance/driver/rust/Cargo.lock', 'examples/quickstart/rust/Cargo.lock') }}
+          restore-keys: docs-rust-${{ runner.os }}-1.97.0-
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: true
+          cache-dependency-path: |
+            conformance/driver/go/go.mod
+            examples/quickstart/go/go.mod
+      # Every snippet of the README and docs made again from real output: files, generated code,
+      # command output, and what the Rust, Go and TypeScript decoders print. Any difference fails.
+      - run: pnpm docs:check
 
   hygiene:
     name: Public hygiene

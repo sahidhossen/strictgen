@@ -368,7 +368,8 @@ describe("formatters", () => {
     expect(snapshot(root)).toEqual(before);
     expect(cli(root, ["check"], bad).code).toBe(EXIT_FAILED);
     expect(cli(root, [], good).code).toBe(EXIT_OK);
-  });
+    // Four runs with formatter scripts take several seconds when other test files run beside it.
+  }, 30_000);
 
   it("treats a rustfmt whose --version fails, like a rustup proxy, as not installed", () => {
     const root = project();

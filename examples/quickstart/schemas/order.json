@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/order.json",
+  "title": "Order",
+  "description": "An order placed in the shop.",
+  "type": "object",
+  "properties": {
+    "id": { "description": "The order's id.", "type": "string" },
+    "quantity": { "description": "How many items.", "type": "integer", "minimum": 1, "maximum": 100 },
+    "status": { "$ref": "#/$defs/status" },
+    "note": { "description": "A note for the packer.", "type": "string", "maxLength": 40 }
+  },
+  "required": ["id", "quantity", "status"],
+  "additionalProperties": false,
+  "$defs": {
+    "status": { "description": "Where the order is.", "enum": ["pending", "paid", "shipped"] }
+  }
+}
