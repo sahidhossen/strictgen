@@ -8,7 +8,7 @@ strictgen breaking --base v1.4.0 --json   # a tag, as JSON for CI
 strictgen breaking --base ../old-schemas  # a folder
 ```
 
-It exits 1 when any change breaks someone, 0 otherwise, and 2 for bad usage, like a base that is neither a folder nor a git ref.
+It exits 1 when any change breaks someone, 0 otherwise, and 2 when the base can't be loaded or the arguments are wrong, like a base that is neither a folder nor a git ref, so CI can tell a breaking change from a base it couldn't read.
 
 ## Who a change breaks
 
@@ -36,7 +36,7 @@ A change can break more than one group. Adding a required field breaks strict co
 | An optional field is added | `field-added` | strict consumers |
 | A required field is added | `required-field-added` | strict consumers, producers |
 | A field is added to an object whose other keys are data (`additionalProperties` with a schema), so old consumers read it as one of them | `field-added-to-other-keys` | all consumers |
-| A field is removed, or renamed (a removal and an addition) | `field-removed` | all consumers |
+| A field is removed, or renamed (a removal and an addition). Removing an optional field mainly breaks producers that still send it to strict consumers; it is listed as breaking all consumers on purpose, over-reported rather than missed | `field-removed` | all consumers |
 | A required field becomes optional | `field-made-optional` | all consumers |
 | An optional field becomes required | `field-made-required` | producers |
 | An object starts accepting other keys | `other-keys-allowed` | strict consumers |
@@ -82,7 +82,7 @@ The comparison runs on the model strictgen generates from, not on the raw schema
 - Descriptions, titles and `$comment` are ignored
 - Types are matched by schema location: a file's root type, or `$defs/<name>`. Inline objects, enums and unions are compared where they are, whatever name the generator gives them
 - A `$ref` is followed to what it names, so moving a field's schema into a def, renaming a def a field refers to, or using an ID type instead of a string with the same constraints changes nothing at that field. The def's name itself is a type: renaming it lists the old one as removed and the new one as added
-- Enum values and object fields compare as sets: a new order is no change. Untagged union branches pair up by content, so only branches that changed show; the order decoders try them in is compared too
+- Enum values and object fields compare as sets: a new order is no change. Untagged union branches pair up by content: unchanged branches first, then the remaining branches of each kind (object, string, array and so on) in order, when both versions have as many of that kind. Only branches that changed show, and the order decoders try them in is compared too
 - A change inside a def shows once, at the def, however many fields refer to it
 
 ## Where a change is
@@ -93,12 +93,12 @@ A field's location is under its object's `properties`, an array's items under `i
 
 ## The base
 
-`--base` names a folder when one exists at that path, relative to the current folder, and a git ref otherwise.
+`--base` names a folder when one exists at that path, relative to the current folder, and a git ref otherwise. When it is both, the folder is used and a warning says so on stderr.
 
 - **A folder** is a project when it holds a config file with the same name as the current one (usually `strictgen.json`): its `schemas`, `idBase`, `ids` and `validation` are used. Otherwise it is a schemas folder, read with the current config's `ids` and `validation`, and with the `$id` base its own schemas share
 - **A git ref**, like `main`, `HEAD~3`, a tag or a commit, is read from the repository that holds the config with `git ls-tree` and `git cat-file`. Nothing is checked out and the working tree is not touched. The config file at that ref, at the same path as the current one, gives the base's schemas folder and options, so a moved schemas folder or a changed `idBase` is followed. Without a config at that ref, the current config's schemas folder is used
 
-A ref that doesn't exist, a folder outside the repository, or a schemas folder missing at that ref exits 2. A base schema that can't be read or generated exits 1, with the base named in the message. Which targets read in report mode always comes from the current config.
+A base that can't be loaded exits 2, with the base named in the message: a ref that doesn't exist (the message gives git's reason; in CI, fetch the ref first, for example with `fetch-depth: 0`), a folder outside the repository, a schemas folder missing at that ref, a base with no schema files or no types, like an empty folder or `--base docs` by mistake, and a base schema or config that can't be read or generated. Which targets read in report mode always comes from the current config.
 
 ## Output
 

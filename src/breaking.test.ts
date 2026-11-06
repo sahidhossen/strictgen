@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Change } from "./breaking.js";
-import { breakingJson, breakingLines, classify, diffModels } from "./breaking.js";
+import { BREAKS, breakingJson, breakingLines, classify, diffModels } from "./breaking.js";
 import type { BuildOptions } from "./build.js";
 import { buildModel } from "./build.js";
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE, run } from "./run.js";
@@ -325,6 +325,29 @@ describe("enums", () => {
   });
 });
 
+describe("exactly-one choices", () => {
+  const contact = (...branches: (readonly string[])[]): JsonObject =>
+    order(
+      { email: { type: "string" }, phone: { type: "string" }, fax: { type: "string" } },
+      [],
+      { oneOf: branches.map((required) => ({ required: [...required] })) },
+    );
+
+  it("a key a sibling branch now names is forbidden, which breaks producers", () => {
+    const changes = diff({ order: contact(["email"], ["phone"]) }, { order: contact(["email"], ["phone", "fax"]) });
+    expect(changes.filter(([k]) => k.startsWith("key-")).map(([k, b, , , d]) => [k, b, d])).toEqual([
+      ["key-forbidden", "producers", 'key "fax" is now forbidden'],
+    ]);
+  });
+
+  it("a key no sibling branch names any more is allowed, which breaks all consumers", () => {
+    const changes = diff({ order: contact(["email"], ["phone", "fax"]) }, { order: contact(["email"], ["phone"]) });
+    expect(changes.filter(([k]) => k.startsWith("key-")).map(([k, b, , , d]) => [k, b, d])).toEqual([
+      ["key-allowed", "all-consumers", 'key "fax" is no longer forbidden'],
+    ]);
+  });
+});
+
 describe("tagged unions", () => {
   const branch = (kind: string, props: JsonObject = {}) => ({
     type: "object",
@@ -488,6 +511,14 @@ describe("constraints", () => {
     const before = { order: order({ x: { type: "string", maxLength: 10 } }) };
     const after = { order: order({ x: { type: "string", maxLength: 5 } }) };
     expect(diff(before, after, { validation: false })).toEqual([]);
+  });
+});
+
+describe("every change kind", () => {
+  it("has a test in this file", () => {
+    const text = readFileSync(new URL(import.meta.url), "utf8");
+    const missing = Object.keys(BREAKS).filter((kind) => !text.includes(`"${kind}"`));
+    expect(missing).toEqual([]);
   });
 });
 
@@ -682,7 +713,9 @@ describe("strictgen breaking", () => {
     gitIn(root, "commit", "-q", "-m", "first");
     const { code, err } = cli(["breaking", "--base", "nope"], root);
     expect(code).toBe(EXIT_USAGE);
-    expect(err).toEqual(['error: --base "nope" is neither a folder nor a git ref']);
+    expect(err).toHaveLength(1);
+    expect(err[0]).toMatch(/^error: --base "nope" is neither a folder nor a git ref \(git: fatal: .+\)\. /);
+    expect(err[0]).toMatch(/fetch it first \(in CI, check out with fetch-depth: 0\)$/);
     expect(cli(["breaking", "--base", "--json"], root).code).toBe(EXIT_USAGE);
   });
 
@@ -720,7 +753,7 @@ describe("strictgen breaking", () => {
     write(root, { "strictgen.json": CONFIG, "schemas/order.json": before });
     const { code, err } = cli(["breaking", "--base", "main"], root);
     expect(code).toBe(EXIT_USAGE);
-    expect(err[0]).toMatch(/is not a folder, and .* is not in a git repository$/);
+    expect(err[0]).toMatch(/is not a folder, and .* is not in a git repository \(git: fatal: .+\)$/);
   });
 
   it("exits 2 when the schemas folder is missing at the ref", () => {
@@ -735,13 +768,64 @@ describe("strictgen breaking", () => {
     expect(err).toEqual(["error: base main: there is no schemas folder schemas at this ref"]);
   });
 
-  it("exits 1 with the base named when a base schema is broken", () => {
+  it("exits 2 with the base named when a base schema is broken", () => {
     const root = temp();
     write(root, { "strictgen.json": CONFIG, "schemas/order.json": before, "old/order.json": { $id: `${BASE}order.json`, type: "object" } });
     const { code, err } = cli(["breaking", "--base", "old"], root);
-    expect(code).toBe(EXIT_FAILED);
+    expect(code).toBe(EXIT_USAGE);
     expect(err).toHaveLength(1);
     expect(err[0]).toMatch(/^error: base old: order\.json/);
+  });
+
+  it("exits 2 for a base folder without schemas", () => {
+    const root = temp();
+    write(root, { "strictgen.json": CONFIG, "schemas/order.json": before, "docs/x.txt": "notes" });
+    mkdirSync(join(root, "empty"));
+    for (const base of ["empty", "docs"]) {
+      const { code, out, err } = cli(["breaking", "--base", base], root);
+      expect(code).toBe(EXIT_USAGE);
+      expect(out).toEqual([]);
+      expect(err).toEqual([`error: base ${base}: no schema files in ${join(root, base)}`]);
+    }
+  });
+
+  it("exits 2 for a base folder whose schemas declare no types", () => {
+    const root = temp();
+    write(root, {
+      "strictgen.json": CONFIG,
+      "schemas/order.json": before,
+      "old/common.json": { $id: `${BASE}common.json` },
+    });
+    const { code, err } = cli(["breaking", "--base", "old"], root);
+    expect(code).toBe(EXIT_USAGE);
+    expect(err).toEqual([`error: base old: the schemas in ${join(root, "old")} declare no types`]);
+  });
+
+  it("exits 2 for a ref whose schemas folder has no schema files", () => {
+    const root = temp();
+    write(root, { "strictgen.json": CONFIG, "schemas/notes.txt": "none yet" });
+    gitIn(root, "init", "-q", "-b", "main");
+    gitIn(root, "add", ".");
+    gitIn(root, "commit", "-q", "-m", "first");
+    write(root, { "schemas/order.json": before });
+    const { code, err } = cli(["breaking", "--base", "main"], root);
+    expect(code).toBe(EXIT_USAGE);
+    expect(err).toEqual(["error: base main: no schema files in main:schemas"]);
+  });
+
+  it("warns when the base is both a folder and a git ref, and uses the folder", () => {
+    const root = temp();
+    write(root, { "strictgen.json": CONFIG, "schemas/order.json": before });
+    gitIn(root, "init", "-q", "-b", "main");
+    gitIn(root, "add", ".");
+    gitIn(root, "commit", "-q", "-m", "first");
+    write(root, { "main/order.json": before });
+    const { code, out, err } = cli(["breaking", "--base", "main"], root);
+    expect(code).toBe(EXIT_OK);
+    expect(out).toEqual(["No changes since main."]);
+    expect(err).toEqual([
+      'warning: --base "main" is both a folder and a git ref; comparing with the folder',
+    ]);
   });
 
   it("needs --base, and --base only applies to breaking", () => {

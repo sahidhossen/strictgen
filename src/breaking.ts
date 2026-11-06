@@ -76,7 +76,7 @@ export interface Change {
 }
 
 /** Who each kind of change breaks, before the report-mode rule. */
-const BREAKS: Readonly<Record<ChangeKind, readonly Impact[]>> = {
+export const BREAKS: Readonly<Record<ChangeKind, readonly Impact[]>> = {
   "type-added": [],
   "type-removed": ["all-consumers"],
   "type-changed": ["all-consumers", "producers"],
@@ -358,6 +358,7 @@ class Differ {
   }
 
   private compareStructs(a: StructDecl, b: StructDecl): void {
+    // StructDecl.closed is skipped on purpose: it isn't on the wire, `rest` and the fields are.
     const before = new Map(a.fields.map((f) => [f.name, f]));
     const after = new Map(b.fields.map((f) => [f.name, f]));
     const names = [...new Set([...before.keys(), ...after.keys()])].sort();
@@ -460,8 +461,8 @@ class Differ {
 
   /**
    * Untagged branches have generated names, so they pair up by content: first the branches that
-   * didn't change, then the ones left of the same kind when each side has exactly one, which are
-   * compared like any type. The rest are added or removed. Decoders try branches in order, so a
+   * didn't change, then the ones left of each kind, in order, when each side has as many of that
+   * kind, which are compared like any type. The rest are added or removed. Decoders try branches in order, so a
    * new order of the paired branches is a change too.
    */
   private compareUntagged(a: UntaggedDecl, b: UntaggedDecl): void {
@@ -483,8 +484,8 @@ class Differ {
       const kind = kindOf(n);
       const olds = leftBefore.filter((o) => kindOf(o.n) === kind);
       const news = leftAfter.filter((o) => kindOf(o.n) === kind);
-      const old = olds[0];
-      if (olds.length === 1 && news.length === 1 && old !== undefined) {
+      const old = olds[news.findIndex((o) => o.j === j)];
+      if (olds.length === news.length && old !== undefined) {
         pairs.set(j, old.i);
         taken.add(old.i);
         this.compare(old.n, n);
@@ -683,8 +684,9 @@ export function everyTargetReports(config: Config): boolean {
 }
 
 /**
- * A problem with the base, or with comparing, as one line. `exit` is 2 for bad usage, like a ref
- * that doesn't exist, and 1 when a schema can't be read or mapped.
+ * A problem with the base, as one line. `exit` is 2 when the base can't be loaded, like a ref that
+ * doesn't exist or a base schema that can't be read or mapped, so CI can tell it from a breaking
+ * change, which exits 1.
  */
 export class BreakingError extends Error {
   constructor(
@@ -700,6 +702,8 @@ export class BreakingError extends Error {
 interface Version {
   readonly schemas: SchemaSet;
   readonly options: BuildOptions;
+  /** Where the schemas were read from, for messages. */
+  readonly where: string;
 }
 
 function buildOptions(config: Config): BuildOptions {
@@ -714,7 +718,7 @@ function currentVersion(config: Config): Version {
     config.schemas,
     config.idBase === undefined ? {} : { idBase: config.idBase },
   );
-  return { schemas, options: buildOptions(config) };
+  return { schemas, options: buildOptions(config), where: config.schemas };
 }
 
 /** Runs `fn` on the base, naming the base in any schema or config error it throws. */
@@ -722,7 +726,7 @@ function onBase<T>(label: string, fn: () => T): T {
   try {
     return fn();
   } catch (error) {
-    if (error instanceof CodegenError) throw new BreakingError(`base ${label}: ${error.message}`, 1);
+    if (error instanceof CodegenError) throw new BreakingError(`base ${label}: ${error.message}`, 2);
     if (error instanceof ConfigError) throw new BreakingError(`base ${label}: ${error.message}`, 2);
     throw error;
   }
@@ -740,14 +744,24 @@ function folderVersion(config: Config, dir: string, label: string): Version {
       const base = loadConfig(file, dir);
       return currentVersion(base);
     }
-    return { schemas: loadSchemas(dir), options: buildOptions(config) };
+    return { schemas: loadSchemas(dir), options: buildOptions(config), where: dir };
   });
 }
 
 const GIT_TIMEOUT = 60_000;
 
+interface GitResult {
+  readonly stdout: Buffer | undefined;
+  /** The first line git wrote to stderr, or "" when it wrote nothing. */
+  readonly stderr: string;
+}
+
 /** Runs git in `cwd`, returning stdout, or undefined when it exits non-zero. */
 function git(env: NodeJS.ProcessEnv, cwd: string, args: readonly string[]): Buffer | undefined {
+  return gitResult(env, cwd, args).stdout;
+}
+
+function gitResult(env: NodeJS.ProcessEnv, cwd: string, args: readonly string[]): GitResult {
   const result = spawnSync("git", args, {
     cwd,
     env,
@@ -764,7 +778,13 @@ function git(env: NodeJS.ProcessEnv, cwd: string, args: readonly string[]): Buff
       2,
     );
   }
-  return result.status === 0 ? result.stdout : undefined;
+  const stderr = result.stderr.toString("utf8").split("\n")[0]?.trim() ?? "";
+  return { stdout: result.status === 0 ? result.stdout : undefined, stderr };
+}
+
+/** ` (git: <first stderr line>)`, or "" when git said nothing. */
+function said(stderr: string): string {
+  return stderr === "" ? "" : ` (git: ${stderr})`;
 }
 
 /** A path inside the repository, with `/` separators, or undefined when it is outside. */
@@ -804,7 +824,7 @@ interface TreeEntry {
 /** The entries `git ls-tree -z` lists for `path` at `commit`. */
 function lsTree(env: NodeJS.ProcessEnv, top: string, commit: string, path: string): TreeEntry[] {
   const out = git(env, top, ["ls-tree", "-z", commit, "--", path === "" ? "." : path]);
-  if (out === undefined) throw new BreakingError(`git ls-tree failed for ${path}`, 1);
+  if (out === undefined) throw new BreakingError(`git ls-tree failed for ${path}`, 2);
   return out
     .toString("utf8")
     .split("\0")
@@ -818,7 +838,7 @@ function lsTree(env: NodeJS.ProcessEnv, top: string, commit: string, path: strin
 
 function blob(env: NodeJS.ProcessEnv, top: string, object: string, shown: string): string {
   const out = git(env, top, ["cat-file", "blob", object]);
-  if (out === undefined) throw new BreakingError(`can't read ${shown} from git`, 1);
+  if (out === undefined) throw new BreakingError(`can't read ${shown} from git`, 2);
   return out.toString("utf8");
 }
 
@@ -829,17 +849,24 @@ function blob(env: NodeJS.ProcessEnv, top: string, object: string, shown: string
  */
 function gitVersion(config: Config, ref: string, env: NodeJS.ProcessEnv): Version {
   if (ref.startsWith("-")) throw new BreakingError(`--base ${quoted(ref)} is not a git ref`, 2);
-  const topOut = git(env, config.root, ["rev-parse", "--show-toplevel"]);
+  const topRun = gitResult(env, config.root, ["rev-parse", "--show-toplevel"]);
+  const topOut = topRun.stdout;
   if (topOut === undefined) {
     throw new BreakingError(
-      `--base ${quoted(ref)} is not a folder, and ${config.root} is not in a git repository`,
+      `--base ${quoted(ref)} is not a folder, and ${config.root} is not in a git repository` +
+        said(topRun.stderr),
       2,
     );
   }
   const top = topOut.toString("utf8").trim();
-  const commitOut = git(env, top, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+  const commitRun = gitResult(env, top, ["rev-parse", "--verify", `${ref}^{commit}`]);
+  const commitOut = commitRun.stdout;
   if (commitOut === undefined) {
-    throw new BreakingError(`--base ${quoted(ref)} is neither a folder nor a git ref`, 2);
+    throw new BreakingError(
+      `--base ${quoted(ref)} is neither a folder nor a git ref${said(commitRun.stderr)}. ` +
+        "If it is a ref, fetch it first (in CI, check out with fetch-depth: 0)",
+      2,
+    );
   }
   const commit = commitOut.toString("utf8").trim();
   const label = ref;
@@ -899,6 +926,7 @@ function gitVersion(config: Config, ref: string, env: NodeJS.ProcessEnv): Versio
     return {
       schemas: schemaSet(files, idBase === undefined ? {} : { idBase }),
       options: buildOptions(fromConfig ? base : config),
+      where: `${ref}:${folder === "" ? "." : folder}`,
     };
   });
 }
@@ -922,16 +950,37 @@ export function breaking(
   base: string,
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
+  warn: (line: string) => void = () => undefined,
 ): Breaking {
   const current = currentVersion(config);
   const currentModel = buildModel(current.schemas, current.options);
   const dir = resolve(cwd, base);
   const isDir = base !== "" && existsSync(dir) && statSync(dir).isDirectory();
+  if (isDir && isRef(config, base, env)) {
+    warn(`warning: --base ${quoted(base)} is both a folder and a git ref; comparing with the folder`);
+  }
   const version = isDir ? folderVersion(config, dir, base) : gitVersion(config, base, env);
+  if (version.schemas.length === 0) {
+    throw new BreakingError(`base ${base}: no schema files in ${version.where}`, 2);
+  }
   const baseModel = onBase(base, () => buildModel(version.schemas, version.options));
+  if (baseModel.decls.length === 0) {
+    throw new BreakingError(`base ${base}: the schemas in ${version.where} declare no types`, 2);
+  }
   const reports = everyTargetReports(config);
   const changes = classify(diffModels(baseModel, currentModel), reports);
   return { base, everyTargetReports: reports, changes };
+}
+
+/** True when `ref` names a commit in the repository that holds the config. Never throws. */
+function isRef(config: Config, ref: string, env: NodeJS.ProcessEnv): boolean {
+  if (ref.startsWith("-")) return false;
+  try {
+    const args = ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`];
+    return git(env, config.root, args) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 /** True when any change breaks someone, which makes `strictgen breaking` exit 1. */

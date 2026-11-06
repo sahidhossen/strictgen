@@ -122,7 +122,7 @@ const COMMANDS: Readonly<Record<string, Command>> = {
       "holds the config (read with git, nothing is checked out), and lists every change by who it",
       "breaks: all consumers, strict consumers, producers, or nobody. A folder wins over a ref of",
       "the same name. Exits 1 when anything breaks, 0 otherwise, and 2 for a base that can't be",
-      "found. docs/breaking-changes.md has the rules.",
+      "loaded. docs/breaking-changes.md has the rules.",
     ],
     options: [
       "  --base <ref|dir> The older version: a git ref, or a project or schemas folder",
@@ -440,7 +440,7 @@ function docs(config: Config, io: Io, format: DocsFormat | undefined): number {
 }
 
 function breakingCommand(config: Config, io: Io, base: string, json: boolean): number {
-  const result = breaking(config, base, io.cwd, io.env);
+  const result = breaking(config, base, io.cwd, io.env, io.err);
   if (json) io.out(JSON.stringify(breakingJson(result), null, 2));
   else for (const line of breakingLines(result)) io.out(line);
   return breaksAnything(result) ? EXIT_FAILED : EXIT_OK;
