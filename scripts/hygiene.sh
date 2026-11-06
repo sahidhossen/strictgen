@@ -6,8 +6,8 @@
 #   scripts/hygiene.sh --text     check text on stdin (a PR title and body, an issue)
 #
 # Blocked words come from $HYGIENE_DENYLIST (newline separated) or a local,
-# untracked .hygiene-denylist file. In CI ($CI set) a missing denylist is an
-# error. Commit messages are checked from $HYGIENE_BASE to HEAD; unset means
+# untracked .hygiene-denylist file. A missing denylist is an error; set
+# HYGIENE_ALLOW_NO_DENYLIST=1 to run the other checks without one (never in CI). Commit messages are checked from $HYGIENE_BASE to HEAD; unset means
 # origin/main, empty means every commit reachable from HEAD.
 set -euo pipefail
 
@@ -18,7 +18,9 @@ else
   export LC_ALL=en_US.UTF-8
 fi
 
-cd "$(git rev-parse --show-toplevel)"
+# Work from the repository that holds this script, wherever it is run from.
+root="$(git -C "$(dirname "$0")" rev-parse --show-toplevel)"
+cd "$root"
 
 fail=0
 report() {
@@ -43,7 +45,11 @@ if [[ ! -s "$denylist" ]]; then
     echo "hygiene: no denylist in CI, set the HYGIENE_DENYLIST secret" >&2
     exit 1
   fi
-  echo "hygiene: no denylist found, skipping blocked-word checks" >&2
+  if [[ "${HYGIENE_ALLOW_NO_DENYLIST:-}" != "1" ]]; then
+    echo "hygiene: no denylist found (.hygiene-denylist or HYGIENE_DENYLIST); set HYGIENE_ALLOW_NO_DENYLIST=1 to skip blocked-word checks" >&2
+    exit 1
+  fi
+  echo "hygiene: no denylist, skipping blocked-word checks (HYGIENE_ALLOW_NO_DENYLIST=1)" >&2
 fi
 
 if [[ "${1:-}" == "--text" ]]; then
