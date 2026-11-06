@@ -423,6 +423,9 @@ function enumeration(decl: EnumDecl): string {
   return (
     `type ${decl.name} string\n\n` +
     `// Values of ${decl.name}.\nconst (\n${lines.join("")})\n\n` +
+    `// MarshalText fails on a value the type doesn't list, so it is never written.\n` +
+    `func (v ${decl.name}) MarshalText() ([]byte, error) {\n` +
+    `\treturn encodeEnum(v, ${consts.map((c) => c.name).join(", ")})\n}\n\n` +
     `// UnmarshalJSON fails on a value the type doesn't list.\n` +
     unmarshalMethod(decl.name) +
     `func (v *${decl.name}) decode(n *node) *DecodeError {\n` +
@@ -1408,6 +1411,15 @@ func decodeEnum[T ~string](n *node, dst *T, values ...T) *DecodeError {
 	}
 	*dst = T(s)
 	return nil
+}
+
+// encodeEnum returns the text of v, failing when values doesn't list it. Used as MarshalText,
+// it covers values; a map key of a string type is written without it.
+func encodeEnum[T ~string](v T, values ...T) ([]byte, error) {
+	if !slices.Contains(values, v) {
+		return nil, fmt.Errorf("unknown value %q", string(v))
+	}
+	return []byte(v), nil
 }
 
 // decodeStringInto decodes a JSON string into a named string type, like an id.

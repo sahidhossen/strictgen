@@ -22,6 +22,18 @@
   "required": ["id", "email", "role", "labels", "createdAt"],
   "unevaluatedProperties": false,
   "$defs": {
+    "contact": {
+      "description": "How to reach a user: by email or by phone, exactly one of them.",
+      "type": "object",
+      "properties": {
+        "name": { "description": "Who to ask for.", "type": "string" },
+        "email": { "description": "An email address.", "type": "string" },
+        "phone": { "description": "A phone number.", "type": "string" }
+      },
+      "required": ["name"],
+      "oneOf": [{ "required": ["email"] }, { "required": ["phone"] }],
+      "unevaluatedProperties": false
+    },
     "role": {
       "description": "What the user may do.",
       "enum": ["owner", "admin", "member"]

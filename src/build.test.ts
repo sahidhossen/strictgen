@@ -1070,7 +1070,7 @@ describe("one file per schema", () => {
     const types = emitTypeScript(rest, { decoders: false });
     expect(types.find((f) => f.name === "pricing.ts")?.contents).not.toContain("import");
     expect(emitTypeScript(rest).find((f) => f.name === "pricing.ts")?.contents).toContain(
-      'import * as h from "./helpers.js";\nimport { decodeCurrencyCode } from "./common.js";\n',
+      'import * as h from "./helpers.js";\nimport { decodeCurrencyCode, encodeCurrencyCode } from "./common.js";\n',
     );
   });
 

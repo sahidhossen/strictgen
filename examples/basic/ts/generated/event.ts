@@ -51,16 +51,21 @@ export function tryDecodeEvent(json: unknown): h.DecodeResult<Event> {
   return h.attempt(decodeEvent, json);
 }
 
-/** Encodes Event as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes Event as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeEvent(value: Event): unknown {
+  h.encodeObject(value);
   const out = {};
-  h.put(out, "id", encodeEventId(value.id));
-  h.put(out, "type", encodeEventType(value.type));
-  h.put(out, "occurredAt", encodeTimestamp(value.occurredAt));
-  h.put(out, "attempt", value.attempt);
-  h.put(out, "user", encodeUser(value.user));
-  if (value.paymentMethod !== undefined) h.put(out, "paymentMethod", encodePaymentMethod(value.paymentMethod));
-  if (value.metadata !== undefined) h.put(out, "metadata", h.encodeMap(value.metadata, (item: string) => item));
+  h.member(out, "id", value.id, encodeEventId);
+  h.member(out, "type", value.type, encodeEventType);
+  h.member(out, "occurredAt", value.occurredAt, encodeTimestamp);
+  h.member(out, "attempt", value.attempt, h.encodeInteger);
+  h.member(out, "user", value.user, encodeUser);
+  if (value.paymentMethod !== undefined) h.member(out, "paymentMethod", value.paymentMethod, encodePaymentMethod);
+  if (value.metadata !== undefined) h.member(out, "metadata", value.metadata, h.encodeMap(h.encodeString, h.encodeString));
+  h.encodeClosed(value, ["id", "type", "occurredAt", "attempt", "user", "paymentMethod", "metadata"]);
   return out;
 }
 
@@ -80,7 +85,10 @@ export function tryDecodeEventType(json: unknown): h.DecodeResult<EventType> {
   return h.attempt(decodeEventType, json);
 }
 
-/** Encodes EventType as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes EventType as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeEventType(value: EventType): unknown {
-  return value;
+  return h.encodeEnum(value, ["user.created", "user.updated", "payment_method.attached"] as const);
 }

@@ -44,14 +44,19 @@ export function tryDecodeSubscription(json: unknown): h.DecodeResult<Subscriptio
   return h.attempt(decodeSubscription, json);
 }
 
-/** Encodes Subscription as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes Subscription as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeSubscription(value: Subscription): unknown {
+  h.encodeObject(value);
   const out = {};
-  h.put(out, "url", value.url);
-  h.put(out, "match", value.match.map((item) => encodeEventType(item)));
-  h.put(out, "default", value.default);
-  if (value.async !== undefined) h.put(out, "async", value.async);
-  if (value.select !== undefined) h.put(out, "select", [...value.select]);
-  if (value.self !== undefined) h.put(out, "self", value.self);
+  h.member(out, "url", value.url, h.encodeString);
+  h.member(out, "match", value.match, h.encodeArray(encodeEventType));
+  h.member(out, "default", value.default, h.encodeBoolean);
+  if (value.async !== undefined) h.member(out, "async", value.async, h.encodeBoolean);
+  if (value.select !== undefined) h.member(out, "select", value.select, h.encodeArray(h.encodeString));
+  if (value.self !== undefined) h.member(out, "self", value.self, h.encodeString);
+  h.encodeClosed(value, ["url", "match", "default", "async", "select", "self"]);
   return out;
 }

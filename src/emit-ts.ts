@@ -153,6 +153,8 @@ function typeDeclaration(ctx: Ctx, decl: Decl): string {
     case "id":
       // Branded, so ids of different kinds don't mix. Only the decoder or the cast makes one.
       return `export type ${decl.name} = string & { readonly __brand: ${JSON.stringify(decl.name)} };\n`;
+    default:
+      return unreachable(decl);
   }
 }
 
@@ -174,27 +176,25 @@ function functions(ctx: Ctx, decl: Decl): string {
     `/** Like decode${name}, but returns the DecodeError instead of throwing it. */\n` +
     `export function tryDecode${name}(json: unknown): h.DecodeResult<${name}> {\n` +
     `  return h.attempt(decode${name}, json);\n}\n\n` +
-    `/** Encodes ${name} as a JSON value, ready for JSON.stringify. */\n` +
-    `export function encode${name}(${encodeParam(decl)}: ${name}): unknown {\n${encodeBody(ctx, decl)}}\n`
+    `/**\n * Encodes ${name} as a JSON value, ready for JSON.stringify.\n` +
+    ` * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.\n */\n` +
+    `export function encode${name}(value: ${name}): unknown {\n${encodeBody(ctx, decl)}}\n`
   );
 }
 
-/** The encoder's parameter: `_value` for an object with no keys, whose encoder never reads it. */
-function encodeParam(decl: Decl): string {
-  const empty = decl.kind === "struct" && decl.fields.length === 0 && decl.rest === undefined;
-  return empty ? "_value" : "value";
+/** Fails to compile when a switch misses a model kind, so every kind gets a decoder and an encoder. */
+function unreachable(value: never): never {
+  throw new Error(`unhandled model kind ${JSON.stringify(value)}`);
 }
 
-/** Unions have no TypeScript decoder or encoder yet. Theirs fail every value, never pass one through. */
-function pending(decl: Decl): string | undefined {
-  if (decl.kind === "tagged") return "tagged unions";
-  if (decl.kind === "untagged") return "untagged unions";
-  return undefined;
+/** An array literal of items, on one line when it fits, else one item per line. */
+function list(items: readonly string[], indent: string, used: number): string {
+  const line = `[${items.join(", ")}]`;
+  if (used + line.length <= WIDTH) return line;
+  return `[\n${items.map((i) => `${indent}  ${i},\n`).join("")}${indent}]`;
 }
 
 function decodeBody(ctx: Ctx, decl: Decl): string {
-  const missing = pending(decl);
-  if (missing !== undefined) return `  return h.unsupported(${JSON.stringify(missing)})(json, path);\n`;
   switch (decl.kind) {
     case "struct":
       return decodeStruct(ctx, decl);
@@ -204,9 +204,21 @@ function decodeBody(ctx: Ctx, decl: Decl): string {
       return `  return h.decodeString(json, path) as ${decl.name};\n`;
     case "alias":
       return `  return ${decoder(ctx, decl.type)}(json, path);\n`;
-    case "tagged":
-    case "untagged":
-      return "";
+    case "tagged": {
+      // The model spreads nested tagged unions, so every variant here is one branch struct.
+      const branches = decl.variants.map(
+        (v) => `[${JSON.stringify(v.value)}, ${decoder(ctx, { kind: "ref", name: v.type })}]`,
+      );
+      const head = `  return h.tagged<${decl.name}>(json, path, ${JSON.stringify(decl.tag)}, `;
+      return `${head}${list(branches, "  ", head.length + 2)});\n`;
+    }
+    case "untagged": {
+      const variants = decl.variants.map((v) => decoder(ctx, v.type));
+      const head = `  return h.untagged<${decl.name}>(json, path, ${JSON.stringify(decl.name)}, `;
+      return `${head}${list(variants, "  ", head.length + 2)});\n`;
+    }
+    default:
+      return unreachable(decl);
   }
 }
 
@@ -239,36 +251,52 @@ function decodeStruct(ctx: Ctx, decl: StructDecl): string {
 }
 
 function encodeBody(ctx: Ctx, decl: Decl): string {
-  const missing = pending(decl);
-  if (missing !== undefined) return `  return h.cannotEncode(${JSON.stringify(missing)}, value);\n`;
   switch (decl.kind) {
     case "struct":
       return encodeStruct(ctx, decl);
     case "enum":
+      return `  return h.encodeEnum(value, [${decl.values.map((v) => JSON.stringify(v)).join(", ")}] as const);\n`;
     case "id":
-      return "  return value;\n";
+      return "  return h.encodeString(value);\n";
     case "alias":
-      return `  return ${encoder(ctx, decl.type, "value")};\n`;
-    case "tagged":
-    case "untagged":
-      return "";
+      return `  return ${encoder(ctx, decl.type)}(value);\n`;
+    case "tagged": {
+      const branches = decl.variants.map(
+        (v) => `[${JSON.stringify(v.value)}, ${encoder(ctx, { kind: "ref", name: v.type })}]`,
+      );
+      const head = `  return h.encodeTagged(value, ${JSON.stringify(decl.tag)}, `;
+      return `${head}${list(branches, "  ", head.length + 2)});\n`;
+    }
+    case "untagged": {
+      const variants = decl.variants.map((v) => encoder(ctx, v.type));
+      const head = `  return h.encodeUntagged(value, ${JSON.stringify(decl.name)}, `;
+      return `${head}${list(variants, "  ", head.length + 2)});\n`;
+    }
+    default:
+      return unreachable(decl);
   }
 }
 
-/** Writes the named keys in schema order, then the rest keys sorted, as Rust and Go do. */
+/**
+ * Checks the value is an object, writes the named keys in schema order, then the rest keys
+ * sorted, as Rust and Go do. Without a rest map, a key the type doesn't name fails, since Rust
+ * and Go could not hold it and dropping it would lose data.
+ */
 function encodeStruct(ctx: Ctx, decl: StructDecl): string {
+  const named = `[${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}]`;
   const lines = decl.fields.map((f) => {
     const read = `value${access(f.name)}`;
-    const put = `h.put(out, ${JSON.stringify(f.name)}, ${encoder(ctx, f.type, read)});\n`;
+    const put = `h.member(out, ${JSON.stringify(f.name)}, ${read}, ${encoder(ctx, f.type)});\n`;
     return f.required ? `  ${put}` : `  if (${read} !== undefined) ${put}`;
   });
   if (decl.rest !== undefined) {
-    const named = `[${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}]`;
-    const type = typeText(decl.rest.value, ctx.decls);
-    const encode = encoder(ctx, decl.rest.value, "item");
-    lines.push(`  h.putRest<${type}>(out, value, ${named}, (item) => ${encode});\n`);
+    const key = encoder(ctx, decl.rest.key);
+    const value = encoder(ctx, decl.rest.value);
+    lines.push(`  h.putRest(out, value, ${named}, ${key}, ${value});\n`);
+  } else {
+    lines.push(`  h.encodeClosed(value, ${named});\n`);
   }
-  return `  const out = {};\n${lines.join("")}  return out;\n`;
+  return `  h.encodeObject(value);\n  const out = {};\n${lines.join("")}  return out;\n`;
 }
 
 /** An expression for the decoder of a type, a `Decoder<T>`. */
@@ -288,40 +316,44 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
     case "literal":
       return `h.literal(${String(type.value)})`;
     case "any":
-      return `h.unsupported("any JSON values")`;
+      return "h.decodeAny";
     case "nonNull":
-      return `h.unsupported("non-null JSON values")`;
+      return "h.decodeNonNull";
     case "array":
       return `h.array(${decoder(ctx, type.items)})`;
     case "map":
       return `h.map(${decoder(ctx, type.key)}, ${decoder(ctx, type.value)})`;
+    default:
+      return unreachable(type);
   }
 }
 
-/** An expression that encodes `value`, an expression of the type. */
-function encoder(ctx: Ctx, type: TypeExpr, value: string): string {
+/** An expression for the encoder of a type, an `Encoder<T>`, which checks what it writes. */
+function encoder(ctx: Ctx, type: TypeExpr): string {
   switch (type.kind) {
     case "ref":
       ctx.calls.add(`encode${type.name}`);
-      return `encode${type.name}(${value})`;
+      return `encode${type.name}`;
     case "string":
+      return "h.encodeString";
     case "integer":
+      return "h.encodeInteger";
     case "number":
+      return "h.encodeNumber";
     case "boolean":
+      return "h.encodeBoolean";
     case "literal":
-      return value;
+      return `h.encodeLiteral(${String(type.value)})`;
     case "any":
-      return `h.cannotEncode("any JSON values", ${value})`;
+      return "h.encodeAny";
     case "nonNull":
-      return `h.cannotEncode("non-null JSON values", ${value})`;
-    case "array": {
-      const item = encoder(ctx, type.items, "item");
-      return item === "item" ? `[...${value}]` : `${value}.map((item) => ${item})`;
-    }
-    case "map": {
-      const type_ = typeText(type.value, ctx.decls);
-      return `h.encodeMap(${value}, (item: ${type_}) => ${encoder(ctx, type.value, "item")})`;
-    }
+      return "h.encodeNonNull";
+    case "array":
+      return `h.encodeArray(${encoder(ctx, type.items)})`;
+    case "map":
+      return `h.encodeMap(${encoder(ctx, type.key)}, ${encoder(ctx, type.value)})`;
+    default:
+      return unreachable(type);
   }
 }
 

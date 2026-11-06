@@ -25,9 +25,12 @@ export function tryDecodeEventId(json: unknown): h.DecodeResult<EventId> {
   return h.attempt(decodeEventId, json);
 }
 
-/** Encodes EventId as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes EventId as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeEventId(value: EventId): unknown {
-  return value;
+  return h.encodeString(value);
 }
 
 /** An RFC 3339 date and time in UTC. */
@@ -46,9 +49,12 @@ export function tryDecodeTimestamp(json: unknown): h.DecodeResult<Timestamp> {
   return h.attempt(decodeTimestamp, json);
 }
 
-/** Encodes Timestamp as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes Timestamp as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeTimestamp(value: Timestamp): unknown {
-  return value;
+  return h.encodeString(value);
 }
 
 /** The ID of a user, like `usr_8f2k`. */
@@ -72,7 +78,10 @@ export function tryDecodeUserId(json: unknown): h.DecodeResult<UserId> {
   return h.attempt(decodeUserId, json);
 }
 
-/** Encodes UserId as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes UserId as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeUserId(value: UserId): unknown {
-  return value;
+  return h.encodeString(value);
 }

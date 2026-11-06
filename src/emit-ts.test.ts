@@ -568,28 +568,403 @@ describe("TypeScript scalars, ids, aliases and consts", () => {
   });
 });
 
-describe("TypeScript unions not decoded yet", () => {
-  const model = libModel({
-    payment: {
-      oneOf: [
-        closed({ type: { const: "card" } }, ["type"]),
-        closed({ type: { const: "wire" } }, ["type"]),
-      ],
-    },
-    either: { oneOf: [{ type: "string" }, { type: "integer" }] },
-    holder: closed({ any: {}, nonNull: { not: { const: null } } }),
+/** The message of the EncodeError that encoding `value` as `type` throws. */
+function refusal(m: Loaded, type: string, value: unknown): string {
+  try {
+    m.fn(`encode${type}`)(value);
+  } catch (error) {
+    if (!(error instanceof m.EncodeError)) throw error;
+    return error.message;
+  }
+  throw new Error(`encode${type} accepted ${String(value)}`);
+}
+
+const paymentDefs: JsonObject = {
+  cardPayment: closed(
+    { type: { const: "card" }, installments: { type: "integer" } },
+    ["type", "installments"],
+  ),
+  wirePayment: closed({ type: { const: "wire" }, iban: { type: "string" } }, ["type"]),
+};
+
+describe("TypeScript tagged unions", () => {
+  const model = build({
+    payment: schema("payment", {
+      title: "Payment",
+      oneOf: [{ $ref: "#/$defs/cardPayment" }, { $ref: "#/$defs/wirePayment" }],
+      $defs: {
+        ...paymentDefs,
+        checkout: closed(
+          {
+            root: { $ref: "#/$defs/anyPayment" },
+            extra: { $ref: "#" },
+            payments: { type: "array", items: { $ref: "#" } },
+          },
+          ["root"],
+        ),
+        anyPayment: { $ref: "#" },
+        // A union whose second branch is itself a union: its branches are spread into this one.
+        transfer: {
+          oneOf: [{ $ref: "#/$defs/cashTransfer" }, { $ref: "#" }],
+        },
+        cashTransfer: closed({ type: { const: "cash" } }, ["type"]),
+      },
+    }),
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
   });
 
-  it("fail every value, never pass one through", async () => {
-    const m = await load(model);
-    expect(failure(m, "Payment", { type: "card" })).toBe("TypeScript can't decode tagged unions yet");
-    expect(failure(m, "Either", "x")).toBe("TypeScript can't decode untagged unions yet");
-    expect(failure(m, "Holder", { any: 1 })).toBe("/any: TypeScript can't decode any JSON values yet");
-    expect(failure(m, "Holder", { nonNull: 1 })).toBe(
-      "/nonNull: TypeScript can't decode non-null JSON values yet",
+  it("read the tag first and decode only the branch it names", () => {
+    expect(emitTypeScript(model)[0]?.contents).toContain(
+      '  return h.tagged<Payment>(json, path, "type", [\n' +
+        '    ["card", decodeCardPayment],\n    ["wire", decodeWirePayment],\n  ]);\n',
     );
-    expect(m.fn("decodeHolder")({})).toEqual({});
-    expect(() => m.fn("encodeEither")("x")).toThrow(m.EncodeError);
+    expect(m.fn("decodePayment")({ type: "wire" })).toEqual({ type: "wire" });
+    expect(m.fn("decodePayment")({ installments: 3, type: "card" })).toEqual({
+      type: "card",
+      installments: 3,
+    });
+  });
+
+  it("fail on a missing tag, a tag that is not a string and an unknown tag, naming the tags", () => {
+    expect(failure(m, "Payment", { iban: "x" })).toBe('missing key "type"');
+    expect(failure(m, "Payment", { type: 1 })).toBe('"type" must be a string, found a number');
+    expect(failure(m, "Payment", { type: null })).toBe('"type" must be a string, found null');
+    expect(failure(m, "Payment", { type: "cash" })).toBe(
+      'unknown type "cash", expected one of card, wire',
+    );
+    expect(failure(m, "Payment", [])).toBe("expected an object, found an array");
+  });
+
+  it("name the branch in errors inside it, keeping the path", () => {
+    expect(failure(m, "Payment", { type: "card" })).toBe('type "card": missing key "installments"');
+    expect(failure(m, "Payment", { type: "wire", installments: 1 })).toBe(
+      'type "wire": unknown key "installments"',
+    );
+    expect(failure(m, "Checkout", { root: { type: "card", installments: "2" } })).toBe(
+      '/root/installments: type "card": expected a number, found a string',
+    );
+    expect(failure(m, "Checkout", { root: { type: "wire" }, payments: [{ type: "x" }] })).toBe(
+      '/payments/0: unknown type "x", expected one of card, wire',
+    );
+  });
+
+  it("decode nested tagged unions spread into one, as Rust and Go do", () => {
+    expect(emitTypeScript(model)[0]?.contents).toContain(
+      "export type Transfer = CashTransfer | CardPayment | WirePayment;\n",
+    );
+    expect(m.fn("decodeTransfer")({ type: "cash" })).toEqual({ type: "cash" });
+    expect(m.fn("decodeTransfer")({ type: "wire" })).toEqual({ type: "wire" });
+    expect(failure(m, "Transfer", { type: "gift" })).toBe(
+      'unknown type "gift", expected one of card, cash, wire',
+    );
+  });
+
+  it("encode the branch the tag names, refusing a tag no branch has", () => {
+    expect(roundTrip(m, "Payment", '{"installments":2,"type":"card"}')).toBe(
+      '{"type":"card","installments":2}',
+    );
+    expect(roundTrip(m, "Checkout", '{"payments":[{"type":"wire"}],"root":{"type":"wire"}}')).toBe(
+      '{"root":{"type":"wire"},"payments":[{"type":"wire"}]}',
+    );
+    expect(refusal(m, "Payment", { type: "cash" })).toBe(
+      'unknown type "cash", expected one of card, wire',
+    );
+    expect(refusal(m, "Payment", {})).toBe('missing key "type"');
+    expect(refusal(m, "Payment", { type: "card", installments: 1.5 })).toBe(
+      '/installments: type "card": expected an integer, found 1.5',
+    );
+    expect(refusal(m, "Checkout", {})).toBe("/root: expected an object, found a value that is not JSON");
+  });
+});
+
+describe("TypeScript untagged unions", () => {
+  const model = libModel({
+    accountRef: closed({ $account: { type: "string" } }, ["$account"]),
+    currencyCode: { type: "string" },
+    currencyAmounts: {
+      type: "object",
+      propertyNames: { $ref: "#/$defs/currencyCode" },
+      additionalProperties: { type: "string" },
+    },
+    amountsOrRef: { oneOf: [{ $ref: "#/$defs/currencyAmounts" }, { $ref: "#/$defs/accountRef" }] },
+    loose: { oneOf: [{ type: "string" }, {}] },
+    scalar: {
+      oneOf: [
+        { type: "boolean" },
+        { type: "number" },
+        { type: "integer" },
+        { type: "string" },
+        { enum: ["auto"] },
+        { type: "array", items: { type: "integer" } },
+      ],
+    },
+    contact: {
+      type: "object",
+      properties: { name: { type: "string" }, email: { type: "string" }, phone: { type: "string" } },
+      required: ["name"],
+      oneOf: [{ required: ["email"] }, { required: ["phone"] }],
+      unevaluatedProperties: false,
+    },
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
+  });
+
+  it("try the variants in the model's order, the same as Rust and Go", () => {
+    const out = emitTypeScript(model)[0]?.contents ?? "";
+    // Objects with required keys first, then maps, as in Go's decodeUntagged list.
+    expect(out).toContain(
+      '  return h.untagged<AmountsOrRef>(json, path, "AmountsOrRef", [\n' +
+        "    decodeAccountRef,\n    decodeCurrencyAmounts,\n  ]);\n",
+    );
+    // Arrays, enums, strings, integers, numbers, booleans.
+    expect(out).toContain(
+      "export type Scalar = number[] | ScalarVariant5 | string | number | number | boolean;\n",
+    );
+    expect(out).toContain('h.untagged<Loose>(json, path, "Loose", [h.decodeString, h.decodeAny]);\n');
+  });
+
+  it("pick the first variant that matches when two do, as Rust and Go", () => {
+    // A map of strings would take {"$account": "a"} too; the account reference comes first.
+    const ref = m.fn("decodeAmountsOrRef")({ $account: "a" });
+    expect(ref).toEqual({ $account: "a" });
+    expect(m.fn("decodeAmountsOrRef")({ usd: "1" })).toEqual({ usd: "1" });
+    // "auto" is a string too; the enum comes first. 2 is a number too; the integer comes first.
+    expect(m.fn("decodeScalar")("auto")).toBe("auto");
+    expect(m.fn("decodeScalar")(2)).toBe(2);
+    expect(m.fn("decodeScalar")(2.5)).toBe(2.5);
+    expect(m.fn("decodeScalar")([1])).toEqual([1]);
+    expect(m.fn("decodeLoose")(null)).toBe(null);
+  });
+
+  it("fail with the union's name when no variant matches, at its path", () => {
+    expect(failure(m, "AmountsOrRef", { usd: 1 })).toBe("data did not match any variant of AmountsOrRef");
+    expect(failure(m, "Scalar", null)).toBe("data did not match any variant of Scalar");
+    expect(failure(m, "Scalar", [1.5], "/x")).toBe("/x: data did not match any variant of Scalar");
+  });
+
+  it("map an exactly-one oneOf of required keys to one struct per choice, as Rust and Go", () => {
+    const out = emitTypeScript(model)[0]?.contents ?? "";
+    expect(out).toContain("export type Contact = ContactEmail | ContactPhone;\n");
+    expect(out).toContain("  phone?: never;\n");
+    expect(m.fn("decodeContact")({ name: "n", email: "e" })).toEqual({ name: "n", email: "e" });
+    expect(m.fn("decodeContact")({ name: "n", phone: "p" })).toEqual({ name: "n", phone: "p" });
+    expect(failure(m, "Contact", { name: "n", email: "e", phone: "p" })).toBe(
+      "data did not match any variant of Contact",
+    );
+    expect(failure(m, "Contact", { name: "n" })).toBe("data did not match any variant of Contact");
+  });
+
+  it("encode with the first variant in decode order that takes the value", () => {
+    expect(roundTrip(m, "AmountsOrRef", '{"$account":"a"}')).toBe('{"$account":"a"}');
+    expect(roundTrip(m, "AmountsOrRef", '{"usd":"1","eur":"2"}')).toBe('{"eur":"2","usd":"1"}');
+    expect(roundTrip(m, "Contact", '{"phone":"p","name":"n"}')).toBe('{"name":"n","phone":"p"}');
+    expect(roundTrip(m, "Scalar", "2.5")).toBe("2.5");
+    expect(roundTrip(m, "Loose", '{"a":[null]}')).toBe('{"a":[null]}');
+  });
+
+  it("refuse a value no variant takes, where Go refuses zero or several variants set", () => {
+    expect(refusal(m, "AmountsOrRef", { usd: 1 })).toBe("value did not match any variant of AmountsOrRef");
+    expect(refusal(m, "Contact", { name: "n", email: "e", phone: "p" })).toBe(
+      "value did not match any variant of Contact",
+    );
+    expect(refusal(m, "Scalar", Number.NaN)).toBe("value did not match any variant of Scalar");
+    expect(refusal(m, "Loose", undefined)).toBe("value did not match any variant of Loose");
+  });
+});
+
+describe("TypeScript maps", () => {
+  const model = libModel({
+    currency: { enum: ["usd", "eur"] },
+    byCurrency: {
+      type: "object",
+      propertyNames: { $ref: "#/$defs/currency" },
+      additionalProperties: { type: "integer" },
+    },
+    labels: { type: "object", additionalProperties: { type: "array", items: { type: "string" } } },
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
+  });
+
+  it("type an enum-keyed map as a partial record", () => {
+    expect(emitTypeScript(model)[0]?.contents).toContain(
+      "export type ByCurrency = Partial<Record<Currency, number>>;\n",
+    );
+  });
+
+  it("check the key type, enum keys included, and the value type", () => {
+    expect(m.fn("decodeByCurrency")({ eur: 1 })).toEqual({ eur: 1 });
+    expect(failure(m, "ByCurrency", { yen: 1 })).toBe(
+      'key "yen": unknown value "yen", expected one of "usd", "eur"',
+    );
+    expect(failure(m, "ByCurrency", { usd: 1.5 })).toBe("/usd: expected an integer, found 1.5");
+    expect(failure(m, "Labels", { a: ["x", 1] })).toBe("/a/1: expected a string, found a number");
+    expect(failure(m, "Labels", [])).toBe("expected an object, found an array");
+  });
+
+  it("encode keys sorted by code point, refusing a key or value the types don't allow", () => {
+    expect(roundTrip(m, "ByCurrency", '{"usd":2,"eur":1}')).toBe('{"eur":1,"usd":2}');
+    expect(refusal(m, "ByCurrency", { yen: 1 })).toBe(
+      'key "yen": unknown value "yen", expected one of "usd", "eur"',
+    );
+    expect(refusal(m, "ByCurrency", { usd: 2 ** 53 })).toBe(
+      "/usd: expected an integer from -9007199254740991 to 9007199254740991, found 9007199254740992",
+    );
+    expect(refusal(m, "ByCurrency", { usd: undefined })).toBe(
+      "/usd: expected a number, found a value that is not JSON",
+    );
+    expect(refusal(m, "Labels", { a: ["x", 1] })).toBe("/a/1: expected a string, found a number");
+    expect(refusal(m, "Labels", [])).toBe("expected an object, found an array");
+  });
+});
+
+describe("TypeScript any values, non-null values and recursion", () => {
+  const model = libModel({
+    holder: closed({ any: {}, nonNull: { not: { const: null } }, list: { type: "array", items: {} } }),
+    tree: closed(
+      {
+        name: { type: "string" },
+        children: { type: "array", items: { $ref: "#/$defs/tree" } },
+        next: { $ref: "#/$defs/tree" },
+      },
+      ["name"],
+    ),
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
+  });
+
+  it("decode {} as any JSON value, null included, and keep it as it is", () => {
+    for (const any of [null, 1, "x", true, [], { a: [null, { b: 2 }] }]) {
+      expect(m.fn("decodeHolder")({ any })).toEqual({ any });
+    }
+    expect(failure(m, "Holder", { any: { a: [1, undefined] } })).toBe(
+      "/any/a/1: expected a JSON value, found a value that is not JSON",
+    );
+    expect(failure(m, "Holder", { list: [Number.NaN] })).toBe(
+      "/list/0: expected a JSON value, found a number that is not finite",
+    );
+    expect(failure(m, "Holder", { any: new Map() })).toBe(
+      "/any: expected a JSON value, found an object that is not plain JSON",
+    );
+  });
+
+  it("decode a non-null value as any JSON value but null", () => {
+    expect(m.fn("decodeHolder")({ nonNull: { a: null } })).toEqual({ nonNull: { a: null } });
+    expect(failure(m, "Holder", { nonNull: null })).toBe("/nonNull: expected a JSON value other than null");
+  });
+
+  it("decode deep any values without running out of stack", () => {
+    const deep = JSON.parse("[".repeat(20000) + "]".repeat(20000)) as unknown;
+    expect(m.fn("decodeHolder")({ any: deep })).toEqual({ any: deep });
+  });
+
+  it("encode any and non-null values, refusing what JSON can't hold", () => {
+    expect(roundTrip(m, "Holder", '{"any":null,"nonNull":[1],"list":[{},null]}')).toBe(
+      '{"any":null,"nonNull":[1],"list":[{},null]}',
+    );
+    expect(refusal(m, "Holder", { nonNull: null })).toBe("/nonNull: expected a JSON value other than null");
+    expect(refusal(m, "Holder", { any: { a: Number.POSITIVE_INFINITY } })).toBe(
+      "/any/a: expected a JSON value, found a number that is not finite",
+    );
+    const cycle: unknown[] = [];
+    cycle.push(cycle);
+    expect(refusal(m, "Holder", { any: cycle })).toBe("/any/0: expected a JSON value, found a value that holds itself");
+  });
+
+  it("decode and encode recursive types as deep as the input", () => {
+    const text = '{"name":"a","children":[{"name":"b","next":{"name":"c"}}]}';
+    expect(roundTrip(m, "Tree", text)).toBe(text);
+    expect(failure(m, "Tree", { name: "a", children: [{ name: "b", next: { name: 1 } }] })).toBe(
+      "/children/0/next/name: expected a string, found a number",
+    );
+  });
+});
+
+describe("TypeScript encoding checks", () => {
+  const model = libModel({
+    status: { enum: ["open", "closed"] },
+    version: { const: 1 },
+    order: closed(
+      {
+        id: { type: "string" },
+        count: { type: "integer" },
+        ratio: { type: "number" },
+        status: { $ref: "#/$defs/status" },
+        version: { $ref: "#/$defs/version" },
+        tags: { type: "array", items: { type: "string" } },
+        note: { type: "string" },
+      },
+      ["id", "count", "tags"],
+    ),
+    prices: {
+      type: "object",
+      properties: { default: { type: "integer" } },
+      additionalProperties: { type: "integer" },
+      required: ["default"],
+    },
+  });
+  let m: Loaded;
+  beforeAll(async () => {
+    m = await load(model);
+  });
+  const order = { id: "o1", count: 1, tags: [] };
+
+  it("refuse integers JSON.stringify would change or Rust and Go can't hold", () => {
+    const range = "expected an integer from -9007199254740991 to 9007199254740991, found";
+    expect(refusal(m, "Order", { ...order, count: 1.5 })).toBe("/count: expected an integer, found 1.5");
+    expect(refusal(m, "Order", { ...order, count: -0 })).toBe("/count: expected an integer, found -0");
+    expect(refusal(m, "Order", { ...order, count: 2 ** 53 })).toBe(`/count: ${range} 9007199254740992`);
+    expect(refusal(m, "Order", { ...order, count: Number.NaN })).toBe(
+      "/count: expected a number, found a number that is not finite",
+    );
+    expect(refusal(m, "Order", { ...order, count: Number.NEGATIVE_INFINITY })).toBe(
+      "/count: expected a number, found a number that is not finite",
+    );
+  });
+
+  it("refuse numbers that are not finite, which JSON.stringify writes as null", () => {
+    expect(refusal(m, "Order", { ...order, ratio: Number.NaN })).toBe(
+      "/ratio: expected a number, found a number that is not finite",
+    );
+    expect(JSON.stringify(m.fn("encodeOrder")({ ...order, ratio: -0 }))).toContain('"ratio":0');
+  });
+
+  it("refuse an enum value or a const the type doesn't list", () => {
+    expect(refusal(m, "Status", "gone")).toBe('unknown value "gone", expected one of "open", "closed"');
+    expect(refusal(m, "Order", { ...order, status: "Open" })).toBe(
+      '/status: unknown value "Open", expected one of "open", "closed"',
+    );
+    expect(refusal(m, "Version", 2)).toBe("expected 1, found 2");
+  });
+
+  it("refuse a missing required key and a value of the wrong type", () => {
+    expect(refusal(m, "Order", { id: "o1", count: 1 })).toBe(
+      "/tags: expected an array, found a value that is not JSON",
+    );
+    expect(refusal(m, "Order", { ...order, id: null })).toBe("/id: expected a string, found null");
+    expect(refusal(m, "Order", { ...order, note: null })).toBe("/note: expected a string, found null");
+    expect(refusal(m, "Order", { ...order, tags: ["a", 1] })).toBe("/tags/1: expected a string, found a number");
+    expect(refusal(m, "Order", null)).toBe("expected an object, found null");
+  });
+
+  it("refuse a key the type doesn't name, which would be dropped", () => {
+    expect(refusal(m, "Order", { ...order, coupon: "x" })).toBe('unknown key "coupon"');
+    expect(JSON.stringify(m.fn("encodeOrder")({ ...order, note: undefined }))).toBe(
+      '{"id":"o1","count":1,"tags":[]}',
+    );
+  });
+
+  it("check the other keys beside named ones, which share the object so none is written twice", () => {
+    expect(roundTrip(m, "Prices", '{"b":2,"default":1,"a":3}')).toBe('{"default":1,"a":3,"b":2}');
+    expect(refusal(m, "Prices", { default: 1, eur: 0.5 })).toBe("/eur: expected an integer, found 0.5");
   });
 });
 
@@ -603,13 +978,14 @@ describe("TypeScript determinism", () => {
   });
 });
 
-/** The fixture folders of the example whose types have every decoder TypeScript has so far. */
+/** The example whose fixtures every language round trips. */
 const EXAMPLE = join(import.meta.dirname, "..", "examples", "basic");
-/** Folders whose types use a construct TypeScript can't decode yet, with that construct. */
-const LATER: Readonly<Record<string, string>> = {
-  event: "a tagged union (paymentMethod)",
-  "payment-method": "a tagged union",
-};
+/**
+ * Invalid fixtures only the JSON text shows to be invalid. JSON.parse keeps the last of two
+ * equal keys, so the decoders, which read parsed values, can't see them. A strict reader of
+ * the text will.
+ */
+const TEXT_ONLY = new Set(["duplicate-key.json"]);
 
 describe("TypeScript example fixtures", () => {
   const config = loadConfig(join(EXAMPLE, "strictgen.json"));
@@ -633,17 +1009,15 @@ describe("TypeScript example fixtures", () => {
     m = await load(model);
   });
 
-  it("covers every folder, either now or as a construct listed for later", () => {
+  it("covers every folder, each naming a type", () => {
     const keys = new Set(fixtures.map((parts) => parts.slice(0, -2).join("/")));
     for (const key of keys) expect(typeOf.has(key), key).toBe(true);
-    for (const key of Object.keys(LATER)) expect(keys.has(key), key).toBe(true);
   });
 
   it("accepts every valid fixture and re-encodes it to the same JSON, and rejects every invalid one", () => {
     let count = 0;
     for (const parts of fixtures) {
       const key = parts.slice(0, -2).join("/");
-      if (key in LATER) continue;
       const name = parts.join("/");
       expect(parts.at(-1)?.endsWith(".json"), name).toBe(true);
       const kind = parts.at(-2);
@@ -651,7 +1025,7 @@ describe("TypeScript example fixtures", () => {
       const text = readFileSync(join(root, ...parts), "utf8");
       if (kind === "valid") {
         expect(JSON.parse(roundTrip(m, type, text)), name).toEqual(JSON.parse(text));
-      } else {
+      } else if (!TEXT_ONLY.has(parts.at(-1) ?? "")) {
         expect(kind, name).toBe("invalid");
         expect(failure(m, type, JSON.parse(text)), name).toEqual(expect.any(String));
       }
@@ -698,7 +1072,9 @@ describe("reserved names", () => {
       },
     });
     expect(out).toContain('  "content-type"?: string;\n');
-    expect(out).toContain('  if (value["content-type"] !== undefined) h.put(out, "content-type", value["content-type"]);\n');
+    expect(out).toContain(
+      '  if (value["content-type"] !== undefined) h.member(out, "content-type", value["content-type"], h.encodeString);\n',
+    );
   });
 
   it("fails on a type named like a global type the output uses", () => {

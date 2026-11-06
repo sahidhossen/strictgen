@@ -533,6 +533,15 @@ describe("Go encoding checks", () => {
     expect(out).not.toContain("func (v CardPayment) MarshalJSON");
   });
 
+  it("fail to encode an enum value the type doesn't list", () => {
+    expect(out).toContain(
+      "// MarshalText fails on a value the type doesn't list, so it is never written.\n" +
+        "func (v CardPaymentType) MarshalText() ([]byte, error) {\n" +
+        "\treturn encodeEnum(v, CardPaymentTypeCard)\n}\n",
+    );
+    expect(out).toContain("func encodeEnum[T ~string](v T, values ...T) ([]byte, error) {\n");
+  });
+
   it("check required fields beside a rest map too", () => {
     expect(out).toContain(
       '\treturn encodeWithRest(named(v), v.Rest, []string{"default", "list"}, []string{"list"}, v.List != nil)\n',

@@ -801,6 +801,15 @@ func decodeEnum[T ~string](n *node, dst *T, values ...T) *DecodeError {
 	return nil
 }
 
+// encodeEnum returns the text of v, failing when values doesn't list it. Used as MarshalText,
+// it covers values; a map key of a string type is written without it.
+func encodeEnum[T ~string](v T, values ...T) ([]byte, error) {
+	if !slices.Contains(values, v) {
+		return nil, fmt.Errorf("unknown value %q", string(v))
+	}
+	return []byte(v), nil
+}
+
 // decodeStringInto decodes a JSON string into a named string type, like an id.
 func decodeStringInto[T ~string](n *node, dst *T) *DecodeError {
 	s, err := decodeString(n)
