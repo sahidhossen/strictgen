@@ -1,5 +1,5 @@
 import type { EmittedFile } from "./common.js";
-import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER } from "./common.js";
+import { bySchema, commentHeader, commentText, compare, declTypes, DEFAULT_HEADER } from "./common.js";
 import type {
   AliasDecl,
   Decl,
@@ -406,7 +406,7 @@ function struct(ctx: Ctx, decl: StructDecl): string {
     reads.length === 0
       ? "func(*objectDecoder) {}"
       : `func(d *objectDecoder) {\n${reads.join("")}\t}`;
-  const forbidden = ctx.report ? decl.forbidden.map((k) => `, ${JSON.stringify(k)}`).join("") : "";
+  const forbidden = ctx.report ? decl.forbidden.map((k) => `, ${goString(k)}`).join("") : "";
   const doc = ctx.report
     ? `// UnmarshalJSON decodes strictly: missing required keys and explicit nulls fail. Unknown keys\n` +
       `// are accepted, and their paths go to the hook set with SetUnknownKeyHook.\n`
@@ -439,7 +439,7 @@ function structCheck(ctx: Ctx, decl: StructDecl, names: readonly string[]): stri
     const pointer = fieldType(ctx, f).startsWith("*");
     const check = goCheck(ctx, f.type, pointer ? `*${name}` : name);
     if (check === undefined) return [];
-    const key = JSON.stringify(f.name);
+    const key = goString(f.name);
     const test = `if err := ${check}; err != nil {\n`;
     if (!pointer || f.required) return [`\t${test}\t\treturn err.at(${key})\n\t}\n`];
     return [`\tif ${name} != nil {\n\t\t${test}\t\t\treturn err.at(${key})\n\t\t}\n\t}\n`];
@@ -519,7 +519,7 @@ function goCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
     case "number": {
       const go = type.kind === "integer" ? "int64" : "float64";
       const limits = limitsOf(type).map(
-        (l) => `limit[${go}]{${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)}}`,
+        (l) => `limit[${go}]{${goString(l.op)}, ${String(l.bound)}, ${goString(l.text)}}`,
       );
       return `${type.kind === "integer" ? "checkInt" : "checkNumber"}(${v}, ${limits.join(", ")})`;
     }
@@ -584,7 +584,7 @@ function marshal(ctx: Ctx, decl: StructDecl, names: readonly string[]): string {
     }
   }
   if (decl.rest === undefined && checks.length === 0 && enumKeys.length === 0) return "";
-  const keys = `[]string{${checks.map((c) => JSON.stringify(c.key)).join(", ")}}`;
+  const keys = `[]string{${checks.map((c) => goString(c.key)).join(", ")}}`;
   const set = checks.map((c) => `, v.${c.name} != nil`).join("");
   const checkKeys =
     enumKeys.length === 0
@@ -604,7 +604,7 @@ function marshal(ctx: Ctx, decl: StructDecl, names: readonly string[]): string {
       `\treturn encodeRequired(plain(v), ${keys}${set})\n}\n`
     );
   }
-  const named = `[]string{${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}}`;
+  const named = `[]string{${decl.fields.map((f) => goString(f.name)).join(", ")}}`;
   return (
     `\n// MarshalJSON encodes the named keys, then the keys of Rest in order, as one object.\n` +
     `// It fails when Rest holds a named key, so no key is written twice, or when a required\n` +
@@ -640,7 +640,7 @@ function keyCheck(ctx: Ctx, type: TypeExpr): string | undefined {
 
 /** The statement that reads one key in a struct's UnmarshalJSON. */
 function read(ctx: Ctx, f: Field, name: string): string {
-  const key = JSON.stringify(f.name);
+  const key = goString(f.name);
   const decode = decoder(ctx, f.type);
   if (f.required) {
     return `required(d, ${key}, &out.${name}, ${f.boxed ? `boxed(${decode})` : decode})`;
@@ -698,7 +698,7 @@ function enumeration(decl: EnumDecl): string {
   const consts = enumConsts(decl);
   const lines = consts.map(
     (c) =>
-      `\t// ${c.name} is ${JSON.stringify(c.value)}.\n\t${c.name} ${decl.name} = ${JSON.stringify(c.value)}\n`,
+      `\t// ${c.name} is ${goString(c.value)}.\n\t${c.name} ${decl.name} = ${goString(c.value)}\n`,
   );
   return (
     `type ${decl.name} string\n\n` +
@@ -723,13 +723,13 @@ function branchTypes(ctx: Ctx, decl: TaggedDecl): string[] {
 
 function tagged(ctx: Ctx, decl: TaggedDecl): string {
   const types = branchTypes(ctx, decl);
-  const key = JSON.stringify(decl.tag);
+  const key = goString(decl.tag);
   const marker = `is${decl.name}`;
   const branches = decl.variants.map(
-    (v, i) => `\t\t${JSON.stringify(v.value)}: branch[${decl.name}, ${types[i] ?? ""}],\n`,
+    (v, i) => `\t\t${goString(v.value)}: branch[${decl.name}, ${types[i] ?? ""}],\n`,
   );
   const markers = types.map((t) => `func (${t}) ${marker}() {}\n`);
-  const tags = `[]string{${decl.variants.map((v) => JSON.stringify(v.value)).join(", ")}}`;
+  const tags = `[]string{${decl.variants.map((v) => goString(v.value)).join(", ")}}`;
   return (
     `//\n// It holds one of ${list(types)}, picked by the ${key} key.\n` +
     `// Decode it with Decode${decl.name}, which reads the key first.\n` +
@@ -774,7 +774,7 @@ function untagged(ctx: Ctx, decl: UntaggedDecl): string {
   const tries = fields.map(
     (f) => `\t\t${f.value ? "tryValue" : "try"}(&out.${f.name}, ${f.decode}),\n`,
   );
-  const name = JSON.stringify(decl.name);
+  const name = goString(decl.name);
   const enumKeys = decl.variants.flatMap((v) => {
     const check = keyCheck(ctx, v.type);
     return check === undefined ? [] : [`\t\tptrKeys(${check})(v.${v.name}),\n`];
@@ -873,7 +873,7 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
 
 /** Go comment lines. */
 function comment(lines: readonly string[], indent: string): string {
-  return lines.map((line) => `${indent}//${line === "" ? "" : ` ${line}`}\n`).join("");
+  return lines.map((line) => `${indent}//${line === "" ? "" : ` ${commentText(line)}`}\n`).join("");
 }
 
 /**
@@ -900,9 +900,9 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
     const target = resolved.kind === "ref" ? ctx.decls.get(resolved.name) : undefined;
     return target === undefined || target.kind === "tagged"
       ? []
-      : [`\t\t${JSON.stringify(e.key)}: func() json.Unmarshaler { return new(${e.name}) },\n`];
+      : [`\t\t${goString(e.key)}: func() json.Unmarshaler { return new(${e.name}) },\n`];
   });
-  const decoders = entries.map((e) => `\t\t${JSON.stringify(e.key)}: ${e.decode},\n`);
+  const decoders = entries.map((e) => `\t\t${goString(e.key)}: ${e.decode},\n`);
   const types = [
     ...model.decls
       .filter((d) => (d.kind !== "alias" || own(d)) && d.kind !== "tagged")

@@ -1253,13 +1253,16 @@ fn canonical_string(text: &str, out: &mut String) {
 
 /// Checks that a string matches the pattern at index in PATTERNS. As JSON Schema says, a pattern
 /// matches anywhere in the string unless it anchors itself with ^ or $. The patterns compile
-/// once, on first use.
+/// once, on first use. strictgen only writes patterns that compile well within the size limit,
+/// which is set here so a later regex release can't lower it.
 pub(super) fn check_pattern(text: &str, index: usize) -> Result<(), DecodeError> {
     static COMPILED: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
         PATTERNS
             .iter()
             .map(|(regex, _)| {
-                regex::Regex::new(regex)
+                regex::RegexBuilder::new(regex)
+                    .size_limit(10 << 20)
+                    .build()
                     .expect("strictgen writes every pattern in a form regex compiles")
             })
             .collect()

@@ -496,6 +496,9 @@ function constType(
       "const must be a string, an integer or a boolean",
     );
   }
+  if (LONE_SURROGATE.test(value)) {
+    fail(at(loc, "const"), "unsupported-const", `the const holds a lone surrogate, ${NO_SURROGATES}`);
+  }
   return hoist(ctx, name, loc, () => ({
     kind: "enum",
     name,
@@ -507,14 +510,20 @@ function constType(
   }));
 }
 
+/** A UTF-16 surrogate without its pair, which no Rust or Go string holds. */
+const LONE_SURROGATE = /\p{Surrogate}/u;
+const NO_SURROGATES = "which Rust and Go strings can't";
+
 function enumType(ctx: Ctx, schema: JsonObject, loc: Loc, name: string, source?: Source): TypeExpr {
   only(schema, loc, ["enum", "type"]);
   if (schema.type !== undefined && schema.type !== "string")
     fail(at(loc, "type"), "unsupported-enum", "enums must be strings");
   const values = arrayAt(schema.enum, at(loc, "enum")).map((v, i) =>
-    typeof v === "string"
-      ? v
-      : fail(at(loc, "enum", i), "unsupported-enum", "enum values must be strings"),
+    typeof v !== "string"
+      ? fail(at(loc, "enum", i), "unsupported-enum", "enum values must be strings")
+      : LONE_SURROGATE.test(v)
+        ? fail(at(loc, "enum", i), "unsupported-enum", `the value holds a lone surrogate, ${NO_SURROGATES}`)
+        : v,
   );
   if (new Set(values).size !== values.length)
     fail(at(loc, "enum"), "unsupported-enum", "enum values must be unique");

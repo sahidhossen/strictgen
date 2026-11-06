@@ -67,6 +67,11 @@
       "uniqueItems": true
     },
     "day": { "description": "A date.", "type": "string", "format": "date" },
+    "longWord": {
+      "description": "Up to 1000 characters that aren't white space, then maybe one white space character and up to 250 more. Close to the largest pattern strictgen takes.",
+      "type": "string",
+      "pattern": "^\\S{1,1000}(?:\\s\\S{1,250})?$"
+    },
     "text": {
       "description": "Patterns whose meaning differs between regex engines unless strictgen spells it out.",
       "type": "object",

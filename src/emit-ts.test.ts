@@ -1508,7 +1508,7 @@ describe("TypeScript strict JSON reader", () => {
       ['"a\nb"', "a control character in a string"],
       ['"\\x"', "an invalid escape"],
       ['"\\u12G4"', "an invalid escape"],
-      ["﻿{}", "an invalid value"],
+      ["\ufeff{}", "an invalid value"],
       ["{} {}", "trailing characters"],
       ['"a" x', "trailing characters"],
     ];

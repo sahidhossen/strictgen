@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { MAX_REPEAT, PatternError, portablePattern } from "./pattern.js";
+import {
+  MAX_PATTERN_PARTS,
+  MAX_PATTERN_SIZE,
+  MAX_REPEAT,
+  PatternError,
+  patternCost,
+  patternParts,
+  portablePattern,
+} from "./pattern.js";
 
 /** The reason portablePattern gives for a pattern outside the subset. */
 function reason(pattern: string): string {
@@ -89,5 +97,58 @@ describe("pattern portable form", () => {
 
   it("accepts nested repeats up to 1000", () => {
     expect(portablePattern("(?:a{10}){100}")).toBe("(?:a{10}){100}");
+  });
+});
+
+describe("pattern size limits", () => {
+  /** The pattern of `unit` repeated the most times both limits allow, and one more time. */
+  function boundary(unit: string): [string, string] {
+    const within = (p: string): boolean =>
+      patternCost(p) <= MAX_PATTERN_SIZE && patternParts(p) <= MAX_PATTERN_PARTS;
+    let n = 1;
+    while (within(unit.repeat(n * 2))) n *= 2;
+    let over = n * 2;
+    while (n + 1 < over) {
+      const mid = Math.floor((n + over) / 2);
+      if (within(unit.repeat(mid))) n = mid;
+      else over = mid;
+    }
+    return [unit.repeat(n), unit.repeat(over)];
+  }
+
+  it("counts a class by its UTF-8 steps and a repeat by its written-out copies", () => {
+    expect(patternCost("a")).toBe(1);
+    expect(patternCost("\\u{1F600}")).toBe(4);
+    expect(patternCost("[a-z]")).toBe(1);
+    expect(patternCost(".")).toBe(41);
+    expect(patternCost("a{3}")).toBe(6);
+    expect(patternCost("a{1,3}")).toBe(8);
+    expect(patternCost("a*")).toBe(3);
+    expect(patternCost("^.{1000}.{1000}$")).toBe(84_002);
+  });
+
+  it("accepts a pattern up to the size limit and rejects one past it, with the reason", () => {
+    for (const unit of [".{1000}", "\\S{1000}", "[0-9]{0,1000}", "(?:a|){1000}", "(?:\\d+){1000}"]) {
+      const [under, over] = boundary(unit);
+      expect(() => portablePattern(under)).not.toThrow();
+      expect(reason(over)).toMatch(
+        /^a pattern of \d+ steps once its repeats are written out, above the 100000 that Rust's regex compiles safely$/,
+      );
+    }
+  });
+
+  it("accepts a pattern of up to 2000 parts and rejects one past it, with the reason", () => {
+    for (const unit of ["a", "a?", ".", "(?:a|b)"]) {
+      const [under, over] = boundary(unit);
+      expect(() => portablePattern(under)).not.toThrow();
+      expect(reason(over)).toMatch(/^a pattern of \d+ parts, above the 2000 that V8 compiles safely$/);
+    }
+  });
+
+  it("compiles every pattern within the limits in V8", () => {
+    for (const unit of [".{1000}", "\\S{1000}", "a?", ".", "(?:a|b)", "\\u{1F600}"]) {
+      const regex = new RegExp(portablePattern(boundary(unit)[0]), "u");
+      expect(regex.test("x".repeat(10))).toBeTypeOf("boolean");
+    }
   });
 });

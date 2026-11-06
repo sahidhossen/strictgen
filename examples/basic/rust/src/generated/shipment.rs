@@ -40,6 +40,23 @@ impl helpers::Decode for LabelCodes {
     }
 }
 
+/// Up to 1000 characters that aren't white space, then maybe one white space character and up to 250 more. Close to the largest pattern strictgen takes.
+///
+/// Schema: `shipment.json#/$defs/longWord`.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct LongWord(pub String);
+
+impl helpers::Decode for LongWord {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_pattern(&self.0, 5)
+    }
+}
+
 /// One parcel.
 ///
 /// Schema: `shipment.json#/$defs/parcel`.
@@ -212,22 +229,22 @@ impl helpers::Decode for Text {
 
     fn check(&self) -> Result<(), helpers::DecodeError> {
         if let Some(value) = &self.anywhere {
-            helpers::within("anywhere", helpers::check_pattern(value, 10))?;
+            helpers::within("anywhere", helpers::check_pattern(value, 11))?;
         }
         if let Some(value) = &self.dot {
-            helpers::within("dot", helpers::check_pattern(value, 9))?;
+            helpers::within("dot", helpers::check_pattern(value, 10))?;
         }
         if let Some(value) = &self.space {
-            helpers::within("space", helpers::check_pattern(value, 6))?;
+            helpers::within("space", helpers::check_pattern(value, 7))?;
         }
         if let Some(value) = &self.word {
-            helpers::within("word", helpers::check_pattern(value, 7))?;
+            helpers::within("word", helpers::check_pattern(value, 8))?;
         }
         if let Some(value) = &self.digits {
-            helpers::within("digits", helpers::check_pattern(value, 5))?;
+            helpers::within("digits", helpers::check_pattern(value, 6))?;
         }
         if let Some(value) = &self.end {
-            helpers::within("end", helpers::check_pattern(value, 8))?;
+            helpers::within("end", helpers::check_pattern(value, 9))?;
         }
         if let Some(value) = &self.astral {
             helpers::within("astral", helpers::check_pattern(value, 3))?;

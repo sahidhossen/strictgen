@@ -6,7 +6,8 @@
  * of that syntax whose meaning can be written the same way for Rust's `regex` crate, Go's
  * `regexp` (RE2) and ECMAScript are accepted. The rest fails generation with the reason:
  * lookarounds, backreferences, named groups, word boundaries, Unicode property escapes, inline
- * flags and repeats above {@link MAX_REPEAT}.
+ * flags, repeats above {@link MAX_REPEAT}, and patterns larger than {@link MAX_PATTERN_SIZE}
+ * once their repeats are written out.
  *
  * The accepted pattern is rewritten into one portable form that all three engines read the same
  * way, which the decoders compile once. The rewrite spells out what the engines disagree on:
@@ -27,6 +28,22 @@
 
 /** The largest repeat count, alone or multiplied through nested repeats, which Go's RE2 takes. */
 export const MAX_REPEAT = 1000;
+
+/**
+ * The largest pattern size, in the steps {@link patternCost} counts once every repeat is written
+ * out. Rust's `regex` refuses a pattern that compiles to more than 10 MiB; it uses at most about
+ * 40 bytes a step, so this keeps every pattern under about 4 MiB there, which leaves room for
+ * the estimate to be off. Go's RE2 and V8 take patterns many times larger. `^.{1000}.{1000}$` is
+ * 84,002 steps.
+ */
+export const MAX_PATTERN_SIZE = 100_000;
+
+/**
+ * The most parts a pattern may be written with, as {@link patternParts} counts them. V8 compiles
+ * a pattern by recursion and fails with a stack overflow on a few thousand parts in a row when
+ * its stack is small, as in a worker, and with "Regular expression too large" on 32,768.
+ */
+export const MAX_PATTERN_PARTS = 2000;
 
 /** The deepest nesting of groups and repeats. */
 const MAX_NESTING = 50;
@@ -452,6 +469,117 @@ function checkRepeats(node: Node, outer: number): void {
   }
 }
 
+/** The UTF-8 length of a code point. */
+function utf8Length(code: number): number {
+  if (code <= 0x7f) return 1;
+  if (code <= 0x7ff) return 2;
+  if (code <= 0xffff) return 3;
+  return 4;
+}
+
+/**
+ * The byte ranges a set becomes in a UTF-8 automaton: the number of byte-range steps, summed
+ * over the UTF-8 sequences it splits into. This is how Rust's `regex` compiles a class, one
+ * state per step, so it follows its compiled size.
+ */
+function utf8Steps(set: CodeSet): number {
+  let steps = 0;
+  for (const range of set) {
+    const stack: [number, number][] = [[range[0], range[1]]];
+    for (let next = stack.pop(); next !== undefined; next = stack.pop()) {
+      let [lo, hi] = next;
+      split: for (;;) {
+        for (const top of [0x7f, 0x7ff, 0xffff]) {
+          if (lo <= top && top < hi) {
+            stack.push([top + 1, hi]);
+            hi = top;
+            continue split;
+          }
+        }
+        if (hi > 0x7f) {
+          for (let i = 1; i < 4; i++) {
+            const mask = (1 << (6 * i)) - 1;
+            if ((lo & ~mask) !== (hi & ~mask)) {
+              if ((lo & mask) !== 0) {
+                stack.push([(lo | mask) + 1, hi]);
+                hi = lo | mask;
+                continue split;
+              }
+              if ((hi & mask) !== mask) {
+                stack.push([hi & ~mask, hi]);
+                hi = (hi & ~mask) - 1;
+                continue split;
+              }
+            }
+          }
+        }
+        steps += utf8Length(lo);
+        break;
+      }
+    }
+  }
+  return steps;
+}
+
+/**
+ * The size of a pattern once every repeat is written out, in UTF-8 automaton steps: a character
+ * counts its UTF-8 bytes, a class its {@link utf8Steps}, and a repeat its body once per count
+ * (`{n,m}` counts `m`, `{n,}` counts `n + 1`), plus one per copy and one more per optional
+ * copy. Every engine's compiled size grows with this: Rust's `regex` uses about 30 to 40 bytes
+ * per step, Go's RE2 at most a few instructions.
+ */
+function cost(node: Node): number {
+  switch (node.kind) {
+    case "alt":
+      return node.options.reduce((n, o) => n + cost(o) + 1, 0);
+    case "seq":
+      return node.items.reduce((n, o) => n + cost(o), 0);
+    case "char":
+      return utf8Length(node.code);
+    case "set":
+      return utf8Steps(node.set);
+    case "start":
+    case "end":
+      return 1;
+    case "group":
+      return cost(node.body);
+    case "repeat": {
+      // An optional copy also needs a way around it, so it counts one more.
+      const body = cost(node.body);
+      const optional = node.max === undefined ? 1 : node.max - node.min;
+      return node.min * (body + 1) + optional * (body + 2);
+    }
+  }
+}
+
+/**
+ * The number of parts a pattern is written with: characters, classes, anchors, groups, repeats
+ * and alternatives, each repeat counted once. V8 compiles a pattern by recursion over these.
+ */
+function parts(node: Node): number {
+  switch (node.kind) {
+    case "alt":
+      return node.options.reduce((n, o) => n + parts(o) + 1, 1);
+    case "seq":
+      return node.items.reduce((n, o) => n + parts(o), 0);
+    case "group":
+    case "repeat":
+      return parts(node.body) + 1;
+    default:
+      return 1;
+  }
+}
+
+/** The size of a pattern, as {@link cost} counts it. For tests and the limit's documentation. */
+export function patternCost(pattern: string): number {
+  return cost(new Parser(pattern).parse());
+}
+
+/** The number of parts of a pattern, as {@link parts} counts them. For tests. */
+export function patternParts(pattern: string): number {
+  return parts(new Parser(pattern).parse());
+}
+
 /** A character written in the portable form: syntax characters escaped, the rest as itself. */
 function literal(code: number): string {
   const c = String.fromCodePoint(code);
@@ -531,5 +659,20 @@ export function portablePattern(pattern: string): string {
   }
   const node = new Parser(pattern).parse();
   checkRepeats(node, 1);
+  const count = parts(node);
+  if (count > MAX_PATTERN_PARTS) {
+    throw new PatternError(
+      `a pattern of ${String(count)} parts, above the ${String(MAX_PATTERN_PARTS)} that V8 compiles safely`,
+      "split it, or check the value with an enum",
+    );
+  }
+  const steps = cost(node);
+  if (steps > MAX_PATTERN_SIZE) {
+    throw new PatternError(
+      `a pattern of ${String(steps)} steps once its repeats are written out, above the ${String(MAX_PATTERN_SIZE)} ` +
+        "that Rust's regex compiles safely",
+      "lower the repeat counts, or check the length with minLength and maxLength",
+    );
+  }
   return write(node);
 }

@@ -11,6 +11,19 @@ export function commentHeader(text: string): string {
   return `// ${text}`;
 }
 
+/**
+ * Characters no generated comment holds as themselves: control characters but tab, line and
+ * paragraph separators, the byte order mark, bidi controls and lone surrogates. Go rejects NUL
+ * and the byte order mark anywhere in a file, Rust rejects a bare carriage return in a doc
+ * comment and bidi controls by default, and the rest are hard to see.
+ */
+const HIDDEN = /[\0-\x08\x0a-\x1f\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069\ufeff]|[\ud800-\udfff]/gu;
+
+/** Text for a generated comment, in any language: each {@link HIDDEN} character as `\u{...}`. */
+export function commentText(text: string): string {
+  return text.replace(HIDDEN, (c) => `\\u{${(c.codePointAt(0) ?? 0).toString(16)}}`);
+}
+
 /** Compares by UTF-16 code units, so the order never depends on the locale. */
 export function compare(a: string, b: string): number {
   if (a === b) return 0;

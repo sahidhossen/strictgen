@@ -185,7 +185,7 @@ export function closed(
  * every other UTF-16 unit as a \u escape, so the source holds no character that is hard to read,
  * like a line separator or a byte order mark.
  */
-function asciiString(text: string): string {
+export function asciiString(text: string): string {
   let out = '"';
   for (let i = 0; i < text.length; i++) {
     const c = text.charAt(i);

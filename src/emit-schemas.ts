@@ -1,6 +1,7 @@
 import { ANNOTATIONS } from "./build.js";
 import type { EmittedFile } from "./common.js";
 import { commentHeader, DEFAULT_HEADER } from "./common.js";
+import { rustString } from "./emit-rust.js";
 import type { Json, SchemaSet } from "./schema.js";
 import { isObject } from "./schema.js";
 
@@ -64,7 +65,7 @@ function rawString(text: string): string {
 
 function entries(set: SchemaSet): string {
   return set
-    .map((file) => `    (${JSON.stringify(file.name)}, ${rawString(minified(file.root))}),\n`)
+    .map((file) => `    (${rustString(file.name)}, ${rawString(minified(file.root))}),\n`)
     .join("");
 }
 

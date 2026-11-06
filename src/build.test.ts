@@ -1372,6 +1372,17 @@ describe("validation constraints", () => {
       "unsupported-pattern: nested repeats that multiply to more than 1000",
     ],
     [
+      "repeats in a row too large for Rust's regex to compile",
+      { x: { type: "string", pattern: `^${".{1000}".repeat(8)}$` } },
+      "lib.json#/$defs/x/pattern: unsupported-pattern: a pattern of 336002 steps once its repeats are written out, " +
+        "above the 100000 that Rust's regex compiles safely. Hint: lower the repeat counts, or check the length with minLength and maxLength",
+    ],
+    [
+      "a pattern with too many parts for V8",
+      { x: { type: "string", pattern: "a?".repeat(1001) } },
+      "unsupported-pattern: a pattern of 2002 parts, above the 2000 that V8 compiles safely",
+    ],
+    [
       "a pattern that isn't ECMAScript",
       { x: { type: "string", pattern: "a{2,1}" } },
       "unsupported-pattern: not a valid ECMAScript pattern with the u flag",

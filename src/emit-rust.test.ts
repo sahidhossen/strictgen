@@ -134,10 +134,10 @@ describe("Rust enums", () => {
 });
 
 describe("Rust string literals", () => {
-  it("escape quotes, backslashes, control characters, U+2028 and U+2029", () => {
+  it("are ASCII: quotes and backslashes escaped, every other character as \\u{...}", () => {
     expect(rustString('a"b\\c')).toBe('"a\\"b\\\\c"');
-    expect(rustString("\u0000\u001f\u007f\u0085\u2028\u2029é😀")).toBe(
-      '"\\u{0}\\u{1f}\\u{7f}\\u{85}\\u{2028}\\u{2029}é😀"',
+    expect(rustString("\u0000\u001f\u007f\u0085\u2028\u2029\u00e9\u{1f600}")).toBe(
+      '"\\u{0}\\u{1f}\\u{7f}\\u{85}\\u{2028}\\u{2029}\\u{e9}\\u{1f600}"',
     );
   });
 });

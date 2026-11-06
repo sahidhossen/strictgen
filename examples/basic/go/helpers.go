@@ -1541,6 +1541,7 @@ var patterns = [...]pattern{
 	{regexp.MustCompile("^[A-Z]{3}$"), "^[A-Z]{3}$"},
 	{regexp.MustCompile("^[^a-z]{2}$"), "^[^a-z]{2}$"},
 	{regexp.MustCompile("^[a-z]+$"), "^[a-z]+$"},
+	{regexp.MustCompile("^[^\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]{1,1000}(?:[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]{1,250})?$"), "^\\S{1,1000}(?:\\s\\S{1,250})?$"},
 	{regexp.MustCompile("^[0-9]+$"), "^\\d+$"},
 	{regexp.MustCompile("^[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$"), "^\\s$"},
 	{regexp.MustCompile("^[0-9A-Z_a-z]+$"), "^\\w+$"},

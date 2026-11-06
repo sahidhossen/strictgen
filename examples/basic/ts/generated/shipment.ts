@@ -108,6 +108,58 @@ export function encodeLabelCodesToJson(value: LabelCodes): string {
   return h.toJson(encodeLabelCodes(value));
 }
 
+/** Up to 1000 characters that aren't white space, then maybe one white space character and up to 250 more. Close to the largest pattern strictgen takes. */
+export type LongWord = string;
+
+/** Decodes the structure of LongWord, checking constraints only while h.checked asks for it. */
+function readLongWord(json: unknown, path: string): LongWord {
+  return h.matches(h.decodeString, 5)(json, path);
+}
+
+/**
+ * Decodes parsed JSON as LongWord, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeLongWord(json: unknown, path = ""): LongWord {
+  return h.checked(json, path, readLongWord);
+}
+
+/** Like decodeLongWord, but returns the DecodeError instead of throwing it. */
+export function tryDecodeLongWord(json: unknown): h.DecodeResult<LongWord> {
+  return h.attempt(decodeLongWord, json);
+}
+
+/**
+ * Reads JSON text as LongWord, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeLongWordFromJson(text: string): LongWord {
+  return h.fromJson(text, decodeLongWord);
+}
+
+/** Like decodeLongWordFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeLongWordFromJson(text: string): h.DecodeResult<LongWord> {
+  return h.attemptJson(decodeLongWord, text);
+}
+
+/**
+ * Encodes LongWord as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeLongWord(value: LongWord): unknown {
+  return h.encodeString(value);
+}
+
+/**
+ * Encodes LongWord as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeLongWord.
+ */
+export function encodeLongWordToJson(value: LongWord): string {
+  return h.toJson(encodeLongWord(value));
+}
+
 /** One parcel. */
 export interface Parcel {
   /** In kilograms. */
@@ -284,12 +336,12 @@ export interface Text {
 function readText(json: unknown, path: string): Text {
   const o = h.object(json, path);
   const value: Text = {
-    ...h.optional(o, "anywhere", path, h.matches(h.decodeString, 10)),
-    ...h.optional(o, "dot", path, h.matches(h.decodeString, 9)),
-    ...h.optional(o, "space", path, h.matches(h.decodeString, 6)),
-    ...h.optional(o, "word", path, h.matches(h.decodeString, 7)),
-    ...h.optional(o, "digits", path, h.matches(h.decodeString, 5)),
-    ...h.optional(o, "end", path, h.matches(h.decodeString, 8)),
+    ...h.optional(o, "anywhere", path, h.matches(h.decodeString, 11)),
+    ...h.optional(o, "dot", path, h.matches(h.decodeString, 10)),
+    ...h.optional(o, "space", path, h.matches(h.decodeString, 7)),
+    ...h.optional(o, "word", path, h.matches(h.decodeString, 8)),
+    ...h.optional(o, "digits", path, h.matches(h.decodeString, 6)),
+    ...h.optional(o, "end", path, h.matches(h.decodeString, 9)),
     ...h.optional(o, "astral", path, h.matches(h.decodeString, 3)),
   };
   h.closed(o, path, ["anywhere", "dot", "space", "word", "digits", "end", "astral"]);

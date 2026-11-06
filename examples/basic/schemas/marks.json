@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/marks.json",
+  "title": "Marks",
+  "description": "Odd text\ufeff in\u2028 a description\u0000 with \\ and \" and \ud83d\ude00 and */ end.",
+  "type": "object",
+  "properties": {
+    "mark": {
+      "$ref": "#/$defs/mark"
+    },
+    "fixed": {
+      "description": "A const\ufeff.",
+      "const": "x\ufeff\u2028\u0000\\\"\ud83d\ude00"
+    },
+    "shape": {
+      "$ref": "#/$defs/shape"
+    }
+  },
+  "required": [
+    "mark"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "mark": {
+      "description": "Every odd character.",
+      "enum": [
+        "bom\ufeff",
+        "line\u2028sep",
+        "nul\u0000",
+        "back\\slash",
+        "quote\"",
+        "astral\ud83d\ude00",
+        "plain"
+      ]
+    },
+    "shape": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/dot"
+        },
+        {
+          "$ref": "#/$defs/square"
+        }
+      ]
+    },
+    "dot": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "dot\ufeff\u2028"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "square": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "box\"\\\u0000\ud83d\ude00"
+        },
+        "side": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

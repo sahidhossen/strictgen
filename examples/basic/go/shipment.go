@@ -50,6 +50,28 @@ func (v LabelCodes) check() *DecodeError {
 	return checkUniqueItems([]string(v), -1, -1, func(item string) *DecodeError { return checkString(item, -1, -1, patterns[2].check) })
 }
 
+// LongWord is generated from shipment.json#/$defs/longWord.
+//
+// Up to 1000 characters that aren't white space, then maybe one white space character and up to 250 more. Close to the largest pattern strictgen takes.
+type LongWord string
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *LongWord) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *LongWord) decode(n *node) *DecodeError {
+	x, err := decodeString(n)
+	if err != nil {
+		return err
+	}
+	*v = LongWord(x)
+	return nil
+}
+
+// check checks the constraints of a decoded LongWord.
+func (v LongWord) check() *DecodeError {
+	return checkString(string(v), -1, -1, patterns[5].check)
+}
+
 // Parcel is generated from shipment.json#/$defs/parcel.
 //
 // One parcel.
@@ -196,32 +218,32 @@ func (v *Text) decode(n *node) *DecodeError {
 // check checks the constraints of a decoded Text.
 func (v Text) check() *DecodeError {
 	if v.Anywhere != nil {
-		if err := checkString(*v.Anywhere, -1, -1, patterns[10].check); err != nil {
+		if err := checkString(*v.Anywhere, -1, -1, patterns[11].check); err != nil {
 			return err.at("anywhere")
 		}
 	}
 	if v.Dot != nil {
-		if err := checkString(*v.Dot, -1, -1, patterns[9].check); err != nil {
+		if err := checkString(*v.Dot, -1, -1, patterns[10].check); err != nil {
 			return err.at("dot")
 		}
 	}
 	if v.Space != nil {
-		if err := checkString(*v.Space, -1, -1, patterns[6].check); err != nil {
+		if err := checkString(*v.Space, -1, -1, patterns[7].check); err != nil {
 			return err.at("space")
 		}
 	}
 	if v.Word != nil {
-		if err := checkString(*v.Word, -1, -1, patterns[7].check); err != nil {
+		if err := checkString(*v.Word, -1, -1, patterns[8].check); err != nil {
 			return err.at("word")
 		}
 	}
 	if v.Digits != nil {
-		if err := checkString(*v.Digits, -1, -1, patterns[5].check); err != nil {
+		if err := checkString(*v.Digits, -1, -1, patterns[6].check); err != nil {
 			return err.at("digits")
 		}
 	}
 	if v.End != nil {
-		if err := checkString(*v.End, -1, -1, patterns[8].check); err != nil {
+		if err := checkString(*v.End, -1, -1, patterns[9].check); err != nil {
 			return err.at("end")
 		}
 	}

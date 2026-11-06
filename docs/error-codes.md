@@ -85,7 +85,14 @@ A pattern is read as JSON Schema says, as an ECMAScript regular expression with 
 | `(...)`, `(?:...)`, `\|` | groups and alternatives |
 | `*`, `+`, `?`, `{n}`, `{n,}`, `{n,m}`, and their lazy forms | repeats, counts up to 1000, also when nested repeats multiply. A lazy repeat matches the same strings as a greedy one |
 
-Generation fails, with the reason and the character it is at, on everything else: lookaheads and lookbehinds and backreferences (Rust's `regex` and RE2 have neither), named groups, word boundaries `\b` and `\B` (Unicode in Rust, ASCII elsewhere), Unicode property escapes like `\p{L}` (the engines know different properties), inline flags, repeat counts above 1000, a class that matches nothing, and anything that isn't valid ECMAScript with the `u` flag.
+Generation fails, with the reason and the character it is at, on everything else: lookaheads and lookbehinds and backreferences (Rust's `regex` and RE2 have neither), named groups, word boundaries `\b` and `\B` (Unicode in Rust, ASCII elsewhere), Unicode property escapes like `\p{L}` (the engines know different properties), inline flags, repeat counts above 1000, a class that matches nothing, a pattern too large for an engine (below), and anything that isn't valid ECMAScript with the `u` flag.
+
+Every accepted pattern compiles in all three languages, because two limits keep it well inside what each engine takes:
+
+- Size: at most 100,000 steps once every repeat is written out. A character counts its UTF-8 bytes, a class the byte ranges it becomes in UTF-8 (`[a-z]` is 1, `.` is 41, `\S` is 75), and a repeat its body once per count plus one, and one more for each optional copy (`{2,5}` counts 2 copies and 3 optional ones). So `^.{1000}.{1000}$` is 84,002 steps and fits, and three `.{1000}` in a row don't. Rust's `regex` refuses a pattern that compiles to more than 10 MiB and uses about 40 bytes a step at most, so the largest accepted pattern compiles to about 4 MiB. The generated Rust sets the 10 MiB limit itself, so a later `regex` release can't lower it. Go's RE2 takes patterns many times larger
+- Parts: at most 2000 characters, classes, anchors, groups, repeats and alternatives as written, a repeat counted once. V8 compiles a pattern by recursion, and with a small stack fails on a few thousand parts in a row
+
+The error gives the size, like `unsupported-pattern: a pattern of 126002 steps once its repeats are written out, above the 100000 that Rust's regex compiles safely`.
 
 Rust checks patterns with the `regex` crate, which the generated code uses only when a schema has a `pattern`. Add it to your crate then, next to `serde` and `serde_json`:
 

@@ -1061,13 +1061,16 @@ fn canonical_string(text: &str, out: &mut String) {
 
 /// Checks that a string matches the pattern at index in PATTERNS. As JSON Schema says, a pattern
 /// matches anywhere in the string unless it anchors itself with ^ or $. The patterns compile
-/// once, on first use.
+/// once, on first use. strictgen only writes patterns that compile well within the size limit,
+/// which is set here so a later regex release can't lower it.
 pub(super) fn check_pattern(text: &str, index: usize) -> Result<(), DecodeError> {
     static COMPILED: std::sync::LazyLock<Vec<regex::Regex>> = std::sync::LazyLock::new(|| {
         PATTERNS
             .iter()
             .map(|(regex, _)| {
-                regex::Regex::new(regex)
+                regex::RegexBuilder::new(regex)
+                    .size_limit(10 << 20)
+                    .build()
                     .expect("strictgen writes every pattern in a form regex compiles")
             })
             .collect()
@@ -1344,12 +1347,16 @@ fn number_text(number: f64) -> String {
 
 /// The patterns schemas check: each in the portable form, which Go's RE2 and ECMAScript read
 /// the same way, and as the schema writes it, for errors.
-const PATTERNS: [(&str, &str); 11] = [
+const PATTERNS: [(&str, &str); 12] = [
     ("^20", "^20"),
     ("^[A-Z]{2}[0-9]{9}[A-Z]{2}$", "^[A-Z]{2}\\d{9}[A-Z]{2}$"),
     ("^[A-Z]{3}$", "^[A-Z]{3}$"),
     ("^[^a-z]{2}$", "^[^a-z]{2}$"),
     ("^[a-z]+$", "^[a-z]+$"),
+    (
+        "^[^\u{9}-\u{d} \u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]{1,1000}(?:[\u{9}-\u{d} \u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}][^\u{9}-\u{d} \u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]{1,250})?$",
+        "^\\S{1,1000}(?:\\s\\S{1,250})?$",
+    ),
     ("^[0-9]+$", "^\\d+$"),
     (
         "^[\u{9}-\u{d} \u{a0}\u{1680}\u{2000}-\u{200a}\u{2028}\u{2029}\u{202f}\u{205f}\u{3000}\u{feff}]$",

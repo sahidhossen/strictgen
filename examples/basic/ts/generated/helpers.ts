@@ -1445,6 +1445,7 @@ const PATTERNS: readonly (readonly [RegExp, string])[] = [
   [new RegExp("^[A-Z]{3}$", "u"), "^[A-Z]{3}$"],
   [new RegExp("^[^a-z]{2}$", "u"), "^[^a-z]{2}$"],
   [new RegExp("^[a-z]+$", "u"), "^[a-z]+$"],
+  [new RegExp("^[^\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]{1,1000}(?:[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]{1,250})?$", "u"), "^\\S{1,1000}(?:\\s\\S{1,250})?$"],
   [new RegExp("^[0-9]+$", "u"), "^\\d+$"],
   [new RegExp("^[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$", "u"), "^\\s$"],
   [new RegExp("^[0-9A-Z_a-z]+$", "u"), "^\\w+$"],

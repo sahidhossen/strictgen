@@ -19,6 +19,7 @@
 mod common;
 mod event;
 mod helpers;
+mod marks;
 mod order;
 mod payment_method;
 mod shipment;
@@ -28,6 +29,7 @@ mod user;
 pub use common::*;
 pub use event::*;
 pub use helpers::{Decode, DecodeError, NonNullJson};
+pub use marks::*;
 pub use order::*;
 pub use payment_method::*;
 pub use shipment::*;
