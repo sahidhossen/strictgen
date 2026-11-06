@@ -32,6 +32,7 @@ strictgen generate        # write every target, formatted
 strictgen check           # exit 1 if the generated files on disk are out of date, for CI
 strictgen dirs [--json]   # print the folders the targets write to
 strictgen explain user.json#/$defs/address   # show how one type maps in each language
+strictgen fix [--write]   # rewrite the schemas into the supported subset, as a diff or in place
 ```
 
 Every command takes `--config <path>` to read a config other than `strictgen.json` in the current folder, and `--help`. `strictgen --version` prints the version.
@@ -73,6 +74,17 @@ Rust:
 ```
 
 When the type can't be generated, `explain` prints the rule it breaks, the reason and the hint, per language for a name one language reserves, and exits 1. An unknown file or pointer, or one that names no generated type, exits 2. `--json` prints the model and each target's code or error as JSON.
+
+### `fix`
+
+`strictgen fix` rewrites messy schemas into the supported subset. Its rules run until nothing changes:
+
+- `close-objects` adds `"additionalProperties": false` to open objects, or `"unevaluatedProperties": false` beside `allOf`, `oneOf`, `anyOf` or `if`. An `allOf` base, an `allOf` part and an `if`/`then` branch stay open. An object with no properties stays open too, since closing it would allow only `{}`
+- `tag-unions` turns a `oneOf` whose branches each have a `const` property into a tagged union: the tag becomes required, a one value `enum` becomes a `const`, each branch gets `"type": "object"` and the `oneOf` loses the `"type": "object"` beside it. A branch written as a `$ref` is only reported, since other schemas may use it
+- `merge-allof` inlines an `allOf` whose parts are plain schemas (types, properties, required keys, constraints) that don't disagree. When they do, it leaves the `allOf` and says where
+- `hoist-defs` turns `definitions` into `$defs`, moves `$defs` written inside a schema up to the root, moves a schema a `$ref` points into, like `#/properties/shipping/properties/address`, into `$defs` under a name taken from its path, like `address` or `shippingAddress` when that is taken, and renames a def a `$ref` can't name, like `order-item` to `orderItem`. Every `$ref` to a moved schema, in any file, follows it
+
+By default it prints a unified diff and writes nothing, so `strictgen fix > fix.patch` gives a patch. `--write` writes the changed files in place instead, even when generation still fails afterwards and the exit code is 1. Only files in the schemas folder are written, and only once every file was rewritten and read back. Each goes to a temporary file first, then all are renamed into place. The renames aren't atomic as a group: if one fails, the error names the files already written. `fix` rejects a schema file with a duplicate key, which generation accepts (it keeps the last value), since a rewrite would drop one of them. A rewritten file keeps its key order, indentation, line endings and the formatting of every part no rule touched. Then `fix` generates every target in memory and prints the first error left, with the file, JSON pointer, rule and hint, and a notice for each thing a rule left as it was. It exits 1 when generation still fails, and 0 when the schemas generate.
 
 ### Reserved names
 
