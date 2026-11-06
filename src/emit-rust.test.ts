@@ -228,7 +228,9 @@ describe("Rust report mode", () => {
   it("export the hook, Reported and report_from_json", () => {
     const text = out("report");
     expect(text).toContain(
-      "pub use helpers::{Decode, DecodeError, NonNullJson, Reported, clear_unknown_key_hook, set_unknown_key_hook};\n",
+      "pub use helpers::{Decode, DecodeError, NonNullJson, Reported};\n\n" +
+        "// The unknown key hook, which every decode calls with the paths of its unknown keys.\n" +
+        "pub use helpers::{clear_unknown_key_hook, set_unknown_key_hook};\n",
     );
     expect(text).toContain(
       "    fn report_from_json(json: impl AsRef<[u8]>) -> Result<Reported<Self>, DecodeError> {\n",

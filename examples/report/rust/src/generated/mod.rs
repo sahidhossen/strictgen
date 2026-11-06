@@ -19,7 +19,8 @@
 mod helpers;
 mod order;
 
-pub use helpers::{
-    clear_unknown_key_hook, set_unknown_key_hook, Decode, DecodeError, NonNullJson, Reported,
-};
+pub use helpers::{Decode, DecodeError, NonNullJson, Reported};
 pub use order::*;
+
+// The unknown key hook, which every decode calls with the paths of its unknown keys.
+pub use helpers::{clear_unknown_key_hook, set_unknown_key_hook};

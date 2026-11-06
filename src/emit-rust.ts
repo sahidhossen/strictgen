@@ -183,7 +183,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     "Decode",
     "DecodeError",
     NON_NULL_JSON,
-    ...(report ? ["Reported", "clear_unknown_key_hook", "set_unknown_key_hook"] : []),
+    ...(report ? ["Reported"] : []),
   ];
   // Only the parts some declaration uses, so the module has no dead code.
   const helpers = [
@@ -211,6 +211,11 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     "\n",
     modules.map((m) => `pub use ${m.name}::*;\n`).join(""),
     `pub use ${HELPERS}::{${exported.join(", ")}};\n`,
+    // A group of its own, all lower case, so every rustfmt style sorts it the same way.
+    report
+      ? `\n// The unknown key hook, which every decode calls with the paths of its unknown keys.\n` +
+        `pub use ${HELPERS}::{clear_unknown_key_hook, set_unknown_key_hook};\n`
+      : "",
   ].join("");
   return [
     { name: "mod.rs", contents: root },
