@@ -55,6 +55,11 @@ const (
 	EventTypePaymentMethodAttached EventType = "payment_method.attached"
 )
 
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v EventType) MarshalText() ([]byte, error) {
+	return encodeEnum(v, EventTypeUserCreated, EventTypeUserUpdated, EventTypePaymentMethodAttached)
+}
+
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *EventType) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
 

@@ -4,8 +4,63 @@
 
 use super::common::{Timestamp, UserId};
 use super::helpers::present;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::BTreeMap;
+
+/// How to reach a user: by email or by phone, exactly one of them.
+///
+/// Schema: `user.json#/$defs/contact`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(untagged)]
+pub enum Contact {
+    /// A `ContactEmail`.
+    Email(ContactEmail),
+    /// A `ContactPhone`.
+    Phone(ContactPhone),
+}
+
+impl<'de> Deserialize<'de> for Contact {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if value.is_object()
+            && let Ok(inner) = <ContactEmail>::deserialize(&value)
+        {
+            return Ok(Self::Email(inner));
+        }
+        if value.is_object()
+            && let Ok(inner) = <ContactPhone>::deserialize(&value)
+        {
+            return Ok(Self::Phone(inner));
+        }
+        Err(serde::de::Error::custom(
+            "data did not match any variant of untagged enum Contact",
+        ))
+    }
+}
+
+/// How to reach a user: by email or by phone, exactly one of them.
+///
+/// Schema: `user.json#/$defs/contact`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContactEmail {
+    /// Who to ask for.
+    pub name: String,
+    /// An email address.
+    pub email: String,
+}
+
+/// How to reach a user: by email or by phone, exactly one of them.
+///
+/// Schema: `user.json#/$defs/contact`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContactPhone {
+    /// Who to ask for.
+    pub name: String,
+    /// A phone number.
+    pub phone: String,
+}
 
 /// What the user may do.
 ///

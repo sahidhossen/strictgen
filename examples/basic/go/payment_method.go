@@ -37,6 +37,11 @@ const (
 	BankAccountTypeBankAccount BankAccountType = "bank_account"
 )
 
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v BankAccountType) MarshalText() ([]byte, error) {
+	return encodeEnum(v, BankAccountTypeBankAccount)
+}
+
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *BankAccountType) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
 
@@ -89,6 +94,11 @@ const (
 	CardBrandAmex CardBrand = "amex"
 )
 
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v CardBrand) MarshalText() ([]byte, error) {
+	return encodeEnum(v, CardBrandVisa, CardBrandMastercard, CardBrandAmex)
+}
+
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *CardBrand) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
 
@@ -104,6 +114,11 @@ const (
 	// CardTypeCard is "card".
 	CardTypeCard CardType = "card"
 )
+
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v CardType) MarshalText() ([]byte, error) {
+	return encodeEnum(v, CardTypeCard)
+}
 
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *CardType) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
@@ -177,6 +192,11 @@ const (
 	WalletProviderGooglePay WalletProvider = "google_pay"
 )
 
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v WalletProvider) MarshalText() ([]byte, error) {
+	return encodeEnum(v, WalletProviderApplePay, WalletProviderGooglePay)
+}
+
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *WalletProvider) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
 
@@ -192,6 +212,11 @@ const (
 	// WalletTypeWallet is "wallet".
 	WalletTypeWallet WalletType = "wallet"
 )
+
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v WalletType) MarshalText() ([]byte, error) {
+	return encodeEnum(v, WalletTypeWallet)
+}
 
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *WalletType) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }

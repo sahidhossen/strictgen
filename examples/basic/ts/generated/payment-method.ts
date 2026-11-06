@@ -33,12 +33,17 @@ export function tryDecodeBankAccount(json: unknown): h.DecodeResult<BankAccount>
   return h.attempt(decodeBankAccount, json);
 }
 
-/** Encodes BankAccount as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes BankAccount as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeBankAccount(value: BankAccount): unknown {
+  h.encodeObject(value);
   const out = {};
-  h.put(out, "type", encodeBankAccountType(value.type));
-  h.put(out, "holderName", value.holderName);
-  h.put(out, "iban", value.iban);
+  h.member(out, "type", value.type, encodeBankAccountType);
+  h.member(out, "holderName", value.holderName, h.encodeString);
+  h.member(out, "iban", value.iban, h.encodeString);
+  h.encodeClosed(value, ["type", "holderName", "iban"]);
   return out;
 }
 
@@ -57,9 +62,12 @@ export function tryDecodeBankAccountType(json: unknown): h.DecodeResult<BankAcco
   return h.attempt(decodeBankAccountType, json);
 }
 
-/** Encodes BankAccountType as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes BankAccountType as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeBankAccountType(value: BankAccountType): unknown {
-  return value;
+  return h.encodeEnum(value, ["bank_account"] as const);
 }
 
 /** A payment card. */
@@ -97,14 +105,19 @@ export function tryDecodeCard(json: unknown): h.DecodeResult<Card> {
   return h.attempt(decodeCard, json);
 }
 
-/** Encodes Card as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes Card as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeCard(value: Card): unknown {
+  h.encodeObject(value);
   const out = {};
-  h.put(out, "type", encodeCardType(value.type));
-  h.put(out, "brand", encodeCardBrand(value.brand));
-  h.put(out, "last4", value.last4);
-  h.put(out, "expMonth", value.expMonth);
-  h.put(out, "expYear", value.expYear);
+  h.member(out, "type", value.type, encodeCardType);
+  h.member(out, "brand", value.brand, encodeCardBrand);
+  h.member(out, "last4", value.last4, h.encodeString);
+  h.member(out, "expMonth", value.expMonth, h.encodeInteger);
+  h.member(out, "expYear", value.expYear, h.encodeInteger);
+  h.encodeClosed(value, ["type", "brand", "last4", "expMonth", "expYear"]);
   return out;
 }
 
@@ -124,9 +137,12 @@ export function tryDecodeCardBrand(json: unknown): h.DecodeResult<CardBrand> {
   return h.attempt(decodeCardBrand, json);
 }
 
-/** Encodes CardBrand as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes CardBrand as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeCardBrand(value: CardBrand): unknown {
-  return value;
+  return h.encodeEnum(value, ["visa", "mastercard", "amex"] as const);
 }
 
 export type CardType = "card";
@@ -144,9 +160,12 @@ export function tryDecodeCardType(json: unknown): h.DecodeResult<CardType> {
   return h.attempt(decodeCardType, json);
 }
 
-/** Encodes CardType as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes CardType as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeCardType(value: CardType): unknown {
-  return value;
+  return h.encodeEnum(value, ["card"] as const);
 }
 
 /** A way to pay, picked by its `type` key. */
@@ -157,7 +176,11 @@ export type PaymentMethod = Card | BankAccount | Wallet;
  * the first problem, under `path` when given.
  */
 export function decodePaymentMethod(json: unknown, path = ""): PaymentMethod {
-  return h.unsupported("tagged unions")(json, path);
+  return h.tagged<PaymentMethod>(json, path, "type", [
+    ["card", decodeCard],
+    ["bank_account", decodeBankAccount],
+    ["wallet", decodeWallet],
+  ]);
 }
 
 /** Like decodePaymentMethod, but returns the DecodeError instead of throwing it. */
@@ -165,9 +188,16 @@ export function tryDecodePaymentMethod(json: unknown): h.DecodeResult<PaymentMet
   return h.attempt(decodePaymentMethod, json);
 }
 
-/** Encodes PaymentMethod as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes PaymentMethod as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodePaymentMethod(value: PaymentMethod): unknown {
-  return h.cannotEncode("tagged unions", value);
+  return h.encodeTagged(value, "type", [
+    ["card", encodeCard],
+    ["bank_account", encodeBankAccount],
+    ["wallet", encodeWallet],
+  ]);
 }
 
 /** A digital wallet. */
@@ -199,12 +229,17 @@ export function tryDecodeWallet(json: unknown): h.DecodeResult<Wallet> {
   return h.attempt(decodeWallet, json);
 }
 
-/** Encodes Wallet as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes Wallet as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeWallet(value: Wallet): unknown {
+  h.encodeObject(value);
   const out = {};
-  h.put(out, "type", encodeWalletType(value.type));
-  h.put(out, "provider", encodeWalletProvider(value.provider));
-  if (value.email !== undefined) h.put(out, "email", value.email);
+  h.member(out, "type", value.type, encodeWalletType);
+  h.member(out, "provider", value.provider, encodeWalletProvider);
+  if (value.email !== undefined) h.member(out, "email", value.email, h.encodeString);
+  h.encodeClosed(value, ["type", "provider", "email"]);
   return out;
 }
 
@@ -224,9 +259,12 @@ export function tryDecodeWalletProvider(json: unknown): h.DecodeResult<WalletPro
   return h.attempt(decodeWalletProvider, json);
 }
 
-/** Encodes WalletProvider as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes WalletProvider as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeWalletProvider(value: WalletProvider): unknown {
-  return value;
+  return h.encodeEnum(value, ["apple_pay", "google_pay"] as const);
 }
 
 export type WalletType = "wallet";
@@ -244,7 +282,10 @@ export function tryDecodeWalletType(json: unknown): h.DecodeResult<WalletType> {
   return h.attempt(decodeWalletType, json);
 }
 
-/** Encodes WalletType as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes WalletType as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeWalletType(value: WalletType): unknown {
-  return value;
+  return h.encodeEnum(value, ["wallet"] as const);
 }

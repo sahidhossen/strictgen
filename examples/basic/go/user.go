@@ -4,6 +4,76 @@
 
 package types
 
+// Contact is generated from user.json#/$defs/contact.
+//
+// How to reach a user: by email or by phone, exactly one of them.
+//
+// Exactly one field is set. Decoding tries them in order: Email or Phone.
+type Contact struct {
+	// Email is set when the value decodes as ContactEmail.
+	Email *ContactEmail
+	// Phone is set when the value decodes as ContactPhone.
+	Phone *ContactPhone
+}
+
+// MarshalJSON encodes the one variant that is set. None or more than one fails.
+func (v Contact) MarshalJSON() ([]byte, error) {
+	return encodeUntagged("Contact", some(v.Email), some(v.Phone))
+}
+
+// UnmarshalJSON decodes the first variant, in order, that the value matches.
+func (v *Contact) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Contact) decode(n *node) *DecodeError {
+	var out Contact
+	return decodeUntagged(n, "Contact", func() { *v = out },
+		try(&out.Email, decodeType[ContactEmail]),
+		try(&out.Phone, decodeType[ContactPhone]),
+	)
+}
+
+// ContactEmail is generated from user.json#/$defs/contact.
+//
+// How to reach a user: by email or by phone, exactly one of them.
+type ContactEmail struct {
+	// Who to ask for.
+	Name string `json:"name"`
+	// An email address.
+	Email string `json:"email"`
+}
+
+// UnmarshalJSON decodes strictly: unknown keys, missing required keys and explicit nulls fail.
+func (v *ContactEmail) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *ContactEmail) decode(n *node) *DecodeError {
+	var out ContactEmail
+	return decodeObject(n, func(d *objectDecoder) {
+		required(d, "name", &out.Name, decodeString)
+		required(d, "email", &out.Email, decodeString)
+	}, func() { *v = out })
+}
+
+// ContactPhone is generated from user.json#/$defs/contact.
+//
+// How to reach a user: by email or by phone, exactly one of them.
+type ContactPhone struct {
+	// Who to ask for.
+	Name string `json:"name"`
+	// A phone number.
+	Phone string `json:"phone"`
+}
+
+// UnmarshalJSON decodes strictly: unknown keys, missing required keys and explicit nulls fail.
+func (v *ContactPhone) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *ContactPhone) decode(n *node) *DecodeError {
+	var out ContactPhone
+	return decodeObject(n, func(d *objectDecoder) {
+		required(d, "name", &out.Name, decodeString)
+		required(d, "phone", &out.Phone, decodeString)
+	}, func() { *v = out })
+}
+
 // Role is generated from user.json#/$defs/role.
 //
 // What the user may do.
@@ -18,6 +88,11 @@ const (
 	// RoleMember is "member".
 	RoleMember Role = "member"
 )
+
+// MarshalText fails on a value the type doesn't list, so it is never written.
+func (v Role) MarshalText() ([]byte, error) {
+	return encodeEnum(v, RoleOwner, RoleAdmin, RoleMember)
+}
 
 // UnmarshalJSON fails on a value the type doesn't list.
 func (v *Role) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }

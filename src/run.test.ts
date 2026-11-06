@@ -633,7 +633,7 @@ describe("explain", () => {
         "/**\n * Decodes parsed JSON as Role, strictly.",
     );
     expect(json.targets[2]?.code).toContain(
-      "export function encodeRole(value: Role): unknown {\n  return value;\n}",
+      'export function encodeRole(value: Role): unknown {\n  return h.encodeEnum(value, ["owner", "member"] as const);\n}',
     );
   });
 

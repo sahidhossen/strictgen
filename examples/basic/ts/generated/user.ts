@@ -12,6 +12,112 @@ import {
   type UserId,
 } from "./common.js";
 
+/** How to reach a user: by email or by phone, exactly one of them. */
+export type Contact = ContactEmail | ContactPhone;
+
+/**
+ * Decodes parsed JSON as Contact, strictly. Throws a DecodeError at the JSON Pointer of
+ * the first problem, under `path` when given.
+ */
+export function decodeContact(json: unknown, path = ""): Contact {
+  return h.untagged<Contact>(json, path, "Contact", [decodeContactEmail, decodeContactPhone]);
+}
+
+/** Like decodeContact, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContact(json: unknown): h.DecodeResult<Contact> {
+  return h.attempt(decodeContact, json);
+}
+
+/**
+ * Encodes Contact as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeContact(value: Contact): unknown {
+  return h.encodeUntagged(value, "Contact", [encodeContactEmail, encodeContactPhone]);
+}
+
+/** How to reach a user: by email or by phone, exactly one of them. */
+export interface ContactEmail {
+  /** Who to ask for. */
+  name: string;
+  /** An email address. */
+  email: string;
+  phone?: never;
+}
+
+/**
+ * Decodes parsed JSON as ContactEmail, strictly. Throws a DecodeError at the JSON Pointer of
+ * the first problem, under `path` when given.
+ */
+export function decodeContactEmail(json: unknown, path = ""): ContactEmail {
+  const o = h.object(json, path);
+  const value: ContactEmail = {
+    name: h.required(o, "name", path, h.decodeString),
+    email: h.required(o, "email", path, h.decodeString),
+  };
+  h.closed(o, path, ["name", "email"]);
+  return value;
+}
+
+/** Like decodeContactEmail, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContactEmail(json: unknown): h.DecodeResult<ContactEmail> {
+  return h.attempt(decodeContactEmail, json);
+}
+
+/**
+ * Encodes ContactEmail as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeContactEmail(value: ContactEmail): unknown {
+  h.encodeObject(value);
+  const out = {};
+  h.member(out, "name", value.name, h.encodeString);
+  h.member(out, "email", value.email, h.encodeString);
+  h.encodeClosed(value, ["name", "email"]);
+  return out;
+}
+
+/** How to reach a user: by email or by phone, exactly one of them. */
+export interface ContactPhone {
+  /** Who to ask for. */
+  name: string;
+  /** A phone number. */
+  phone: string;
+  email?: never;
+}
+
+/**
+ * Decodes parsed JSON as ContactPhone, strictly. Throws a DecodeError at the JSON Pointer of
+ * the first problem, under `path` when given.
+ */
+export function decodeContactPhone(json: unknown, path = ""): ContactPhone {
+  const o = h.object(json, path);
+  const value: ContactPhone = {
+    name: h.required(o, "name", path, h.decodeString),
+    phone: h.required(o, "phone", path, h.decodeString),
+  };
+  h.closed(o, path, ["name", "phone"]);
+  return value;
+}
+
+/** Like decodeContactPhone, but returns the DecodeError instead of throwing it. */
+export function tryDecodeContactPhone(json: unknown): h.DecodeResult<ContactPhone> {
+  return h.attempt(decodeContactPhone, json);
+}
+
+/**
+ * Encodes ContactPhone as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeContactPhone(value: ContactPhone): unknown {
+  h.encodeObject(value);
+  const out = {};
+  h.member(out, "name", value.name, h.encodeString);
+  h.member(out, "phone", value.phone, h.encodeString);
+  h.encodeClosed(value, ["name", "phone"]);
+  return out;
+}
+
 /** What the user may do. */
 export type Role = "owner" | "admin" | "member";
 
@@ -28,9 +134,12 @@ export function tryDecodeRole(json: unknown): h.DecodeResult<Role> {
   return h.attempt(decodeRole, json);
 }
 
-/** Encodes Role as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes Role as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeRole(value: Role): unknown {
-  return value;
+  return h.encodeEnum(value, ["owner", "admin", "member"] as const);
 }
 
 /** A user account. */
@@ -69,14 +178,19 @@ export function tryDecodeUser(json: unknown): h.DecodeResult<User> {
   return h.attempt(decodeUser, json);
 }
 
-/** Encodes User as a JSON value, ready for JSON.stringify. */
+/**
+ * Encodes User as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
 export function encodeUser(value: User): unknown {
+  h.encodeObject(value);
   const out = {};
-  h.put(out, "id", encodeUserId(value.id));
-  h.put(out, "email", value.email);
-  if (value.displayName !== undefined) h.put(out, "displayName", value.displayName);
-  h.put(out, "role", encodeRole(value.role));
-  h.put(out, "labels", h.encodeMap(value.labels, (item: string) => item));
-  h.put(out, "createdAt", encodeTimestamp(value.createdAt));
+  h.member(out, "id", value.id, encodeUserId);
+  h.member(out, "email", value.email, h.encodeString);
+  if (value.displayName !== undefined) h.member(out, "displayName", value.displayName, h.encodeString);
+  h.member(out, "role", value.role, encodeRole);
+  h.member(out, "labels", value.labels, h.encodeMap(h.encodeString, h.encodeString));
+  h.member(out, "createdAt", value.createdAt, encodeTimestamp);
+  h.encodeClosed(value, ["id", "email", "displayName", "role", "labels", "createdAt"]);
   return out;
 }
