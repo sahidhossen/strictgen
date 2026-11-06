@@ -14,11 +14,261 @@ const CODE_CONSTANTS = ERROR_CODES.map(
 /** The title of each code in messages. */
 const CODE_TITLES = ERROR_CODES.map((c, i) => `\t${GO_CODES[i] ?? ""}: "${c.title}",\n`).join("");
 
+/** In report mode, every node holds its offset and the document it belongs to. */
+const NODE_FIELDS_REPORT = String.raw`
+	at     int              // the byte offset of the value in the input
+	doc    *document        // what the decode of this input shares`;
+
+/** In report mode, a node the parser makes notes its offset and document. */
+const AT = ", at: start, doc: p.doc";
+
+/** What report mode adds: the document, Reported, Report, the hook, and input order. */
+const REPORT_SECTION = String.raw`
+// document is what one decode of a parsed input shares: the offsets of the unknown keys it
+// accepted so far, in decode order.
+type document struct {
+	unknown []int
+}
+
+// Reported is a decoded value and the paths of the unknown keys its input had.
+type Reported[T any] struct {
+	// Value is the decoded value, which leaves the unknown keys out.
+	Value T
+	// Unknown holds the JSON Pointer of each unknown key, like /customer/nickname, in the
+	// order the keys appear in the input. It is empty when there are none.
+	Unknown []string
+}
+
+// Report decodes data as T, like json.Unmarshal into a T, and returns the value with the
+// paths of its unknown keys. A tagged union has its own Report function instead.
+func Report[T any, PT interface {
+	*T
+	nodeDecoder
+}](data []byte) (Reported[T], error) {
+	return decodeReport(data, decodeType[T, PT])
+}
+
+// unknownKeyHook holds the hook SetUnknownKeyHook set.
+var unknownKeyHook atomic.Pointer[func(paths []string)]
+
+// SetUnknownKeyHook sets the one hook every decode calls with the paths of the unknown keys it
+// accepted, for logging or counting them in one place. A decode calls it after the value
+// decoded, only when there is at least one unknown key, and before it returns. nil removes it.
+// It is safe to call while other goroutines decode.
+func SetUnknownKeyHook(hook func(paths []string)) {
+	if hook == nil {
+		unknownKeyHook.Store(nil)
+		return
+	}
+	unknownKeyHook.Store(&hook)
+}
+
+// decodeReport parses data once, decodes it with decode, calls the hook and returns the value
+// with the paths of its unknown keys.
+func decodeReport[T any](data []byte, decode func(*node) (T, *DecodeError)) (Reported[T], error) {
+	n, err := parse(data)
+	if err != nil {
+		return Reported[T]{}, err
+	}
+	v, err := decode(n)
+	if err != nil {
+		return Reported[T]{}, err
+	}
+	paths := n.unknownPaths()
+	if hook := unknownKeyHook.Load(); hook != nil && len(paths) > 0 {
+		(*hook)(slices.Clone(paths))
+	}
+	return Reported[T]{Value: v, Unknown: paths}, nil
+}
+
+// unknownPaths returns the paths of the unknown keys noted under the root n, in input order,
+// which is the order of their offsets.
+func (n *node) unknownPaths() []string {
+	offsets := slices.Clone(n.doc.unknown)
+	slices.Sort(offsets)
+	paths := make([]string, 0, len(offsets))
+	for _, at := range offsets {
+		paths = append(paths, n.pathTo(at))
+	}
+	return paths
+}
+
+// pathTo returns the JSON Pointer, under n, of the value that starts at the byte offset at.
+// The children of a node are in input order, so the last one that starts at or before the
+// offset holds it.
+func (n *node) pathTo(at int) string {
+	var path strings.Builder
+	for n.at != at {
+		count := len(n.items)
+		if n.kind == '{' {
+			count = len(n.keys)
+		}
+		child := func(i int) *node {
+			if n.kind == '{' {
+				return n.fields[n.keys[i]]
+			}
+			return n.items[i]
+		}
+		lo, hi := 0, count
+		for lo < hi {
+			mid := (lo + hi) / 2
+			if child(mid).at <= at {
+				lo = mid + 1
+			} else {
+				hi = mid
+			}
+		}
+		if lo == 0 {
+			break
+		}
+		if n.kind == '{' {
+			path.WriteString(pointer(n.keys[lo-1]))
+		} else {
+			path.WriteString(pointer(strconv.Itoa(lo - 1)))
+		}
+		n = child(lo - 1)
+	}
+	return path.String()
+}
+`;
+
+/** unmarshal and decodeRoot in strict mode. */
+const ROOT_STRICT = String.raw`// unmarshal parses data once and decodes it into v, for UnmarshalJSON.
+func unmarshal[T any, PT interface {
+	*T
+	nodeDecoder
+}](data []byte, v PT) error {
+	n, err := parse(data)
+	if err == nil {
+		err = v.decode(n)
+	}
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// decodeRoot parses data once and decodes it with decode.
+func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, error) {
+	var v T
+	n, err := parse(data)
+	if err == nil {
+		v, err = decode(n)
+	}
+	if err != nil {
+		var zero T
+		return zero, err
+	}
+	return v, nil
+}`;
+
+/** unmarshal and decodeRoot in report mode, which give the unknown keys to the hook. */
+const ROOT_REPORT = String.raw`// unmarshal parses data once and decodes it into v, for UnmarshalJSON. The paths of the
+// unknown keys go to the hook.
+func unmarshal[T any, PT interface {
+	*T
+	nodeDecoder
+}](data []byte, v PT) error {
+	_, err := decodeReport(data, func(n *node) (struct{}, *DecodeError) { return struct{}{}, v.decode(n) })
+	return err
+}
+
+// decodeRoot parses data once and decodes it with decode. The paths of the unknown keys go to
+// the hook.
+func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, error) {
+	r, err := decodeReport(data, decode)
+	return r.Value, err
+}`;
+
+/** decodeObject in strict mode: a key fill didn't read fails. */
+const OBJECT_STRICT = String.raw`// decodeObject decodes a JSON object strictly: fill reads its keys, any key fill didn't read
+// fails at its own path, and commit stores the result only when everything decoded.
+func decodeObject(n *node, fill func(*objectDecoder), commit func()) *DecodeError {
+	if err := expect(n, '{'); err != nil {
+		return err
+	}
+	d := &objectDecoder{n: n, used: make(map[string]bool, len(n.keys))}
+	fill(d)
+	if d.err != nil {
+		return d.err
+	}
+	for _, key := range n.keys {
+		if !d.used[key] {
+			return fail(CodeUnknownKey, "", "").at(key)
+		}
+	}
+	commit()
+	return nil
+}`;
+
+/** decodeObject in report mode: a key fill didn't read is noted, unless forbidden names it. */
+const OBJECT_REPORT = String.raw`// decodeObject decodes a JSON object: fill reads its keys, and commit stores the result only
+// when everything decoded. A key fill didn't read is unknown and noted for the decode that
+// runs, in input order. A key in forbidden, which a sibling branch of an exactly-one union
+// names, still fails with CodeUnknownKey at its own path.
+func decodeObject(n *node, fill func(*objectDecoder), commit func(), forbidden ...string) *DecodeError {
+	if err := expect(n, '{'); err != nil {
+		return err
+	}
+	d := &objectDecoder{n: n, used: make(map[string]bool, len(n.keys))}
+	fill(d)
+	if d.err != nil {
+		return d.err
+	}
+	for _, key := range n.keys {
+		if d.used[key] {
+			continue
+		}
+		if n.doc == nil || slices.Contains(forbidden, key) {
+			return fail(CodeUnknownKey, "", "").at(key)
+		}
+		n.doc.unknown = append(n.doc.unknown, n.fields[key].at)
+	}
+	commit()
+	return nil
+}`;
+
+/** decodeUntagged in strict mode. */
+const UNTAGGED_STRICT = String.raw`// decodeUntagged tries each variant in order and commits the first one that decodes. When
+// none does, it fails with CodeWrongType, or CodeNullNotAllowed for null, naming the union.
+func decodeUntagged(n *node, name string, commit func(), variants ...func(*node) bool) *DecodeError {
+	for _, variant := range variants {
+		if variant(n) {
+			commit()
+			return nil
+		}
+	}
+	return mismatch(name, n)
+}`;
+
+/** decodeUntagged in report mode, which drops the unknown keys of a variant that failed. */
+const UNTAGGED_REPORT = String.raw`// decodeUntagged tries each variant in order and commits the first one that decodes. The
+// unknown keys of a variant that failed are dropped, so only the variant used reports its own.
+// When none decodes, it fails with CodeWrongType, or CodeNullNotAllowed for null, naming the
+// union.
+func decodeUntagged(n *node, name string, commit func(), variants ...func(*node) bool) *DecodeError {
+	for _, variant := range variants {
+		mark := 0
+		if n.doc != nil {
+			mark = len(n.doc.unknown)
+		}
+		if variant(n) {
+			commit()
+			return nil
+		}
+		if n.doc != nil {
+			n.doc.unknown = n.doc.unknown[:mark]
+		}
+	}
+	return mismatch(name, n)
+}`;
+
 /**
  * The body of the generated `helpers.go`. It is a raw template, so backslashes stand for
- * themselves.
+ * themselves. `report` adds what report mode needs.
  */
-export const GO_HELPERS_BODY = String.raw`// maxDepth is serde_json's recursion limit: a value nested in ${String(MAX_DEPTH)} or more arrays and objects
+export function goHelpersBody(report: boolean): string {
+  return String.raw`// maxDepth is serde_json's recursion limit: a value nested in ${String(MAX_DEPTH)} or more arrays and objects
 // fails, so Go and Rust accept the same documents and decoding stays bounded.
 const maxDepth = ${String(MAX_DEPTH)}
 
@@ -125,7 +375,7 @@ type node struct {
 	text   string           // the value of a string
 	keys   []string         // the keys of an object in input order, each once
 	fields map[string]*node // the members of an object; a key given twice fails to parse
-	items  []*node          // the items of an array
+	items  []*node          // the items of an array${report ? NODE_FIELDS_REPORT : ""}
 }
 
 // foundOf shows a value as errors do: null, true and false, a number as spelled, a string
@@ -183,13 +433,13 @@ type parser struct {
 	data []byte
 	pos  int
 	// path holds the keys and indexes of the values being read, for the path of a failure.
-	path []string
+	path []string${report ? "\n\t// doc is shared by every node of the input.\n\tdoc *document" : ""}
 }
 
 // parse parses a whole JSON document. Every failure carries its error code and the JSON
 // Pointer of the value being read, and Found gives the byte offset.
 func parse(data []byte) (*node, *DecodeError) {
-	p := &parser{data: data}
+	p := &parser{data: data${report ? ", doc: &document{}" : ""}}
 	if !utf8.Valid(data) {
 		return nil, p.failAt(invalidUTF8At(data), "invalid UTF-8")
 	}
@@ -276,7 +526,7 @@ func (p *parser) value(depth int) (*node, *DecodeError) {
 		if err != nil {
 			return nil, err
 		}
-		return &node{kind: '"', raw: p.data[start:p.pos], text: text}, nil
+		return &node{kind: '"', raw: p.data[start:p.pos], text: text${report ? AT : ""}}, nil
 	case 't':
 		return p.literal(start, "true", 't')
 	case 'f':
@@ -296,11 +546,11 @@ func (p *parser) literal(start int, word string, kind byte) (*node, *DecodeError
 		}
 		p.pos++
 	}
-	return &node{kind: kind, raw: p.data[start:p.pos]}, nil
+	return &node{kind: kind, raw: p.data[start:p.pos]${report ? AT : ""}}, nil
 }
 
 func (p *parser) object(start, depth int) (*node, *DecodeError) {
-	n := &node{kind: '{', fields: map[string]*node{}}
+	n := &node{kind: '{', fields: map[string]*node{}${report ? AT : ""}}
 	p.pos++
 	p.space()
 	if p.accept('}') {
@@ -348,7 +598,7 @@ func (p *parser) object(start, depth int) (*node, *DecodeError) {
 }
 
 func (p *parser) array(start, depth int) (*node, *DecodeError) {
-	n := &node{kind: '['}
+	n := &node{kind: '['${report ? AT : ""}}
 	p.pos++
 	p.space()
 	if p.accept(']') {
@@ -498,7 +748,7 @@ func (p *parser) number(start int) (*node, *DecodeError) {
 	if _, err := strconv.ParseFloat(string(raw), 64); err != nil {
 		return nil, p.failAt(start, "a number out of range")
 	}
-	return &node{kind: '0', raw: raw}, nil
+	return &node{kind: '0', raw: raw${report ? AT : ""}}, nil
 }
 
 // nodeDecoder is a generated type that decodes itself from a parsed node.
@@ -506,34 +756,7 @@ type nodeDecoder interface {
 	decode(n *node) *DecodeError
 }
 
-// unmarshal parses data once and decodes it into v, for UnmarshalJSON.
-func unmarshal[T any, PT interface {
-	*T
-	nodeDecoder
-}](data []byte, v PT) error {
-	n, err := parse(data)
-	if err == nil {
-		err = v.decode(n)
-	}
-	if err != nil {
-		return err
-	}
-	return nil
-}
-
-// decodeRoot parses data once and decodes it with decode.
-func decodeRoot[T any](data []byte, decode func(*node) (T, *DecodeError)) (T, error) {
-	var v T
-	n, err := parse(data)
-	if err == nil {
-		v, err = decode(n)
-	}
-	if err != nil {
-		var zero T
-		return zero, err
-	}
-	return v, nil
-}
+${report ? `${ROOT_REPORT}\n${REPORT_SECTION.trimEnd()}` : ROOT_STRICT}
 
 // decodeType decodes a generated type, which checks its own shape.
 func decodeType[T any, PT interface {
@@ -661,25 +884,7 @@ type objectDecoder struct {
 	err  *DecodeError
 }
 
-// decodeObject decodes a JSON object strictly: fill reads its keys, any key fill didn't read
-// fails at its own path, and commit stores the result only when everything decoded.
-func decodeObject(n *node, fill func(*objectDecoder), commit func()) *DecodeError {
-	if err := expect(n, '{'); err != nil {
-		return err
-	}
-	d := &objectDecoder{n: n, used: make(map[string]bool, len(n.keys))}
-	fill(d)
-	if d.err != nil {
-		return d.err
-	}
-	for _, key := range n.keys {
-		if !d.used[key] {
-			return fail(CodeUnknownKey, "", "").at(key)
-		}
-	}
-	commit()
-	return nil
-}
+${report ? OBJECT_REPORT : OBJECT_STRICT}
 
 // required reads a key that must be present. A missing key fails at its own path.
 func required[T any](d *objectDecoder, key string, dst *T, decode func(*node) (T, *DecodeError)) {
@@ -906,17 +1111,7 @@ func branch[U any, T any, PT interface {
 	return any(v).(U), nil
 }
 
-// decodeUntagged tries each variant in order and commits the first one that decodes. When
-// none does, it fails with CodeWrongType, or CodeNullNotAllowed for null, naming the union.
-func decodeUntagged(n *node, name string, commit func(), variants ...func(*node) bool) *DecodeError {
-	for _, variant := range variants {
-		if variant(n) {
-			commit()
-			return nil
-		}
-	}
-	return mismatch(name, n)
-}
+${report ? UNTAGGED_REPORT : UNTAGGED_STRICT}
 
 // try returns a variant of an untagged union that decodes into a pointer field.
 func try[T any](dst **T, decode func(*node) (T, *DecodeError)) func(*node) bool {
@@ -1056,3 +1251,4 @@ func (v *${GO_NON_NULL}) decode(n *node) *DecodeError {
 	return nil
 }
 `;
+}

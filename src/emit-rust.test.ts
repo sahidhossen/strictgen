@@ -176,6 +176,71 @@ describe("string families", () => {
   });
 });
 
+describe("Rust report mode", () => {
+  const model = buildModel(
+    schemaSet({
+      lib: schema("lib", {
+        $defs: {
+          carrier: {
+            type: "object",
+            properties: { name: { type: "string" } },
+            required: ["name"],
+            unevaluatedProperties: false,
+          },
+          delivery: { oneOf: [{ $ref: "#/$defs/carrier" }, { type: "string" }] },
+          contact: {
+            type: "object",
+            properties: { name: { type: "string" }, email: { type: "string" }, phone: { type: "string" } },
+            required: ["name"],
+            oneOf: [{ required: ["email"] }, { required: ["phone"] }],
+            unevaluatedProperties: false,
+          },
+        },
+      }),
+    }),
+  );
+  const out = (read?: "strict" | "report"): string =>
+    emitRust(model, read === undefined ? {} : { read })
+      .map((f) => f.contents)
+      .join("\n");
+
+  it("leave strict output as it was when read is left out or strict", () => {
+    expect(out("strict")).toBe(out());
+    expect(out()).not.toContain("set_unknown_key_hook");
+    expect(out()).toContain("        object.finish()?;\n");
+  });
+
+  it("note unknown keys in finish, passing the keys a sibling branch names", () => {
+    const text = out("report");
+    expect(text).toContain("        object.finish(&[])?;\n");
+    expect(text).toContain('        object.finish(&["phone"])?;\n');
+    expect(text).toContain("    pub(super) fn finish(self, forbidden: &[&str]) -> Result<(), DecodeError> {\n");
+  });
+
+  it("run each untagged variant through attempt, which drops what a failed one noted", () => {
+    const text = out("report");
+    expect(text).toContain(
+      "        if let Ok(value) = helpers::attempt(|| <Carrier as helpers::Decode>::decode_node(node)) {\n",
+    );
+    expect(text).toContain("pub(super) fn attempt<T>(");
+  });
+
+  it("export the hook, Reported and report_from_json", () => {
+    const text = out("report");
+    expect(text).toContain(
+      "pub use helpers::{Decode, DecodeError, NonNullJson, Reported, clear_unknown_key_hook, set_unknown_key_hook};\n",
+    );
+    expect(text).toContain(
+      "    fn report_from_json(json: impl AsRef<[u8]>) -> Result<Reported<Self>, DecodeError> {\n",
+    );
+  });
+
+  it("reserve Reported in both modes", () => {
+    const lib = buildModel(schemaSet({ lib: schema("lib", { $defs: { reported: { type: "string" } } }) }));
+    expect(() => emitRust(lib)).toThrow("reserved-name: type name Reported is reserved in Rust");
+  });
+});
+
 describe("reserved names", () => {
   const lib = (entries: JsonObject) =>
     emitRust(buildModel(schemaSet({ lib: schema("lib", { $defs: entries }) })));

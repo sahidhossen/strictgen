@@ -1,0 +1,7 @@
+{
+  "id": "ord_7d2k",
+  "extra": [1, ],
+  "customer": { "name": "Ada", "email": "ada@example.com" },
+  "lines": [],
+  "payment": { "type": "card", "last4": "4242" }
+}

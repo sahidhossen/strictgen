@@ -1,0 +1,9 @@
+{
+  "id": "ord_7d2k",
+  "source": "web",
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com"
+  },
+  "lines": []
+}

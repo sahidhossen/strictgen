@@ -1,0 +1,24 @@
+{
+  "id": "ord_7d2k",
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com"
+  },
+  "lines": [
+    {
+      "sku": "A-1",
+      "quantity": 2
+    }
+  ],
+  "payment": {
+    "type": "card",
+    "last4": "4242"
+  },
+  "delivery": {
+    "carrier": {
+      "name": "Fast Freight",
+      "phone": "+44 20 7946 0000"
+    },
+    "location": "Shop 4"
+  }
+}

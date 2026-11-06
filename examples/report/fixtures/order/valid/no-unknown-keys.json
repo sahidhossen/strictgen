@@ -1,0 +1,31 @@
+{
+  "id": "ord_7d2k",
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com"
+  },
+  "lines": [
+    {
+      "sku": "A-1",
+      "quantity": 2
+    }
+  ],
+  "payment": {
+    "type": "card",
+    "last4": "4242"
+  },
+  "delivery": {
+    "carrier": {
+      "name": "Fast Freight"
+    },
+    "trackingCode": "FF-123"
+  },
+  "notes": {
+    "support": {
+      "text": "Call before delivery"
+    }
+  },
+  "attributes": {
+    "channel": "web"
+  }
+}

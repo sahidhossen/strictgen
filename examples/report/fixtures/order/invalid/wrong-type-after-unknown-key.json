@@ -1,0 +1,18 @@
+{
+  "id": "ord_7d2k",
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com"
+  },
+  "payment": {
+    "type": "card",
+    "last4": "4242"
+  },
+  "lines": [
+    {
+      "sku": "A-1",
+      "giftWrap": true,
+      "quantity": "2"
+    }
+  ]
+}

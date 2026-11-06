@@ -1,0 +1,13 @@
+{
+  "$schema": "../../strictgen.schema.json",
+  "schemas": "schemas",
+  "targets": {
+    "rust": {
+      "out": "rust/src/generated",
+      "fixtures": { "out": "rust/tests/generated", "crate": "example_report" },
+      "read": "report"
+    },
+    "go": { "out": "go", "package": "types", "shared": true, "fixtures": true, "read": "report" },
+    "typescript": { "out": "ts/generated", "read": "report" }
+  }
+}

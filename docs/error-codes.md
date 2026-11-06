@@ -40,7 +40,7 @@ Codes are public API: changing one is a major version.
 
 | Code | Title | When | `expected` | `found` |
 | ---- | ----- | ---- | ---------- | ------- |
-| `unknown_key` | unknown key | a key the type doesn't name; `path` is the key's own pointer, like `/user/nickname` | | |
+| `unknown_key` | unknown key | a key the type doesn't name; `path` is the key's own pointer, like `/user/nickname`. In report mode such a key is reported instead, see [read-modes.md](read-modes.md) | | |
 | `missing_key` | missing key | a required key that is absent, at the key's pointer | | |
 | `null_not_allowed` | null not allowed | `null` where the type doesn't take it, like for an optional key | the type | |
 | `wrong_type` | wrong type | a value of another JSON type; for an integer also a fraction, an exponent spelling like `1e2` or `12.0`, and `-0` | the type | the value |

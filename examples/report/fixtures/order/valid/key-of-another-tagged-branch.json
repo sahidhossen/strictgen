@@ -1,0 +1,18 @@
+{
+  "id": "ord_7d2k",
+  "customer": {
+    "name": "Ada",
+    "email": "ada@example.com"
+  },
+  "lines": [
+    {
+      "sku": "A-1",
+      "quantity": 2
+    }
+  ],
+  "payment": {
+    "type": "invoice",
+    "dueDays": 30,
+    "last4": "4242"
+  }
+}
