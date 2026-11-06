@@ -507,6 +507,38 @@ describe("numbers", () => {
   });
 });
 
+describe("string families", () => {
+  const model = build(
+    defs({
+      orderRef: { description: "An order reference.", type: "string", pattern: "^order\\..+$" },
+      code: { description: "A code.", type: "string", pattern: "^[A-Z]{3}$" },
+      byRef: {
+        description: "Counts by order.",
+        type: "object",
+        propertyNames: { type: "string", pattern: "^order\\." },
+        additionalProperties: { type: "integer" },
+      },
+    }),
+  );
+
+  it("keep a string's pattern in the model, for map keys too", () => {
+    expect(find(model, "OrderRef")).toMatchObject({
+      kind: "alias",
+      type: { kind: "string", pattern: "^order\\..+$" },
+    });
+    expect(find(model, "ByRef")).toMatchObject({
+      kind: "alias",
+      type: { kind: "map", key: { kind: "string", pattern: "^order\\." } },
+    });
+  });
+
+  it("type a family as a template literal in TypeScript only, a plain string in Rust", () => {
+    expect(tsOf(model)).toContain("export type OrderRef = `order.${string}`;\n");
+    expect(tsOf(model)).toContain("export type Code = string;\n");
+    expect(rustOf(model)).toContain("pub type OrderRef = String;\n");
+  });
+});
+
 describe("if/then", () => {
   const files = {
     commands: schema("commands", {

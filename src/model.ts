@@ -7,7 +7,11 @@
 /** A type used by a field, an alias, a map or an array. Compound types are always a `ref`. */
 export type TypeExpr =
   | { readonly kind: "ref"; readonly name: string }
-  | { readonly kind: "string" }
+  /**
+   * A string. `pattern` is the schema's `pattern` when it has one, which no decoder checks yet.
+   * TypeScript types a fixed prefix or suffix family by it, like `order.${string}`.
+   */
+  | { readonly kind: "string"; readonly pattern?: string }
   | { readonly kind: "integer" }
   | { readonly kind: "number" }
   | { readonly kind: "boolean" }

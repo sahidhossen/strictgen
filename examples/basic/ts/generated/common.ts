@@ -26,6 +26,20 @@ export function tryDecodeEventId(json: unknown): h.DecodeResult<EventId> {
 }
 
 /**
+ * Reads JSON text as EventId, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeEventIdFromJson(text: string): EventId {
+  return h.fromJson(text, decodeEventId);
+}
+
+/** Like decodeEventIdFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeEventIdFromJson(text: string): h.DecodeResult<EventId> {
+  return h.attemptJson(decodeEventId, text);
+}
+
+/**
  * Encodes EventId as a JSON value, ready for JSON.stringify.
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
@@ -47,6 +61,20 @@ export function decodeTimestamp(json: unknown, path = ""): Timestamp {
 /** Like decodeTimestamp, but returns the DecodeError instead of throwing it. */
 export function tryDecodeTimestamp(json: unknown): h.DecodeResult<Timestamp> {
   return h.attempt(decodeTimestamp, json);
+}
+
+/**
+ * Reads JSON text as Timestamp, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeTimestampFromJson(text: string): Timestamp {
+  return h.fromJson(text, decodeTimestamp);
+}
+
+/** Like decodeTimestampFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeTimestampFromJson(text: string): h.DecodeResult<Timestamp> {
+  return h.attemptJson(decodeTimestamp, text);
 }
 
 /**
@@ -76,6 +104,20 @@ export function decodeUserId(json: unknown, path = ""): UserId {
 /** Like decodeUserId, but returns the DecodeError instead of throwing it. */
 export function tryDecodeUserId(json: unknown): h.DecodeResult<UserId> {
   return h.attempt(decodeUserId, json);
+}
+
+/**
+ * Reads JSON text as UserId, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeUserIdFromJson(text: string): UserId {
+  return h.fromJson(text, decodeUserId);
+}
+
+/** Like decodeUserIdFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeUserIdFromJson(text: string): h.DecodeResult<UserId> {
+  return h.attemptJson(decodeUserId, text);
 }
 
 /**

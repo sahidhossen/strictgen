@@ -1,16 +1,40 @@
 # TypeScript decoders
 
-With `targets.typescript.decoders` on (the default), every generated type `X` gets three functions next to it, and the folder gets a `helpers.ts` that they share. There is no package to install.
+With `targets.typescript.decoders` on (the default), every generated type `X` gets five functions next to it, and the folder gets a `helpers.ts` that they share. There is no package to install.
 
 ```ts
-decodeX(json: unknown, path?: string): X        // throws a DecodeError
-tryDecodeX(json: unknown): DecodeResult<X>      // { ok: true, value } or { ok: false, error }
-encodeX(value: X): unknown                      // a JSON value, ready for JSON.stringify
+decodeXFromJson(text: string): X                 // reads JSON text strictly, throws a DecodeError
+tryDecodeXFromJson(text: string): DecodeResult<X>
+decodeX(json: unknown, path?: string): X         // checks a value that is already parsed
+tryDecodeX(json: unknown): DecodeResult<X>       // { ok: true, value } or { ok: false, error }
+encodeX(value: X): unknown                       // a JSON value, ready for JSON.stringify
 ```
+
+Use `decodeXFromJson` for input from outside. It accepts and rejects the same documents as the Rust and Go decoders. `decodeX` is for a value something else has parsed already, and can't see what `JSON.parse` has thrown away (see [Numbers](#numbers)).
 
 Decoders read a value that is already parsed, like the result of `JSON.parse`, and check it the way the Rust and Go decoders do: unknown keys, missing required keys, `null` for an optional key and values of the wrong type fail. A `DecodeError` has the JSON Pointer of the first problem in `path` and the reason in `reason`, like `/items/2/price: expected a number, found a string`. Pass `path` to report errors under the place the value came from.
 
 Keys like `__proto__` and `constructor` are read and written as data, never as object internals.
+
+## Reading JSON text
+
+`decodeXFromJson` reads the text with a small strict JSON reader in `helpers.ts`, not `JSON.parse`, and then decodes the value. The reader follows the Rust and Go decoders:
+
+- the strict JSON grammar: no trailing commas, comments, leading zeros, `NaN` or single quotes
+- nothing but white space after the value
+- no key given twice in one object, compared after unescaping
+- no lone surrogate, in a `\u` escape or in the text itself
+- finite numbers: `1e400` fails
+- at most 127 nested arrays and objects: a value inside 128 or more fails, the limit of `serde_json` and of the Go decoders, so reading and decoding stay bounded however deep the input
+- for an `integer`, an integer spelling: `12.0`, `1e2` and `-0` fail, as in Rust and Go. A `number` takes any spelling
+
+A failure is a `DecodeError` whose `path` is the JSON Pointer of the value being read and whose `reason` gives the offset in UTF-8 bytes, the same reason Go gives:
+
+```text
+/items/0: invalid JSON at offset 31: key "sku" given twice
+```
+
+The text is a JavaScript string, so bytes are already decoded. Decode them with `new TextDecoder("utf-8", { fatal: true })`, which fails on invalid UTF-8, as Rust and Go do; a non-fatal decoder turns it into U+FFFD, which can't be told apart afterwards.
 
 ## IDs
 
@@ -18,21 +42,36 @@ An ID type is a branded string, like `type UserId = string & { readonly __brand:
 
 ## Numbers
 
-JavaScript parses every JSON number into a 64-bit float, which keeps neither the number's spelling nor every integer. The TypeScript decoders fail rather than read a different number than was sent:
+JavaScript holds every JSON number as a 64-bit float, which keeps neither the number's spelling nor every integer. The TypeScript decoders fail rather than read a different number than was sent:
 
 - An `integer` decodes only when it is a whole number within `Number.MAX_SAFE_INTEGER` (2^53 - 1), and not `-0`. A larger value fails, since `JSON.parse` has already rounded it.
 - A `number` decodes when it is finite. `JSON.parse` turns `1e400` into `Infinity`, which fails.
 
-What can't be checked after `JSON.parse` has run:
+Where TypeScript differs from Rust and Go:
 
-| Input | Rust and Go | TypeScript |
-| ----- | ----------- | ---------- |
-| `12.0` or `1e2` as an `integer` | rejected, not an integer spelling | decodes as `12` or `100` |
-| `12.0` as a `number` | re-encodes as `12.0` | re-encodes as `12` |
-| `-0` as a `number` | re-encodes as `-0` | re-encodes as `0` |
-| An integer past 2^53 | decodes up to the 64-bit limit | rejected |
+| Input | Rust and Go | `decodeXFromJson` | `decodeX` after `JSON.parse` |
+| ----- | ----------- | ----------------- | ---------------------------- |
+| `12.0` or `1e2` as an `integer` | rejected, not an integer spelling | rejected | decodes as `12` or `100` |
+| `12.0` as a `number` | re-encodes as `12.0` | re-encodes as `12` | re-encodes as `12` |
+| `-0` as a `number` | re-encodes as `-0` | re-encodes as `0` | re-encodes as `0` |
+| An integer past 2^53 | decodes up to the 64-bit limit | rejected | rejected |
+| A key given twice | rejected | rejected | the last one kept |
 
-Duplicate keys can't be checked either: `JSON.parse` keeps the last of two equal keys, where Rust and Go reject the document.
+Only `decodeXFromJson` sees the text, so only it can reject an integer by its spelling or a key given twice.
+
+## String families
+
+A string whose `pattern` is a fixed prefix or suffix around a part that allows anything is typed as a template literal type:
+
+| Pattern | TypeScript type |
+| ------- | --------------- |
+| `^order\..+$`, `^order\..*$` or `^order\.` | `` `order.${string}` `` |
+| `\.json$` or `.+\.json$` | `` `${string}.json` `` |
+| `^v.+-beta$` | `` `v${string}-beta` `` |
+
+The prefix and suffix are literal characters or syntax characters escaped with a backslash, like `\.` or `\$`. Every other pattern, like `^[a-z]+$`, `^\d+$` or an alternation, types the string as `string`. The template literal type holds every string the pattern matches, so it never rejects a valid value at compile time, and is a little wider: `` `order.${string}` `` also holds `order.` itself, which `.+` does not match.
+
+The decoders check that the value is a string. They don't check the pattern yet, in any language, so a decoded value can be outside its family until pattern validation lands.
 
 ## Unions
 

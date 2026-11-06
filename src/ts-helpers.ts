@@ -9,6 +9,11 @@ export const TS_HELPERS_BODY = `/**
  * strictly: unknown keys, missing required keys, null for an optional key and values of the
  * wrong type fail with a DecodeError naming the JSON Pointer of the first problem.
  *
+ * The FromJson decoders read JSON text with the strict reader below instead of JSON.parse, so
+ * they reject what Rust and Go reject in the text itself: a key given twice, data after the
+ * value, a lone surrogate, nesting past MAX_DEPTH and, for an integer, a spelling like 12.0 or
+ * 1e2.
+ *
  * Encoders check the value as strictly before they write it, and throw an EncodeError for one
  * that Rust and Go could not hold or that would not decode again: an unknown key, a missing
  * required key, an enum value the type doesn't list, NaN or Infinity, and for integers -0, a
@@ -16,9 +21,10 @@ export const TS_HELPERS_BODY = `/**
  *
  * Numbers: a parsed JavaScript number keeps neither its JSON spelling nor values past 2^53.
  * An integer decodes only when it is a whole number within Number.MAX_SAFE_INTEGER, and not
- * -0, so a value that lost precision fails instead of decoding as a different number. Since
- * the spelling is gone, 12.0 and 1e2 decode as the integers 12 and 100, which Rust and Go
- * reject, and a number re-encodes as JavaScript spells it: 12.0 as 12 and -0 as 0.
+ * -0, so a value that lost precision fails instead of decoding as a different number. From a
+ * parsed value, where the spelling is gone, 12.0 and 1e2 decode as the integers 12 and 100,
+ * which Rust and Go reject; the FromJson decoders reject them. A number re-encodes as
+ * JavaScript spells it: 12.0 as 12 and -0 as 0.
  */
 
 /** A value that doesn't fit its generated type. */
@@ -72,6 +78,313 @@ export function attempt<T>(decode: Decoder<T>, json: unknown): DecodeResult<T> {
   } catch (error) {
     if (error instanceof DecodeError) return { ok: false, error };
     throw error;
+  }
+}
+
+/**
+ * The deepest nesting the strict reader takes: a value inside MAX_DEPTH or more arrays and
+ * objects fails, as in Rust (serde_json's recursion limit) and Go, so reading and decoding stay
+ * bounded however deep the input.
+ */
+const MAX_DEPTH = 128;
+
+/**
+ * While fromJson decodes: the spelling of each number that is not an integer spelling, like
+ * 12.0 or 1e2, by JSON Pointer, so decodeInteger can reject it as Rust and Go do.
+ */
+let spellings: ReadonlyMap<string, string> | undefined;
+
+/** Reads JSON text strictly with the reader below, then decodes it with decode. */
+export function fromJson<T>(text: string, decode: Decoder<T>): T {
+  if (typeof text !== "string") throw new DecodeError("", "expected JSON text, found " + kind(text));
+  const reader = new Reader(text);
+  const json = reader.document();
+  const saved = spellings;
+  spellings = reader.spellings;
+  try {
+    return decode(json, "");
+  } finally {
+    spellings = saved;
+  }
+}
+
+/** Like fromJson, but returns the DecodeError instead of throwing it. */
+export function attemptJson<T>(decode: Decoder<T>, text: string): DecodeResult<T> {
+  try {
+    return { ok: true, value: fromJson(text, decode) };
+  } catch (error) {
+    if (error instanceof DecodeError) return { ok: false, error };
+    throw error;
+  }
+}
+
+/** The values of the escapes other than \\u. */
+const ESCAPES = new Map([
+  ['"', '"'],
+  ["\\\\", "\\\\"],
+  ["/", "/"],
+  ["b", "\\b"],
+  ["f", "\\f"],
+  ["n", "\\n"],
+  ["r", "\\r"],
+  ["t", "\\t"],
+]);
+
+function isHigh(unit: number): boolean {
+  return unit >= 0xd800 && unit <= 0xdbff;
+}
+
+function isLow(unit: number): boolean {
+  return unit >= 0xdc00 && unit <= 0xdfff;
+}
+
+function isDigit(c: string | undefined): boolean {
+  return c !== undefined && c >= "0" && c <= "9";
+}
+
+/**
+ * Reads JSON text the way the Rust and Go decoders do: the strict JSON grammar, no lone
+ * surrogates, finite numbers, no key given twice in an object, nothing after the value, and at
+ * most MAX_DEPTH - 1 nested arrays and objects. A failure is a DecodeError at the JSON Pointer
+ * of the value being read, and its reason gives the offset in UTF-8 bytes, as Go does, like
+ * invalid JSON at offset 12: key "id" given twice.
+ *
+ * Text is already decoded, so invalid UTF-8 can only show as a lone surrogate. Decode bytes
+ * with new TextDecoder("utf-8", { fatal: true }) to reject the rest.
+ */
+class Reader {
+  /** Numbers that are not spelled as integers, by JSON Pointer. */
+  readonly spellings = new Map<string, string>();
+  private readonly text: string;
+  private pos = 0;
+  /** The keys and indexes of the values being read, for the JSON Pointer of a failure. */
+  private readonly segments: (string | number)[] = [];
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  /** Reads a whole document: one value, then only white space. */
+  document(): unknown {
+    for (let i = 0; i < this.text.length; i++) {
+      const unit = this.text.charCodeAt(i);
+      if (isHigh(unit) && isLow(this.text.charCodeAt(i + 1))) i++;
+      else if (isHigh(unit) || isLow(unit)) throw this.fail("not valid UTF-8", i);
+    }
+    const value = this.value(0);
+    this.space();
+    if (this.pos !== this.text.length) throw this.fail("trailing characters");
+    return value;
+  }
+
+  /** A failure at offset at, in UTF-16 units, reported in UTF-8 bytes. */
+  private fail(reason: string, at = this.pos): DecodeError {
+    let bytes = 0;
+    for (let i = 0; i < at; i++) {
+      const unit = this.text.charCodeAt(i);
+      if (unit < 0x80) bytes += 1;
+      else if (unit < 0x800) bytes += 2;
+      else if (isHigh(unit) && isLow(this.text.charCodeAt(i + 1))) {
+        bytes += 4;
+        i++;
+      } else bytes += 3;
+    }
+    return new DecodeError(this.pointer(), "invalid JSON at offset " + String(bytes) + ": " + reason);
+  }
+
+  private pointer(): string {
+    let path = "";
+    for (const segment of this.segments) path = at(path, segment);
+    return path;
+  }
+
+  private space(): void {
+    for (;;) {
+      const c = this.text[this.pos];
+      if (c !== " " && c !== "\\t" && c !== "\\n" && c !== "\\r") return;
+      this.pos++;
+    }
+  }
+
+  /** Consumes c if it comes next. */
+  private accept(c: string): boolean {
+    if (this.text[this.pos] !== c) return false;
+    this.pos++;
+    return true;
+  }
+
+  /** Reads one value inside depth arrays and objects. */
+  private value(depth: number): unknown {
+    this.space();
+    const c = this.text[this.pos];
+    switch (c) {
+      case undefined:
+        throw this.fail("unexpected end of input");
+      case "{":
+      case "[":
+        if (depth + 1 >= MAX_DEPTH) {
+          throw this.fail(
+            "recursion limit exceeded, more than " + String(MAX_DEPTH - 1) + " nested arrays and objects",
+          );
+        }
+        return c === "{" ? this.object(depth + 1) : this.array(depth + 1);
+      case '"':
+        return this.string();
+      case "t":
+        return this.word("true", true);
+      case "f":
+        return this.word("false", false);
+      case "n":
+        return this.word("null", null);
+      default:
+        return this.number();
+    }
+  }
+
+  /** Reads true, false or null, failing at the first character that differs. */
+  private word<T>(word: string, value: T): T {
+    for (const c of word) {
+      if (this.text[this.pos] !== c) throw this.fail("invalid literal");
+      this.pos++;
+    }
+    return value;
+  }
+
+  private object(depth: number): Record<string, unknown> {
+    const out: Record<string, unknown> = {};
+    this.pos++;
+    this.space();
+    if (this.accept("}")) return out;
+    for (;;) {
+      this.space();
+      if (this.text[this.pos] !== '"') throw this.fail("expected a key");
+      const keyAt = this.pos;
+      const key = this.string();
+      if (hasOwn.call(out, key)) throw this.fail("key " + quote(key) + " given twice", keyAt);
+      this.space();
+      if (!this.accept(":")) throw this.fail("expected a colon");
+      this.segments.push(key);
+      const value = this.value(depth);
+      this.segments.pop();
+      if (key === "__proto__") put(out, key, value);
+      else out[key] = value;
+      this.space();
+      if (this.accept("}")) return out;
+      if (!this.accept(",")) throw this.fail("expected a comma or a closing brace");
+    }
+  }
+
+  private array(depth: number): unknown[] {
+    const out: unknown[] = [];
+    this.pos++;
+    this.space();
+    if (this.accept("]")) return out;
+    for (;;) {
+      this.segments.push(out.length);
+      out.push(this.value(depth));
+      this.segments.pop();
+      this.space();
+      if (this.accept("]")) return out;
+      if (!this.accept(",")) throw this.fail("expected a comma or a closing bracket");
+    }
+  }
+
+  /** Reads a string, rejecting control characters, bad escapes and lone surrogates. */
+  private string(): string {
+    this.pos++;
+    let out = "";
+    let chunk = this.pos;
+    for (;;) {
+      if (this.pos >= this.text.length) throw this.fail("unterminated string");
+      const unit = this.text.charCodeAt(this.pos);
+      if (unit === 0x22) {
+        out += this.text.slice(chunk, this.pos);
+        this.pos++;
+        return out;
+      }
+      if (unit === 0x5c) {
+        out += this.text.slice(chunk, this.pos) + this.escape();
+        chunk = this.pos;
+      } else if (unit < 0x20) {
+        throw this.fail("control character in a string");
+      } else {
+        this.pos++;
+      }
+    }
+  }
+
+  /**
+   * Reads one escape at the backslash. A \\u escape of a high surrogate must be followed by one
+   * of a low surrogate, and a low surrogate can't stand alone. A bad escape or hex digit fails
+   * at that character, and a surrogate that isn't half of a pair fails at the backslash.
+   */
+  private escape(): string {
+    const start = this.pos;
+    this.pos++;
+    const simple = ESCAPES.get(this.text[this.pos] ?? "");
+    if (simple !== undefined) {
+      this.pos++;
+      return simple;
+    }
+    if (!this.accept("u")) throw this.fail("invalid escape");
+    const unit = this.hex4();
+    if (isLow(unit)) throw this.fail("lone surrogate", start);
+    if (!isHigh(unit)) return String.fromCharCode(unit);
+    if (this.text[this.pos] !== "\\\\" || this.text[this.pos + 1] !== "u") {
+      throw this.fail("lone surrogate", start);
+    }
+    this.pos += 2;
+    const low = this.hex4();
+    if (!isLow(low)) throw this.fail("lone surrogate", start);
+    return String.fromCharCode(unit, low);
+  }
+
+  /** Reads the four hex digits of a \\u escape, failing at the first that isn't one. */
+  private hex4(): number {
+    let unit = 0;
+    for (let i = 0; i < 4; i++) {
+      const c = this.text[this.pos] ?? "";
+      if (!/^[0-9a-fA-F]$/.test(c)) throw this.fail("invalid escape");
+      unit = unit * 16 + parseInt(c, 16);
+      this.pos++;
+    }
+    return unit;
+  }
+
+  /** Digits read, as a count. */
+  private digits(): number {
+    const start = this.pos;
+    while (isDigit(this.text[this.pos])) this.pos++;
+    return this.pos - start;
+  }
+
+  /**
+   * Reads a number in the JSON grammar that is finite as a float64. One spelled with a fraction
+   * or an exponent is noted in spellings, since Rust and Go don't read it as an integer.
+   */
+  private number(): number {
+    const start = this.pos;
+    this.accept("-");
+    if (this.accept("0")) {
+      if (isDigit(this.text[this.pos])) throw this.fail("leading zero");
+    } else if (this.digits() === 0) {
+      throw this.fail("invalid value");
+    }
+    let integer = true;
+    if (this.accept(".")) {
+      integer = false;
+      if (this.digits() === 0) throw this.fail("invalid number");
+    }
+    if (this.accept("e") || this.accept("E")) {
+      integer = false;
+      if (!this.accept("+")) this.accept("-");
+      if (this.digits() === 0) throw this.fail("invalid number");
+    }
+    const raw = this.text.slice(start, this.pos);
+    const value = Number(raw);
+    if (!Number.isFinite(value)) throw this.fail("number out of range", start);
+    if (!integer) this.spellings.set(this.pointer(), raw);
+    return value;
   }
 }
 
@@ -165,14 +478,24 @@ function notInteger(value: number): string | undefined {
 /**
  * Decodes a JSON integer within Number.MAX_SAFE_INTEGER. A fraction like 1.5 fails, and so
  * does -0, as in Go and Rust. A larger value fails rather than decode as a value it isn't,
- * since JSON.parse rounds it. 12.0 and 1e2 arrive as 12 and 100 and decode, where Rust and
- * Go reject that spelling.
+ * since JSON.parse rounds it. Read from text, 12.0 and 1e2 fail as in Rust and Go; parsed
+ * by JSON.parse, they arrive as 12 and 100 and decode.
  */
 export function decodeInteger(json: unknown, path: string): number {
   if (typeof json !== "number" || !Number.isFinite(json)) return expected(path, "a number", json);
+  const spelled = spellings?.get(path);
+  if (spelled !== undefined) throw new DecodeError(path, "expected an integer, found " + spelled);
   const problem = notInteger(json);
   if (problem !== undefined) throw new DecodeError(path, problem);
   return json;
+}
+
+/**
+ * A decoder of a string typed as a family of strings by its pattern, like order.\${string}.
+ * It checks that the value is a string; the pattern itself is not checked yet.
+ */
+export function family<T extends string>(): Decoder<T> {
+  return decodeString as Decoder<T>;
 }
 
 /** A decoder of an integer or boolean const, which accepts only want. */
@@ -201,8 +524,9 @@ export function enumValue<T extends string>(json: unknown, path: string, values:
 
 /**
  * The first place inside value that is not JSON, as a path under it and the kind found there:
- * undefined, a number that is not finite, a class instance, or an array or object that holds
- * itself. Walks with a stack of its own, so deep values can't overflow the call stack.
+ * undefined, a number that is not finite, a class instance, an array or object that holds
+ * itself, or one whose reading throws, like a getter or a revoked Proxy. Walks with a stack of
+ * its own, so deep values can't overflow the call stack.
  */
 function notJson(value: unknown): { path: string; found: string } | undefined {
   type Step = { readonly value: unknown; readonly path: string } | { readonly leave: object };
@@ -219,20 +543,26 @@ function notJson(value: unknown): { path: string; found: string } | undefined {
       if (!Number.isFinite(current)) return { path: step.path, found: kind(current) };
       continue;
     }
-    if (!Array.isArray(current) && !isObject(current)) return { path: step.path, found: kind(current) };
-    if (open.has(current)) return { path: step.path, found: "a value that holds itself" };
-    open.add(current);
-    steps.push({ leave: current });
-    // Pushed last to first, so the first item or key is checked first.
-    if (Array.isArray(current)) {
-      const items: readonly unknown[] = current;
-      for (let i = items.length - 1; i >= 0; i--) steps.push({ value: items[i], path: at(step.path, i) });
-    } else {
-      const keys = Object.keys(current);
-      for (let i = keys.length - 1; i >= 0; i--) {
-        const key = keys[i] ?? "";
-        steps.push({ value: current[key], path: at(step.path, key) });
+    try {
+      if (!Array.isArray(current) && !isObject(current)) return { path: step.path, found: kind(current) };
+      if (open.has(current)) return { path: step.path, found: "a value that holds itself" };
+      const holder = current as Readonly<Record<string, unknown>>;
+      const keys = Array.isArray(current) ? undefined : Object.keys(current);
+      const count = keys === undefined ? (current as readonly unknown[]).length : keys.length;
+      open.add(current);
+      steps.push({ leave: current });
+      // Pushed last to first, so the first item or key is checked first.
+      for (let i = count - 1; i >= 0; i--) {
+        const key = keys === undefined ? i : (keys[i] ?? "");
+        const path = at(step.path, key);
+        try {
+          steps.push({ value: holder[key], path });
+        } catch {
+          return { path, found: "a value that throws when read" };
+        }
       }
+    } catch {
+      return { path: step.path, found: "a value that throws when read" };
     }
   }
   return undefined;
