@@ -17,6 +17,128 @@ LLM providers take a JSON Schema for structured output, but only a subset of it,
 
 `strictgen generate` writes the schemas with the other targets and `strictgen check` compares them. `strictgen llm --profile openai Order` prints one schema on stdout and what moved to the decoder on stderr, or both as JSON with `--json`. The type is named as the generated code names it, and every schema root and `$defs` entry has one. The profile is a built in one, a path ending in `.json`, or a profile file `llm.profiles` lists whose `name` is the one given. To find it, `strictgen llm` reads only the `name` of each listed file, and checks in full only the file that has it (or, for a file that isn't a JSON object with a name, the file named `<name>.json`), so a broken file for another profile doesn't stop it. `generate` and `check` check every listed profile.
 
+## A worked example
+
+[`examples/quickstart`](../examples/quickstart) has one schema and the `openai` profile:
+
+<!-- snippet: file examples/quickstart/strictgen.json -->
+```json
+{
+  "$schema": "../../strictgen.schema.json",
+  "schemas": "schemas",
+  "targets": {
+    "rust": { "out": "rust/src/generated" },
+    "go": { "out": "go/types", "package": "types" },
+    "typescript": { "out": "ts/generated" }
+  },
+  "llm": { "profiles": ["openai"], "out": "llm" }
+}
+```
+<!-- /snippet -->
+
+<!-- snippet: file examples/quickstart/schemas/order.json -->
+```json
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/v1/order.json",
+  "title": "Order",
+  "description": "An order placed in the shop.",
+  "type": "object",
+  "properties": {
+    "id": { "description": "The order's id.", "type": "string" },
+    "quantity": { "description": "How many items.", "type": "integer", "minimum": 1, "maximum": 100 },
+    "status": { "$ref": "#/$defs/status" },
+    "note": { "description": "A note for the packer.", "type": "string", "maxLength": 40 }
+  },
+  "required": ["id", "quantity", "status"],
+  "additionalProperties": false,
+  "$defs": {
+    "status": { "description": "Where the order is.", "enum": ["pending", "paid", "shipped"] }
+  }
+}
+```
+<!-- /snippet -->
+
+`strictgen generate` writes the provider-ready schema to `llm/openai/Order.json`. `strictgen llm` prints the same schema, and on stderr what the projection moved to the decoder:
+
+<!-- snippet: command examples/quickstart llm --profile openai Order -->
+```text
+$ strictgen llm --profile openai Order
+{
+  "description": "An order placed in the shop.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "The order's id.",
+      "type": "string"
+    },
+    "quantity": {
+      "description": "How many items.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "status": {
+      "description": "Where the order is.",
+      "type": "string",
+      "enum": [
+        "pending",
+        "paid",
+        "shipped"
+      ]
+    },
+    "note": {
+      "description": "A note for the packer. At most 40 characters.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "quantity",
+    "status",
+    "note"
+  ],
+  "additionalProperties": false
+}
+Moved to the decoder:
+  /properties/note: optional, so required and nullable: null stands for absent
+  /properties/note/anyOf/0: maxLength 40: at most 40 characters
+```
+<!-- /snippet -->
+
+OpenAI's structured outputs don't list `maxLength`, so the 40 character limit of `note` is only a hint in the description, and the model can break it. Say it answers with a note of 55 characters:
+
+<!-- snippet: file examples/quickstart/answers/long-note.json -->
+```json
+{ "id": "ord_7d2k", "quantity": 2, "status": "paid", "note": "Please leave the parcel with the neighbour at number 12" }
+```
+<!-- /snippet -->
+
+The LLM decoders of all three languages reject it with the same compact error, ready to send back to the model so it can retry:
+
+<!-- snippet: decode llm compact answers/long-note.json answers/null-note.json -->
+```text
+answers/long-note.json
+  Rust        /note too_long, expected at most 40 characters, found 55 characters
+  Go          /note too_long, expected at most 40 characters, found 55 characters
+  TypeScript  /note too_long, expected at most 40 characters, found 55 characters
+
+answers/null-note.json
+  Rust        ok {"id":"ord_7d2k","quantity":2,"status":"paid"}
+  Go          ok {"id":"ord_7d2k","quantity":2,"status":"paid"}
+  TypeScript  ok {"id":"ord_7d2k","quantity":2,"status":"paid"}
+```
+<!-- /snippet -->
+
+The second answer gives `null` for `note`, as the projection makes the model do for a field it leaves out. The decoders read it as absent, so the order they return has no note, the same value the normal decoder makes of JSON without the key. These lines are printed by the Rust, Go and TypeScript programs of the example, run by `pnpm docs:check` in CI.
+
 ## Profiles
 
 A profile is a JSON file that `profiles/profile.schema.json` describes. strictgen ships three, in `profiles/`:
@@ -32,6 +154,72 @@ Each profile notes its sources, the day its rules were checked and a version. Wh
 ```json
 { "llm": { "profiles": ["openai", "profiles/anthropic.json"], "out": "llm" } }
 ```
+
+### What each profile keeps
+
+The tables are made from the profile files in [`profiles/`](../profiles). A keyword the profile doesn't accept is left out of the schema, with a hint in the description, and only the decoder checks it. The one exception is a map given as entries: its `minProperties` and `maxProperties` become the array's `minItems` and `maxItems`, which a profile may accept. A profile with recursion and a `maxDepth`, like `openai`, still refuses recursive types, as [the limits](#the-projection) explain.
+
+#### `openai`
+
+<!-- snippet: profile openai -->
+| | |
+| - | - |
+| Version | 1, checked 2026-11-06 |
+| Keywords kept | `const`, `pattern`, `format`, `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`, `minItems`, `maxItems` |
+| Not accepted | `minLength`, `maxLength`, `uniqueItems`, `minProperties`, `maxProperties`, `propertyNames` |
+| `const` | kept |
+| Formats | `date-time`, `date`, `uuid` |
+| Keyword maximums | none |
+| Maps | an array of `{ key, value }` entries |
+| Recursive types | yes |
+| Limits | `maxDepth` 10, `maxProperties` 5000, `maxEnumValues` 1000, `maxStringSize` 120000, `largeEnum` 250 values, 15000 characters |
+| Sources | <https://developers.openai.com/api/docs/guides/structured-outputs> |
+<!-- /snippet -->
+
+#### `anthropic`
+
+<!-- snippet: profile anthropic -->
+| | |
+| - | - |
+| Version | 1, checked 2026-11-06 |
+| Keywords kept | `const`, `format`, `minItems` |
+| Not accepted | `pattern`, `minLength`, `maxLength`, `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf`, `maxItems`, `uniqueItems`, `minProperties`, `maxProperties`, `propertyNames` |
+| `const` | kept |
+| Formats | `date-time`, `date`, `uuid` |
+| Keyword maximums | `minItems` up to 1 |
+| Maps | an array of `{ key, value }` entries |
+| Recursive types | no |
+| Limits | `maxUnions` 16 |
+| Sources | <https://platform.claude.com/docs/en/build-with-claude/structured-outputs> |
+<!-- /snippet -->
+
+#### `gemini`
+
+<!-- snippet: profile gemini -->
+| | |
+| - | - |
+| Version | 1, checked 2026-11-06 |
+| Keywords kept | `format`, `minimum`, `maximum`, `minItems`, `maxItems` |
+| Not accepted | `pattern`, `minLength`, `maxLength`, `exclusiveMinimum`, `exclusiveMaximum`, `multipleOf`, `uniqueItems`, `minProperties`, `maxProperties`, `propertyNames`, `format: uuid` |
+| `const` | written as an `enum` of one value |
+| Formats | `date-time`, `date` |
+| Keyword maximums | none |
+| Maps | an object |
+| Recursive types | no |
+| Limits | none |
+| Sources | <https://ai.google.dev/gemini-api/docs/structured-output> |
+<!-- /snippet -->
+
+### Updating or overriding a profile
+
+Provider rules change, and a profile is data, so a change doesn't need a new strictgen release:
+
+1. Copy the built in file, like [`profiles/anthropic.json`](../profiles/anthropic.json), into your project
+2. Change what the provider changed: `keywords`, `formats`, `keywordMaximums`, `maps`, `recursion` or `limits`. Set `date` to the day you checked, raise `version`, and add the page you checked to `sources`
+3. List the file's path in `llm.profiles`, in place of the name. A file whose `name` is a built in one replaces that profile, so `strictgen llm --profile anthropic` reads your file
+4. Run `strictgen generate`. A file that breaks [`profiles/profile.schema.json`](../profiles/profile.schema.json) fails with exit code 2, naming the file and the field
+
+A new provider works the same way, with a `name` of its own. When a built in profile changes in strictgen itself, that is a minor version, and `strictgen check` shows the schemas it changes.
 
 | Field | Means |
 | ----- | ----- |

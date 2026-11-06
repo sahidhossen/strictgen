@@ -119,6 +119,10 @@ Every entry point checks: in Rust, `T::from_json` and `T::report_from_json`, thr
 
 In report mode the same constraints are checked in the same order. Unknown keys are not structure errors there, so a value with unknown keys and a broken constraint fails with the constraint error, and the unknown key hook isn't called for a decode that fails.
 
+## Read modes
+
+Every target reads in `strict` mode unless its config sets `"read": "report"`. The codes above are the same in both modes, with one exception: in `report` mode an unknown key is not an error. The decode succeeds, and the key's path goes to the unknown key hook and the report functions instead. [read-modes.md](read-modes.md) explains both modes, and the LLM decoders, which are always strict.
+
 ## Messages
 
 The message is built from the fields, the same in every language:
@@ -167,6 +171,421 @@ Some cases worth knowing:
 - An enum of one value, like a string `const`, reports `not_const`
 - A map key that fails, like one an enum-keyed map doesn't list, is reported at the key's pointer, like `/quota/guest`
 - `out_of_range_integer` names the range the language holds: Go and Rust take 64-bit integers, TypeScript integers within `Number.MAX_SAFE_INTEGER`. This is the one place the languages accept different input
+
+## Every code
+
+Each code below has a case of the [conformance suite](../conformance) that fails with it, and the message the Rust, Go and TypeScript decoders give for it, then its compact form. `pnpm docs` decodes each case in all three languages, so these lines are real output.
+
+### `unknown_key`
+
+Reported for a key the type doesn't name; `path` is the key's own pointer, like `/user/nickname`. In report mode such a key is reported instead, see [read-modes.md](read-modes.md). Its message says `unknown key`.
+
+<!-- snippet: error-code unknown_key -->
+The case [`Item/invalid/unknown-key.json`](../conformance/cases/Item/invalid/unknown-key.json), decoded as `Item` (`shop-order.json#/$defs/item` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "sku": "A-1",
+  "quantity": 2,
+  "discount": "10%"
+}
+```
+
+```text
+Rust        /discount: unknown key
+Go          /discount: unknown key
+TypeScript  /discount: unknown key
+compact     /discount unknown_key
+```
+<!-- /snippet -->
+
+### `missing_key`
+
+Reported for a required key that is absent, at the key's pointer. Its message says `missing key`.
+
+<!-- snippet: error-code missing_key -->
+The case [`Note/invalid/missing-text.json`](../conformance/cases/Note/invalid/missing-text.json), decoded as `Note` (`shop-order.json#/$defs/note` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{}
+```
+
+```text
+Rust        /text: missing key
+Go          /text: missing key
+TypeScript  /text: missing key
+compact     /text missing_key
+```
+<!-- /snippet -->
+
+### `null_not_allowed`
+
+Reported for `null` where the type doesn't take it, like for an optional key. Its message says `null not allowed`.
+
+<!-- snippet: error-code null_not_allowed -->
+The case [`Bundle/invalid/label-null.json`](../conformance/cases/Bundle/invalid/label-null.json), decoded as `Bundle` (`bundle.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "sku": "B-1",
+  "version": 2,
+  "label": null
+}
+```
+
+```text
+Rust        /label: null not allowed, expected a JSON value other than null
+Go          /label: null not allowed, expected a JSON value other than null
+TypeScript  /label: null not allowed, expected a JSON value other than null
+compact     /label null_not_allowed, expected a JSON value other than null
+```
+<!-- /snippet -->
+
+### `wrong_type`
+
+Reported for a value of another JSON type, also for a const or an enum, like a string for an integer const; for an integer also a fraction, an exponent spelling like `1e2` or `12.0`, and `-0`. Its message says `wrong type`.
+
+<!-- snippet: error-code wrong_type -->
+The case [`Code/invalid/number.json`](../conformance/cases/Code/invalid/number.json), decoded as `Code` (`order.json#/$defs/code` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+123
+```
+
+```text
+Rust        wrong type, expected a string, found 123
+Go          wrong type, expected a string, found 123
+TypeScript  wrong type, expected a string, found 123
+compact     wrong_type, expected a string, found 123
+```
+<!-- /snippet -->
+
+### `bad_tag`
+
+Reported for a tag no branch of a tagged union has, at the tag's pointer. Its message says `bad tag`.
+
+<!-- snippet: error-code bad_tag -->
+The case [`Payment/invalid/unknown-tag.json`](../conformance/cases/Payment/invalid/unknown-tag.json), decoded as `Payment` (`shop-order.json#/$defs/payment` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{"type": "cash"}
+```
+
+```text
+Rust        /type: bad tag, expected one of "card", "invoice", found "cash"
+Go          /type: bad tag, expected one of "card", "invoice", found "cash"
+TypeScript  /type: bad tag, expected one of "card", "invoice", found "cash"
+compact     /type bad_tag, expected one of "card", "invoice", found "cash"
+```
+<!-- /snippet -->
+
+### `not_in_enum`
+
+Reported for a string the enum doesn't list. Its message says `not in enum`.
+
+<!-- snippet: error-code not_in_enum -->
+The case [`Role/invalid/not-in-enum.json`](../conformance/cases/Role/invalid/not-in-enum.json), decoded as `Role` (`user.json#/$defs/role` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+"guest"
+```
+
+```text
+Rust        not in enum, expected one of "owner", "admin", "member", found "guest"
+Go          not in enum, expected one of "owner", "admin", "member", found "guest"
+TypeScript  not in enum, expected one of "owner", "admin", "member", found "guest"
+compact     not_in_enum, expected one of "owner", "admin", "member", found "guest"
+```
+<!-- /snippet -->
+
+### `not_const`
+
+Reported for a value of the const's JSON type other than the const. Its message says `not const`.
+
+<!-- snippet: error-code not_const -->
+The case [`Bundle/invalid/version-other.json`](../conformance/cases/Bundle/invalid/version-other.json), decoded as `Bundle` (`bundle.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "sku": "B-1",
+  "version": 3
+}
+```
+
+```text
+Rust        /version: not const, expected 2, found 3
+Go          /version: not const, expected 2, found 3
+TypeScript  /version: not const, expected 2, found 3
+compact     /version not_const, expected 2, found 3
+```
+<!-- /snippet -->
+
+### `too_short`
+
+Reported for a string, array or map with fewer code points, items or keys than `minLength`, `minItems` or `minProperties`. Its message says `too short`.
+
+<!-- snippet: error-code too_short -->
+The case [`Line/invalid/sku-below-minimum.json`](../conformance/cases/Line/invalid/sku-below-minimum.json), decoded as `Line` (`order.json#/$defs/line` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "sku": "ab",
+  "count": 0
+}
+```
+
+```text
+Rust        /sku: too short, expected at least 3 characters, found 2 characters
+Go          /sku: too short, expected at least 3 characters, found 2 characters
+TypeScript  /sku: too short, expected at least 3 characters, found 2 characters
+compact     /sku too_short, expected at least 3 characters, found 2 characters
+```
+<!-- /snippet -->
+
+### `too_long`
+
+Reported for a string, array or map with more code points, items or keys than `maxLength`, `maxItems` or `maxProperties`. Its message says `too long`.
+
+<!-- snippet: error-code too_long -->
+The case [`Code/invalid/four.json`](../conformance/cases/Code/invalid/four.json), decoded as `Code` (`order.json#/$defs/code` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+"abcd"
+```
+
+```text
+Rust        too long, expected at most 3 characters, found 4 characters
+Go          too long, expected at most 3 characters, found 4 characters
+TypeScript  too long, expected at most 3 characters, found 4 characters
+compact     too_long, expected at most 3 characters, found 4 characters
+```
+<!-- /snippet -->
+
+### `too_small`
+
+Reported for a number below its `minimum`, or not above its `exclusiveMinimum`. Its message says `too small`.
+
+<!-- snippet: error-code too_small -->
+The case [`Line/invalid/count-below-minimum.json`](../conformance/cases/Line/invalid/count-below-minimum.json), decoded as `Line` (`order.json#/$defs/line` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "sku": "abc",
+  "count": 0
+}
+```
+
+```text
+Rust        /count: too small, expected >= 1, found 0
+Go          /count: too small, expected >= 1, found 0
+TypeScript  /count: too small, expected >= 1, found 0
+compact     /count too_small, expected >= 1, found 0
+```
+<!-- /snippet -->
+
+### `too_large`
+
+Reported for a number above its `maximum`, or not below its `exclusiveMaximum`. Its message says `too large`.
+
+<!-- snippet: error-code too_large -->
+The case [`PercentOff/invalid/over-100.json`](../conformance/cases/PercentOff/invalid/over-100.json), decoded as `PercentOff` (`promotion.json#/$defs/percentOff` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{"kind": "percent", "percent": 101}
+```
+
+```text
+Rust        /percent: too large, expected <= 100, found 101
+Go          /percent: too large, expected <= 100, found 101
+TypeScript  /percent: too large, expected <= 100, found 101
+compact     /percent too_large, expected <= 100, found 101
+```
+<!-- /snippet -->
+
+### `not_multiple_of`
+
+Reported for an integer that isn't a multiple of its `multipleOf`. Its message says `not a multiple`.
+
+<!-- snippet: error-code not_multiple_of -->
+The case [`Order/invalid/pack-size-not-a-multiple.json`](../conformance/cases/Order/invalid/pack-size-not-a-multiple.json), decoded as `Order` (`order.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "id": "ord_5h1c",
+  "note": "ab",
+  "quantity": 1,
+  "price": 0.5,
+  "tags": [
+    "a"
+  ],
+  "packSize": 7
+}
+```
+
+```text
+Rust        /packSize: not a multiple, expected a multiple of 6, found 7
+Go          /packSize: not a multiple, expected a multiple of 6, found 7
+TypeScript  /packSize: not a multiple, expected a multiple of 6, found 7
+compact     /packSize not_multiple_of, expected a multiple of 6, found 7
+```
+<!-- /snippet -->
+
+### `pattern_mismatch`
+
+Reported for a string that doesn't match its pattern. Its message says `pattern mismatch`.
+
+<!-- snippet: error-code pattern_mismatch -->
+The case [`TrackingNumber/invalid/lower-case.json`](../conformance/cases/TrackingNumber/invalid/lower-case.json), decoded as `TrackingNumber` (`shipment.json#/$defs/trackingNumber` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+"ab123456789us"
+```
+
+```text
+Rust        pattern mismatch, expected matching ^[A-Z]{2}\d{9}[A-Z]{2}$, found "ab123456789us"
+Go          pattern mismatch, expected matching ^[A-Z]{2}\d{9}[A-Z]{2}$, found "ab123456789us"
+TypeScript  pattern mismatch, expected matching ^[A-Z]{2}\d{9}[A-Z]{2}$, found "ab123456789us"
+compact     pattern_mismatch, expected matching ^[A-Z]{2}\d{9}[A-Z]{2}$, found "ab123456789us"
+```
+<!-- /snippet -->
+
+### `bad_format`
+
+Reported for a string that isn't in its format, like date-time. Its message says `bad format`.
+
+<!-- snippet: error-code bad_format -->
+The case [`Day/invalid/leap-day-in-2100.json`](../conformance/cases/Day/invalid/leap-day-in-2100.json), decoded as `Day` (`shipment.json#/$defs/day` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+"2100-02-29"
+```
+
+```text
+Rust        bad format, expected a date, found "2100-02-29"
+Go          bad format, expected a date, found "2100-02-29"
+TypeScript  bad format, expected a date, found "2100-02-29"
+compact     bad_format, expected a date, found "2100-02-29"
+```
+<!-- /snippet -->
+
+### `not_unique`
+
+Reported for an array whose items must be unique, with a repeat; `path` is the later item's pointer. Its message says `not unique`.
+
+<!-- snippet: error-code not_unique -->
+The case [`LabelCodes/invalid/repeat.json`](../conformance/cases/LabelCodes/invalid/repeat.json), decoded as `LabelCodes` (`shipment.json#/$defs/labelCodes` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+["ABC", "DEF", "ABC"]
+```
+
+```text
+Rust        /2: not unique, expected unique items, found a repeat of item 0
+Go          /2: not unique, expected unique items, found a repeat of item 0
+TypeScript  /2: not unique, expected unique items, found a repeat of item 0
+compact     /2 not_unique, expected unique items, found a repeat of item 0
+```
+<!-- /snippet -->
+
+### `out_of_range_integer`
+
+Reported for an integer the language can't hold exactly. Its message says `out of range integer`.
+
+<!-- snippet: error-code out_of_range_integer -->
+The case [`Event/invalid/attempt-above-int64-maximum.json`](../conformance/cases/Event/invalid/attempt-above-int64-maximum.json), decoded as `Event` (`event.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "id": "evt_31xq",
+  "type": "user.created",
+  "occurredAt": "2026-01-15T09:30:01Z",
+  "attempt": 9223372036854775808,
+  "user": {
+    "id": "usr_8f2k",
+    "email": "ada@example.com",
+    "displayName": "Ada",
+    "role": "admin",
+    "labels": {
+      "team": "billing",
+      "region": "eu"
+    },
+    "createdAt": "2026-01-15T09:30:00Z"
+  }
+}
+```
+
+```text
+Rust                /attempt: out of range integer, expected an integer from -9223372036854775808 to 9223372036854775807, found 9223372036854775808
+Go                  /attempt: out of range integer, expected an integer from -9223372036854775808 to 9223372036854775807, found 9223372036854775808
+TypeScript          /attempt: out of range integer, expected an integer from -9007199254740991 to 9007199254740991, found 9223372036854775808
+Rust compact        /attempt out_of_range_integer, expected an integer from -9223372036854775808 to 9223372036854775807, found 9223372036854775808
+Go compact          /attempt out_of_range_integer, expected an integer from -9223372036854775808 to 9223372036854775807, found 9223372036854775808
+TypeScript compact  /attempt out_of_range_integer, expected an integer from -9007199254740991 to 9007199254740991, found 9223372036854775808
+```
+<!-- /snippet -->
+
+### `invalid_json`
+
+Reported for text that isn't JSON: a syntax error, invalid UTF-8, a lone surrogate, data after the value, a number out of range. Its message says `invalid JSON`.
+
+<!-- snippet: error-code invalid_json -->
+The case [`ShopOrder/invalid/invalid-json-in-unknown-value.json`](../conformance/cases/ShopOrder/invalid/invalid-json-in-unknown-value.json), decoded as `ShopOrder` (`shop-order.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{
+  "id": "ord_7d2k",
+  "extra": [1, ],
+  "customer": { "name": "Ada", "email": "ada@example.com" },
+  "lines": [],
+  "payment": { "type": "card", "last4": "4242" }
+}
+```
+
+```text
+Rust        /extra/1: invalid JSON, found an invalid value at offset 37
+Go          /extra/1: invalid JSON, found an invalid value at offset 37
+TypeScript  /extra/1: invalid JSON, found an invalid value at offset 37
+compact     /extra/1 invalid_json, found an invalid value at offset 37
+```
+<!-- /snippet -->
+
+### `duplicate_key`
+
+Reported for an object that gives the same key twice, at the key's pointer, or a map an LLM gave as entries with a key twice, at the later entry's key ([llm.md](llm.md#decoders)). Its message says `duplicate key`.
+
+<!-- snippet: error-code duplicate_key -->
+The case [`Bundle/invalid/meta-key-twice.json`](../conformance/cases/Bundle/invalid/meta-key-twice.json), decoded as `Bundle` (`bundle.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{"sku":"B-1","version":2,"meta":{"a":1,"a":2}}
+```
+
+```text
+Rust        /meta/a: duplicate key, found "a" at offset 39
+Go          /meta/a: duplicate key, found "a" at offset 39
+TypeScript  /meta/a: duplicate key, found "a" at offset 39
+compact     /meta/a duplicate_key, found "a" at offset 39
+```
+<!-- /snippet -->
+
+### `too_deep`
+
+Reported for a value inside more than 127 nested arrays and objects. Its message says `too deep`.
+
+<!-- snippet: error-code too_deep -->
+The case [`Bundle/invalid/meta-empty-array-past-depth-limit.json`](../conformance/cases/Bundle/invalid/meta-empty-array-past-depth-limit.json), decoded as `Bundle` (`bundle.json#` in [`conformance/schemas`](../conformance/schemas)):
+
+```json
+{"sku":"B-1","version":2,"meta":[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]}
+```
+
+```text
+Rust        /meta/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0: too deep, expected at most 127 nested arrays and objects, found more at offset 158
+Go          /meta/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0: too deep, expected at most 127 nested arrays and objects, found more at offset 158
+TypeScript  /meta/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0: too deep, expected at most 127 nested arrays and objects, found more at offset 158
+compact     /meta/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0/0 too_deep, expected at most 127 nested arrays and objects, found more at offset 158
+```
+<!-- /snippet -->
 
 ## JSON syntax errors
 

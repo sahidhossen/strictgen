@@ -1,0 +1,19 @@
+[package]
+name = "example-quickstart"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Decodes the quickstart payloads with the Rust types strictgen generates"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "example_quickstart"
+
+[[bin]]
+name = "decode"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

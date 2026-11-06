@@ -1,0 +1,43 @@
+{
+  "description": "An order placed in the shop.",
+  "type": "object",
+  "properties": {
+    "id": {
+      "description": "The order's id.",
+      "type": "string"
+    },
+    "quantity": {
+      "description": "How many items.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "status": {
+      "description": "Where the order is.",
+      "type": "string",
+      "enum": [
+        "pending",
+        "paid",
+        "shipped"
+      ]
+    },
+    "note": {
+      "description": "A note for the packer. At most 40 characters.",
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id",
+    "quantity",
+    "status",
+    "note"
+  ],
+  "additionalProperties": false
+}
