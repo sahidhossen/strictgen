@@ -31,13 +31,17 @@ async function main(args: readonly string[]): Promise<number> {
     const runs = result.cases.length * result.variants.length;
     out(
       `conformance: ${String(result.cases.length)} cases, ${parsed.modes.join(" and ")} mode, ` +
-        `${parsed.languages.join(", ")}: ${String(runs)} runs per language, ${String(result.marks.length)} marked`,
+        `${parsed.languages.join(", ")}: ${String(runs)} runs per language (${String(result.variants.length)} variants), ${String(result.marks.length)} marked`,
     );
-    if (parsed.languages.length < LANGUAGES.length) {
-      out("only some languages ran, so the marks that compare one language's bytes with another's were not checked");
+    if (parsed.languages.length < LANGUAGES.length || parsed.modes.length < 2) {
+      out("not every language and mode ran, so marks were not checked for being needed");
     }
     if (result.rows.length === 0) {
-      out("every language agrees with every case");
+      out(
+        parsed.languages.length === 1
+          ? `${parsed.languages[0] ?? ""} agrees with every case's expectation`
+          : `${parsed.languages.join(", ")} agree with each other and with every case`,
+      );
       return 0;
     }
     out("");
@@ -62,11 +66,13 @@ async function main(args: readonly string[]): Promise<number> {
   }
 }
 
-// A closed stdout, like `| head`, ends the run quietly.
+// A closed stdout, like `| head`, only stops the output: the run goes on to the end, so it still
+// removes its scratch folder and exits with its own code. Exiting here would skip that.
 for (const stream of [process.stdout, process.stderr]) {
   stream.on("error", (error: NodeJS.ErrnoException) => {
-    process.exit(error.code === "EPIPE" ? (process.exitCode ?? 0) : 2);
+    if (error.code !== "EPIPE") process.exitCode = 2;
   });
 }
 
-process.exitCode = await main(process.argv.slice(2));
+const code = await main(process.argv.slice(2));
+if (process.exitCode !== 2) process.exitCode = code;

@@ -8,6 +8,7 @@
  *   cases/<Type>/invalid/<case>.json          rejected
  *   cases/<Type>/invalid/<case>.expect.json   {"path": "/x", "code": "too_long"}, the first error
  *   marks.json                                the known differences, each with a reason
+ *   manifest.json                             how many cases each type has, or why it has none
  * ```
  *
  * An expectation gives the error of strict mode. When report mode reads the case differently,
@@ -178,17 +179,47 @@ export function loadCases(root: string, types: ReadonlySet<string>): Case[] {
  * A known difference between the languages, with the reason it is allowed. A marked case still
  * runs, and must still differ in exactly the stated way, so a mark that no longer applies fails.
  *
+ * Marks that take one language out of the comparison, which must then do exactly this:
+ *
  * - `ts-unsafe-integer`: TypeScript numbers hold integers exactly only up to 2^53 - 1, where
  *   Rust and Go hold 64 bits. TypeScript must reject the case with `out_of_range_integer` at
- *   `path`; Rust and Go are checked against the expectation and each other as usual.
- * - `number-spelling`: the languages spell a number differently when they encode it again, like
- *   `100.0`, `1e2` and `100`. The re-encoded bytes must differ, and be equal once canonical.
- * - `line-separator-escaping`: Go escapes U+2028 and U+2029 when it encodes, the others don't.
- *   One encoding must hold the escape and another the character, and they must be equal once
- *   canonical.
+ *   `path`, naming its own range.
+ * - `ts-no-bytes-api`: the TypeScript decoders take a string, so bytes that aren't UTF-8 never
+ *   reach them. TypeScript must reject the case with `invalid_json` at the root.
+ * - `go-unmarshal-syntax`: `json.Unmarshal` checks the syntax itself before the generated
+ *   decoder runs, so for text that isn't JSON it returns its own `*json.SyntaxError`. Go must do
+ *   that through its public entry point in strict mode; its other variants are compared as usual.
+ *
+ * Marks that allow the bytes each language writes to differ in one way only, once the canonical
+ * bytes are equal. Without a mark, the bytes as written must be equal too:
+ *
+ * - `number-spelling`: a number's spelling, like `150.0`, `1.50E+2` and `150`.
+ * - `line-separator-escaping`: U+2028 and U+2029 escaped or written as they are.
+ * - `html-escaping`: `<`, `>` and `&` escaped or written as they are.
+ * - `string-escaping`: any character of a string or key escaped or written as it is.
+ * - `key-order`: the order of an object's keys.
+ *
+ * Every mark must be needed: a mark whose removal changes nothing in any run fails.
  */
-export type MarkKind = "ts-unsafe-integer" | "number-spelling" | "line-separator-escaping";
-export const MARK_KINDS: readonly MarkKind[] = ["ts-unsafe-integer", "number-spelling", "line-separator-escaping"];
+export type MarkKind =
+  | "ts-unsafe-integer"
+  | "ts-no-bytes-api"
+  | "go-unmarshal-syntax"
+  | "number-spelling"
+  | "line-separator-escaping"
+  | "html-escaping"
+  | "string-escaping"
+  | "key-order";
+export const MARK_KINDS: readonly MarkKind[] = [
+  "ts-unsafe-integer",
+  "ts-no-bytes-api",
+  "go-unmarshal-syntax",
+  "number-spelling",
+  "line-separator-escaping",
+  "html-escaping",
+  "string-escaping",
+  "key-order",
+];
 
 export interface Mark {
   readonly case: string;
@@ -238,4 +269,87 @@ export function loadMarks(file: string, cases: readonly Case[]): Mark[] {
   });
   if (problems.length > 0) throw new LayoutError(problems);
   return marks;
+}
+
+/**
+ * How many valid and invalid cases each type has, from `manifest.json`, so a case or a type
+ * folder that disappears fails the run instead of shrinking it. A type with no cases is listed
+ * under `empty` with the reason.
+ */
+export interface Manifest {
+  readonly types: ReadonlyMap<string, { readonly valid: number; readonly invalid: number }>;
+  readonly empty: ReadonlyMap<string, string>;
+}
+
+/** Reads `manifest.json`: `{"types": {"Order": {"valid": 1, "invalid": 2}}, "empty": {"Note": "why"}}`. */
+export function loadManifest(file: string): Manifest {
+  if (!existsSync(file)) throw new LayoutError([`${file}: no manifest file`]);
+  const problems: string[] = [];
+  const value = readJson(file, "manifest.json", problems);
+  if (problems.length > 0) throw new LayoutError(problems);
+  const shape = 'manifest.json: expected {"types": {"<Type>": {"valid": n, "invalid": n}}, "empty": {"<Type>": "<reason>"}}';
+  if (!isObject(value) || Object.keys(value).sort().join() !== "empty,types" || !isObject(value.types) || !isObject(value.empty)) {
+    throw new LayoutError([shape]);
+  }
+  const types = new Map<string, { valid: number; invalid: number }>();
+  for (const [type, counts] of Object.entries(value.types)) {
+    const ok =
+      isObject(counts) &&
+      Object.keys(counts).sort().join() === "invalid,valid" &&
+      Number.isSafeInteger(counts.valid) &&
+      Number.isSafeInteger(counts.invalid) &&
+      (counts.valid as number) >= 0 &&
+      (counts.invalid as number) >= 0 &&
+      (counts.valid as number) + (counts.invalid as number) > 0;
+    if (!ok) problems.push(`manifest.json: ${type} needs {"valid": n, "invalid": n}, with at least one case`);
+    else types.set(type, { valid: counts.valid as number, invalid: counts.invalid as number });
+  }
+  const empty = new Map<string, string>();
+  for (const [type, why] of Object.entries(value.empty)) {
+    if (typeof why !== "string" || why.trim() === "") problems.push(`manifest.json: empty type ${type} needs a reason`);
+    else empty.set(type, why);
+    if (types.has(type)) problems.push(`manifest.json: ${type} is listed with cases and as empty`);
+  }
+  if (problems.length > 0) throw new LayoutError(problems);
+  return { types, empty };
+}
+
+/**
+ * Checks the cases against the manifest: every type is listed, with exactly the counts it has.
+ * A count that drops means a case disappeared; one that grows means the manifest needs updating.
+ */
+export function checkManifest(manifest: Manifest, cases: readonly Case[], types: ReadonlySet<string>): void {
+  const problems: string[] = [];
+  const counts = new Map<string, { valid: number; invalid: number }>();
+  for (const c of cases) {
+    const n = counts.get(c.type) ?? { valid: 0, invalid: 0 };
+    if (c.valid) n.valid++;
+    else n.invalid++;
+    counts.set(c.type, n);
+  }
+  for (const type of [...types].sort()) {
+    const want = manifest.types.get(type);
+    const got = counts.get(type) ?? { valid: 0, invalid: 0 };
+    if (want === undefined) {
+      if (!manifest.empty.has(type)) {
+        problems.push(
+          `${type}: not in manifest.json. Add it under "types" with {"valid": ${String(got.valid)}, "invalid": ${String(got.invalid)}}, or under "empty" with the reason it has no cases`,
+        );
+      } else if (got.valid + got.invalid > 0) {
+        problems.push(`${type}: has cases now, so move it from "empty" to "types" in manifest.json`);
+      }
+      continue;
+    }
+    for (const kind of ["valid", "invalid"] as const) {
+      if (got[kind] < want[kind]) {
+        problems.push(`${type}: ${String(got[kind])} ${kind} cases, manifest.json says ${String(want[kind])}: a case or folder disappeared`);
+      } else if (got[kind] > want[kind]) {
+        problems.push(`${type}: ${String(got[kind])} ${kind} cases, manifest.json says ${String(want[kind])}: update manifest.json`);
+      }
+    }
+  }
+  for (const type of [...manifest.types.keys(), ...manifest.empty.keys()].sort()) {
+    if (!types.has(type)) problems.push(`manifest.json: ${type} is not a generated type`);
+  }
+  if (problems.length > 0) throw new LayoutError(problems);
 }

@@ -5,7 +5,7 @@ import { afterAll, describe, expect, it } from "vitest";
 
 import { parseArguments } from "./args.js";
 import type { Case } from "./cases.js";
-import { expected, LayoutError, loadCases, loadMarks } from "./cases.js";
+import { checkManifest, expected, LayoutError, loadCases, loadManifest, loadMarks } from "./cases.js";
 import { DriverError, parseResult, requestLine } from "./protocol.js";
 
 const folders: string[] = [];
@@ -197,8 +197,8 @@ describe("driver results", () => {
   });
 
   it("writes requests with a fixed key order", () => {
-    expect(requestLine({ hex: "7b7d", decoder: "normal", mode: "report", type: "Order", id: 1 })).toBe(
-      '{"id":1,"type":"Order","mode":"report","decoder":"normal","hex":"7b7d"}',
+    expect(requestLine({ hex: "7b7d", entry: "registry", decoder: "normal", mode: "report", type: "Order", id: 1 })).toBe(
+      '{"id":1,"type":"Order","mode":"report","decoder":"normal","entry":"registry","hex":"7b7d"}',
     );
   });
 });
@@ -227,5 +227,76 @@ describe("the command line", () => {
     [["fast"], "unknown argument fast"],
   ])("refuses %j", (args, why) => {
     expect(parseArguments(args)).toBe(why);
+  });
+});
+
+describe("the manifest of case counts", () => {
+  const cases = loadCases(
+    folder({
+      "Order/valid/a.json": "{}",
+      "Order/valid/b.json": "{}",
+      "Order/invalid/c.json": "{}",
+      "Order/invalid/c.expect.json": '{"path": "", "code": "wrong_type"}',
+    }),
+    TYPES,
+  );
+  const manifest = (value: unknown): ReturnType<typeof loadManifest> => {
+    const root = folder({ "manifest.json": JSON.stringify(value) });
+    return loadManifest(join(root, "manifest.json"));
+  };
+  const check = (value: unknown, types: ReadonlySet<string> = TYPES): readonly string[] => {
+    try {
+      checkManifest(manifest(value), cases, types);
+    } catch (error) {
+      if (error instanceof LayoutError) return error.problems;
+      throw error;
+    }
+    return [];
+  };
+
+  it("passes when every type has exactly the counts listed, or is listed as empty with a reason", () => {
+    expect(check({ types: { Order: { valid: 2, invalid: 1 } }, empty: { Line: "no cases yet" } })).toEqual([]);
+  });
+
+  it("fails when a case or a whole type folder disappears", () => {
+    expect(check({ types: { Order: { valid: 3, invalid: 1 } }, empty: { Line: "r" } })).toEqual([
+      "Order: 2 valid cases, manifest.json says 3: a case or folder disappeared",
+    ]);
+    expect(check({ types: { Order: { valid: 2, invalid: 1 }, Line: { valid: 1, invalid: 0 } }, empty: {} })).toEqual([
+      "Line: 0 valid cases, manifest.json says 1: a case or folder disappeared",
+    ]);
+  });
+
+  it("fails when cases grow, until the manifest is updated", () => {
+    expect(check({ types: { Order: { valid: 2, invalid: 0 } }, empty: { Line: "r" } })).toEqual([
+      "Order: 1 invalid cases, manifest.json says 0: update manifest.json",
+    ]);
+    expect(check({ types: {}, empty: { Order: "r", Line: "r" } })).toEqual([
+      'Order: has cases now, so move it from "empty" to "types" in manifest.json',
+    ]);
+  });
+
+  it("fails on a type it doesn't list, or one that isn't generated", () => {
+    expect(check({ types: { Order: { valid: 2, invalid: 1 } }, empty: {} })).toEqual([
+      'Line: not in manifest.json. Add it under "types" with {"valid": 0, "invalid": 0}, or under "empty" with the reason it has no cases',
+    ]);
+    expect(check({ types: { Order: { valid: 2, invalid: 1 } }, empty: { Line: "r", Gone: "r" } })).toEqual([
+      "manifest.json: Gone is not a generated type",
+    ]);
+  });
+
+  it.each([
+    [{ types: {} }, "expected"],
+    [{ types: { Order: { valid: 1 } }, empty: {} }, 'Order needs {"valid": n, "invalid": n}'],
+    [{ types: { Order: { valid: 0, invalid: 0 } }, empty: {} }, "with at least one case"],
+    [{ types: { Order: { valid: -1, invalid: 2 } }, empty: {} }, 'Order needs {"valid": n, "invalid": n}'],
+    [{ types: {}, empty: { Line: "" } }, "empty type Line needs a reason"],
+    [{ types: { Line: { valid: 1, invalid: 0 } }, empty: { Line: "r" } }, "listed with cases and as empty"],
+  ])("refuses a bad manifest %j", (value, why) => {
+    expect(() => manifest(value)).toThrow(why);
+  });
+
+  it("fails on a missing manifest", () => {
+    expect(() => loadManifest(join(tmpdir(), "strictgen-no-manifest.json"))).toThrow("no manifest file");
   });
 });

@@ -17,11 +17,13 @@ describe("the conformance cases in TypeScript", () => {
     async () => {
       const result = await runSuite({ conformance: CONFORMANCE, modes: ["strict", "report"], languages: ["ts"] });
       expect(table(result.rows, ["ts"]).join("\n")).toBe(table([], ["ts"]).join("\n"));
-      expect(result.cases.length).toBeGreaterThan(250);
+      // How many cases there are is checked against conformance/manifest.json by the run itself.
       expect(result.marks.length).toBeGreaterThan(0);
       expect(result.variants).toEqual([
-        { mode: "strict", decoder: "normal" },
-        { mode: "report", decoder: "normal" },
+        { mode: "strict", decoder: "normal", entry: "public" },
+        { mode: "strict", decoder: "normal", entry: "registry" },
+        { mode: "report", decoder: "normal", entry: "public" },
+        { mode: "report", decoder: "normal", entry: "registry" },
       ]);
     },
     SUITE_TIMEOUT,

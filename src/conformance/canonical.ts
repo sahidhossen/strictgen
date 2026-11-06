@@ -331,3 +331,150 @@ export function withoutMembers(value: Json, pointers: readonly string[]): Json {
   }
   return out;
 }
+
+/** Which spellings {@link respell} makes canonical. Everything else stays as written. */
+export interface RespellOptions {
+  /** Numbers, with integers past 2^53 - 1 kept exact. */
+  readonly numbers?: boolean;
+  /** The order of object keys, sorted by UTF-16 code units. */
+  readonly keyOrder?: boolean;
+  /** The characters, by code point, whose spelling inside strings and keys is made canonical. */
+  readonly chars?: (code: number) => boolean;
+}
+
+/**
+ * Compact JSON text, as an encoder wrote it, with only the spellings `options` names made
+ * canonical. Two encodings that differ only in those spellings come out equal; any other
+ * difference stays. Returns undefined for text that isn't compact JSON, whitespace included, so
+ * a difference there is never hidden.
+ */
+export function respell(text: string, options: RespellOptions): string | undefined {
+  let at = 0;
+  const chars = options.chars ?? ((): boolean => false);
+  class Bad extends Error {}
+  const fail = (): never => {
+    throw new Bad();
+  };
+  const str = (): { value: string; out: string } => {
+    at++;
+    let value = "";
+    let out = '"';
+    for (;;) {
+      if (at >= text.length) fail();
+      const start = at;
+      let ch: string;
+      if (text[at] === '"') {
+        at++;
+        return { value, out: `${out}"` };
+      }
+      if (text[at] === "\\") {
+        const e = text[at + 1];
+        const simple: Record<string, string> = { '"': '"', "\\": "\\", "/": "/", b: "\b", f: "\f", n: "\n", r: "\r", t: "\t" };
+        if (e !== undefined && e in simple) {
+          ch = simple[e] ?? "";
+          at += 2;
+        } else if (e === "u") {
+          const unit = Number.parseInt(text.slice(at + 2, at + 6), 16);
+          if (!/^[0-9a-fA-F]{4}$/.test(text.slice(at + 2, at + 6))) fail();
+          at += 6;
+          ch = String.fromCharCode(unit);
+          if (unit >= 0xd800 && unit <= 0xdbff && text.slice(at, at + 2) === "\\u") {
+            const low = Number.parseInt(text.slice(at + 2, at + 6), 16);
+            if (low >= 0xdc00 && low <= 0xdfff) {
+              ch += String.fromCharCode(low);
+              at += 6;
+            }
+          }
+        } else {
+          return fail();
+        }
+      } else {
+        const code = text.codePointAt(at) ?? 0;
+        if (code < 0x20) fail();
+        ch = String.fromCodePoint(code);
+        at += ch.length;
+      }
+      value += ch;
+      const code = ch.codePointAt(0) ?? 0;
+      const spelled = text.slice(start, at);
+      if (!chars(code)) {
+        out += spelled;
+        continue;
+      }
+      try {
+        out += canonicalString(ch).slice(1, -1);
+      } catch {
+        out += spelled;
+      }
+    }
+  };
+  const value = (depth: number): string => {
+    if (depth > MAX_DEPTH) fail();
+    const c = text[at];
+    if (c === "{") {
+      at++;
+      const members: { key: string; out: string }[] = [];
+      if (text[at] === "}") {
+        at++;
+        return "{}";
+      }
+      for (;;) {
+        if (text[at] !== '"') fail();
+        const key = str();
+        if (text[at] !== ":") fail();
+        at++;
+        members.push({ key: key.value, out: `${key.out}:${value(depth + 1)}` });
+        if (text[at] === ",") {
+          at++;
+          continue;
+        }
+        if (text[at] !== "}") fail();
+        at++;
+        if (options.keyOrder === true) members.sort((a, b) => compareUtf16(a.key, b.key));
+        return `{${members.map((m) => m.out).join(",")}}`;
+      }
+    }
+    if (c === "[") {
+      at++;
+      const items: string[] = [];
+      if (text[at] === "]") {
+        at++;
+        return "[]";
+      }
+      for (;;) {
+        items.push(value(depth + 1));
+        if (text[at] === ",") {
+          at++;
+          continue;
+        }
+        if (text[at] !== "]") fail();
+        at++;
+        return `[${items.join(",")}]`;
+      }
+    }
+    if (c === '"') return str().out;
+    for (const word of ["true", "false", "null"]) {
+      if (text.startsWith(word, at)) {
+        at += word.length;
+        return word;
+      }
+    }
+    NUMBER.lastIndex = at;
+    const match = NUMBER.exec(text);
+    if (match === null) return fail();
+    at += match[0].length;
+    if (options.numbers !== true) return match[0];
+    try {
+      return numberText(new JsonNumber(match[0]), { exactIntegers: true });
+    } catch {
+      return match[0];
+    }
+  };
+  try {
+    const out = value(0);
+    return at === text.length ? out : undefined;
+  } catch (error) {
+    if (error instanceof Bad) return undefined;
+    throw error;
+  }
+}

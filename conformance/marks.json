@@ -1,6 +1,26 @@
 {
   "marks": [
     {
+      "case": "Code/invalid/not-utf8-at-the-root",
+      "kind": "go-unmarshal-syntax",
+      "reason": "json.Unmarshal's own syntax check refuses a byte 0xFF outside a string with a *json.SyntaxError before the generated decoder runs. The registry and Report[T] give invalid_json."
+    },
+    {
+      "case": "Code/invalid/not-utf8-at-the-root",
+      "kind": "ts-no-bytes-api",
+      "reason": "The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them: the caller's UTF-8 decoding rejects them first. TypeScript is held to invalid_json at the root; Rust and Go are compared on every field."
+    },
+    {
+      "case": "Dot/invalid/unknown-key",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
+    },
+    {
+      "case": "Dot/valid/kind",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
+    },
+    {
       "case": "Event/invalid/attempt-above-int64-maximum",
       "kind": "ts-unsafe-integer",
       "path": "/attempt",
@@ -11,12 +31,6 @@
       "kind": "ts-unsafe-integer",
       "path": "/attempt",
       "reason": "Every language rejects -2^63 - 1 with out_of_range_integer at the same path, but the error names the range the language holds: 64 bits in Rust and Go, 2^53 - 1 in TypeScript."
-    },
-    {
-      "case": "Event/valid/attempt-just-above-safe-integer",
-      "kind": "ts-unsafe-integer",
-      "path": "/attempt",
-      "reason": "A TypeScript number holds integers exactly only up to 2^53 - 1, where Rust and Go hold 64 bits. TypeScript rejects 2^53 + 1 with out_of_range_integer rather than round it."
     },
     {
       "case": "Event/valid/attempt-at-int64-maximum",
@@ -31,14 +45,75 @@
       "reason": "A TypeScript number holds integers exactly only down to -(2^53 - 1), where Rust and Go hold 64 bits. TypeScript rejects -2^63 with out_of_range_integer rather than round it."
     },
     {
-      "case": "Parcel/valid/weight-spelled-with-exponent",
+      "case": "Event/valid/attempt-just-above-safe-integer",
+      "kind": "ts-unsafe-integer",
+      "path": "/attempt",
+      "reason": "A TypeScript number holds integers exactly only up to 2^53 - 1, where Rust and Go hold 64 bits. TypeScript rejects 2^53 + 1 with out_of_range_integer rather than round it."
+    },
+    {
+      "case": "Mark/valid/line-separator",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
+    },
+    {
+      "case": "Marks/valid/all",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
+    },
+    {
+      "case": "Note/invalid/not-utf8-in-a-string",
+      "kind": "ts-no-bytes-api",
+      "reason": "The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them: the caller's UTF-8 decoding rejects them first. TypeScript is held to invalid_json at the root; Rust and Go are compared on every field."
+    },
+    {
+      "case": "Order/valid/discount-small-with-exponent",
       "kind": "number-spelling",
-      "reason": "Each language spells a decoded number its own way when it encodes it again: Rust writes 150.0, Go keeps 1.50E+2 as it was read, TypeScript writes 150. The value is the same, so the canonical bytes are."
+      "reason": "Go decodes a number field to a json.Number and writes it back as it was read, 1e-07, where Rust and TypeScript write the double as 1e-7. Same value, so the canonical bytes are equal."
+    },
+    {
+      "case": "Parcel/valid/size-with-html-characters",
+      "kind": "html-escaping",
+      "reason": "Go's json.Marshal escapes <, > and & as \\u003c, \\u003e and \\u0026, so JSON is safe inside HTML, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
     },
     {
       "case": "Parcel/valid/size-with-line-separators",
       "kind": "line-separator-escaping",
       "reason": "Go's encoder escapes U+2028 and U+2029, so JavaScript that embeds the JSON in a script can't break, where Rust and TypeScript write the characters. Both are the same JSON string, so the canonical bytes are equal."
+    },
+    {
+      "case": "Parcel/valid/weight-spelled-with-exponent",
+      "kind": "number-spelling",
+      "reason": "Each language spells a decoded number its own way when it encodes it again: Rust writes 150.0, Go keeps 1.50E+2 as it was read, TypeScript writes 150. The value is the same, so the canonical bytes are."
+    },
+    {
+      "case": "Shape/valid/dot",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
+    },
+    {
+      "case": "Shipment/valid/extra-astral-keys-in-utf16-order",
+      "kind": "key-order",
+      "reason": "extra holds any JSON value. Go keeps such a value as the bytes it read, TypeScript writes its keys in input order and Rust in code point order. Same members, so the canonical bytes, sorted by UTF-16 code units, are equal."
+    },
+    {
+      "case": "Shipment/valid/extra-astral-keys-in-utf16-order",
+      "kind": "string-escaping",
+      "reason": "extra holds any JSON value. Go keeps such a value as the bytes it read, escapes included, while Rust and TypeScript decode it and write the characters. Same strings, so the canonical bytes are equal."
+    },
+    {
+      "case": "ShopOrder/invalid/invalid-json-in-unknown-value",
+      "kind": "go-unmarshal-syntax",
+      "reason": "json.Unmarshal checks the syntax itself before the generated decoder runs, so for text that isn't JSON Go's public entry point in strict mode returns its own *json.SyntaxError. The registry, Report[T] and the other languages give the shared invalid_json error."
+    },
+    {
+      "case": "Text/valid/space-line-separator",
+      "kind": "line-separator-escaping",
+      "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
+    },
+    {
+      "case": "UserId/invalid/byte-order-mark",
+      "kind": "go-unmarshal-syntax",
+      "reason": "json.Unmarshal checks the syntax itself before the generated decoder runs, so for text that isn't JSON Go's public entry point in strict mode returns its own *json.SyntaxError. The registry, Report[T] and the other languages give the shared invalid_json error."
     }
   ]
 }

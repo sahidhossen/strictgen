@@ -60,13 +60,27 @@ export function conformanceModel(conformance: string, out: string): Model {
   return configModel(conformanceConfig(conformance, out, "strict")).model;
 }
 
+/** A type a case folder may name: its key in the fixture registry, and whether it is a tagged union. */
+export interface CaseType {
+  readonly key: string;
+  readonly tagged: boolean;
+}
+
 /** The types a case folder may name: those with their own schema root or `$defs` entry. */
-export function caseTypes(model: Model): Map<string, string> {
+export function caseTypes(model: Model): Map<string, CaseType> {
   return new Map(
     model.decls.flatMap((d) =>
       d.source === undefined
         ? []
-        : [[d.name, d.source.def === undefined ? d.source.schema : `${d.source.schema}/${d.source.def}`] as const],
+        : [
+            [
+              d.name,
+              {
+                key: d.source.def === undefined ? d.source.schema : `${d.source.schema}/${d.source.def}`,
+                tagged: d.kind === "tagged",
+              },
+            ] as const,
+          ],
     ),
   );
 }
@@ -188,39 +202,72 @@ ${arms.join("")}        _ => return None,
 `;
 }
 
-function goConform(mode: Mode, types: ReadonlyMap<string, string>): string {
-  const keys = [...types].map(([t, key]) => `\t${JSON.stringify(t)}: ${JSON.stringify(key)},\n`).join("");
-  const decode =
+/** The public Go entry point for one type in one read mode, as a function literal. */
+function goPublic(mode: Mode, name: string, type: CaseType): string {
+  const sig = "func(data []byte) (any, []string, error)";
+  if (mode === "strict") {
+    return type.tagged
+      ? `${sig} { v, err := Decode${name}(data); return v, []string{}, err }`
+      : `${sig} { v := new(${name}); err := json.Unmarshal(data, v); return *v, []string{}, err }`;
+  }
+  return type.tagged
+    ? `${sig} { r, err := Report${name}(data); return r.Value, r.Unknown, err }`
+    : `${sig} { r, err := Report[${name}](data); return r.Value, r.Unknown, err }`;
+}
+
+function goConform(mode: Mode, types: ReadonlyMap<string, CaseType>): string {
+  const keys = [...types].map(([t, c]) => `\t${JSON.stringify(t)}: ${JSON.stringify(c.key)},\n`).join("");
+  const publics = [...types].map(([t, c]) => `\t${JSON.stringify(t)}: ${goPublic(mode, t, c)},\n`).join("");
+  const unmarshals = mode === "strict" && [...types.values()].some((c) => !c.tagged);
+  const registry =
     mode === "report"
-      ? `\tvalue, unknown, err = decode(data)
-\tif unknown == nil {
-\t\tunknown = []string{}
-\t}
-\treturn value, unknown, true, err`
-      : `\tvalue, err = decode(data)
-\treturn value, []string{}, true, err`;
+      ? `\t\tvalue, unknown, err = decode(data)`
+      : `\t\tvalue, err = decode(data)
+\t\tunknown = []string{}`;
   return `// Written by the conformance runner.
 
 package ${mode}
 
-import "errors"
+import (
+${unmarshals ? '\t"encoding/json"\n' : ""}\t"errors"
+)
 
 // conformanceKeys maps each type a case may name to its key in the fixture registry.
 var conformanceKeys = map[string]string{
 ${keys}}
 
-// ConformanceDecode decodes data as the type named typ, through the fixture registry, and
-// returns the value with the paths of its unknown keys. ok is false when there is no such type.
-func ConformanceDecode(typ string, data []byte) (value any, unknown []string, ok bool, err error) {
-\tkey, ok := conformanceKeys[typ]
-\tif !ok {
+// conformancePublic maps each type a case may name to a decode through its public entry point.
+var conformancePublic = map[string]func(data []byte) (any, []string, error){
+${publics}}
+
+// ConformanceDecode decodes data as the type named typ, through the public entry point or the
+// fixture registry, and returns the value with the paths of its unknown keys. ok is false when
+// there is no such type or entry.
+func ConformanceDecode(typ, entry string, data []byte) (value any, unknown []string, ok bool, err error) {
+\tswitch entry {
+\tcase "public":
+\t\tdecode, found := conformancePublic[typ]
+\t\tif !found {
+\t\t\treturn nil, nil, false, nil
+\t\t}
+\t\tvalue, unknown, err = decode(data)
+\tcase "registry":
+\t\tkey, found := conformanceKeys[typ]
+\t\tif !found {
+\t\t\treturn nil, nil, false, nil
+\t\t}
+\t\tdecode, found := fixtureDecoders()[key]
+\t\tif !found {
+\t\t\treturn nil, nil, false, nil
+\t\t}
+${registry}
+\tdefault:
 \t\treturn nil, nil, false, nil
 \t}
-\tdecode, ok := fixtureDecoders()[key]
-\tif !ok {
-\t\treturn nil, nil, false, nil
+\tif unknown == nil {
+\t\tunknown = []string{}
 \t}
-${decode}
+\treturn value, unknown, true, err
 }
 
 // ConformanceFields returns the fields of a *DecodeError, and false for any other error.
@@ -295,7 +342,7 @@ export function buildRust(conformance: string, out: string, types: readonly stri
 }
 
 /** Builds the Go driver over the code `generateAll` wrote under `out`. */
-export function buildGo(conformance: string, out: string, types: ReadonlyMap<string, string>): Driver {
+export function buildGo(conformance: string, out: string, types: ReadonlyMap<string, CaseType>): Driver {
   const driver = join(conformance, "driver", "go");
   const module = join(out, "go");
   for (const file of ["go.mod", "main.go"]) copyFileSync(join(driver, file), join(module, file));
@@ -341,6 +388,9 @@ function hexBytes(hex: string): Uint8Array {
 /** Runs one request through the generated TypeScript, as the binaries do. */
 export function runTs(modules: Readonly<Record<Mode, TsModule>>, request: Request): Result {
   if (request.decoder !== "normal") throw new DriverError(`decoder ${request.decoder} is not supported`);
+  // decodeXFromJson and reportXFromJson are the public entry points, and what the fixture tests
+  // call, so both entries decode the same way.
+  if (request.entry !== "public" && request.entry !== "registry") throw new DriverError(`entry ${String(request.entry)} is not supported`);
   const m = modules[request.mode];
   const rejected = (error: ErrorFields): Result => ({
     id: request.id,

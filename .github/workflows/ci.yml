@@ -135,6 +135,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.0
+          components: rustfmt, clippy
       - uses: actions/setup-go@v5
         with:
           go-version: stable
@@ -144,10 +145,23 @@ jobs:
         run: |
           cargo --version
           go version
-      - name: The hand written Go driver is formatted
-        run: test -z "$(gofmt -l conformance/driver/go)"
-      # Every case in Rust, Go and TypeScript, in strict and report mode.
-      - run: pnpm conformance
+      - name: The hand written drivers are formatted
+        run: |
+          test -z "$(gofmt -l conformance/driver/go)"
+          # Formatted from stdin, so rustfmt doesn't look for the modules the runner generates.
+          for file in conformance/driver/rust/src/main.rs conformance/driver/rust/src/lib.rs; do
+            rustfmt --edition 2024 < "$file" | diff -u "$file" -
+          done
+      # Every case in Rust, Go and TypeScript, in strict and report mode, through the public entry
+      # points and the fixture registry. The build is kept for the lints below.
+      - run: pnpm conformance --keep | tee conformance-run.txt
+      # The drivers only build beside the generated code, so they are linted where the run built them.
+      - name: Lint the drivers
+        run: |
+          dir="$(sed -n 's/^kept the generated code and drivers in //p' conformance-run.txt)"
+          test -n "$dir"
+          (cd "$dir/go" && go vet ./...)
+          (cd "$dir/rust" && CARGO_TARGET_DIR="$GITHUB_WORKSPACE/conformance/driver/rust/target" cargo clippy --locked --all-targets -- -D warnings -W clippy::pedantic)
 
   hygiene:
     name: Public hygiene

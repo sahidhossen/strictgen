@@ -2,7 +2,8 @@
 //!
 //! Reads one JSON request per line on stdin and writes one JSON result per line on stdout, in
 //! request order, in the format `src/conformance/protocol.ts` describes. `dispatch.rs`, which
-//! the runner writes, maps each read mode and type name to the generated type.
+//! the runner writes, maps each read mode and type name to the generated type, which decodes
+//! through its public entry points, `T::from_json` and `T::report_from_json`.
 
 mod dispatch;
 
@@ -123,6 +124,12 @@ fn answer(line: &str) -> Result<Value, String> {
     }
     if mode != "strict" && mode != "report" {
         return Err(format!("mode {mode:?} is not supported"));
+    }
+    // `T::from_json` and `T::report_from_json` are both the public entry points and what the
+    // generated fixture registry calls, so both entries decode the same way.
+    let entry = text("entry")?;
+    if entry != "public" && entry != "registry" {
+        return Err(format!("entry {entry:?} is not supported"));
     }
     let bytes = from_hex(text("hex")?)?;
     let outcome = panic::catch_unwind(AssertUnwindSafe(|| dispatch::decode(mode, ty, &bytes)))

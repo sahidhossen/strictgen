@@ -1,12 +1,12 @@
 import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 
 import type { Fn, TsModule } from "./drivers.js";
 import { binaryDriver, runTs } from "./drivers.js";
 import type { Request } from "./protocol.js";
-import { removeScratch } from "./suite.js";
+import { removeScratch, withScratch } from "./suite.js";
 
 class FakeDecodeError extends Error {
   constructor(
@@ -32,6 +32,7 @@ const request = (text: string, mode: Request["mode"] = "strict"): Request => ({
   type: "Order",
   mode,
   decoder: "normal",
+  entry: "public",
   hex: Buffer.from(text).toString("hex"),
 });
 
@@ -155,5 +156,73 @@ describe("removing the scratch folder", () => {
     const own = mkdtempSync(join(tmpdir(), "strictgen-conformance-"));
     removeScratch(own);
     expect(existsSync(own)).toBe(false);
+  });
+});
+
+describe("the scratch folder of a run", () => {
+  it("is removed when the run returns or throws", async () => {
+    let seen = "";
+    expect(
+      await withScratch(false, async (dir) => {
+        seen = dir;
+        return Promise.resolve(1);
+      }),
+    ).toBe(1);
+    expect(existsSync(seen)).toBe(false);
+    await expect(
+      withScratch(false, async (dir) => {
+        seen = dir;
+        return Promise.reject(new Error("build failed"));
+      }),
+    ).rejects.toThrow("build failed");
+    expect(existsSync(seen)).toBe(false);
+  });
+
+  it("is kept when asked", async () => {
+    const dir = await withScratch(true, async (d) => Promise.resolve(d));
+    expect(existsSync(dir)).toBe(true);
+    removeScratch(dir);
+  });
+
+  it("never hides the error that stopped the run behind one removing the folder", async () => {
+    // The body removes the folder itself, so removing it again fails.
+    await expect(
+      withScratch(false, async (dir) => {
+        rmSync(dir, { recursive: true });
+        return Promise.reject(new Error("the real failure"));
+      }),
+    ).rejects.toThrow("the real failure");
+    await expect(
+      withScratch(false, async (dir) => {
+        rmSync(dir, { recursive: true });
+        return Promise.resolve();
+      }),
+    ).rejects.toThrow("ENOENT");
+  });
+
+  it("is removed on SIGINT and SIGTERM, which then exit as the signal would", async () => {
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    const before = process.listenerCount("SIGINT");
+    try {
+      for (const [signal, code] of [
+        ["SIGINT", 130],
+        ["SIGTERM", 143],
+      ] as const) {
+        let seen = "";
+        await expect(
+          withScratch(false, async (dir) => {
+            seen = dir;
+            process.emit(signal);
+            return Promise.reject(new Error("stopped"));
+          }),
+        ).rejects.toThrow("stopped");
+        expect(existsSync(seen)).toBe(false);
+        expect(exit).toHaveBeenLastCalledWith(code);
+      }
+      // The handlers are gone once the run is over.
+      expect(process.listenerCount("SIGINT")).toBe(before);
+    } finally {
+      exit.mockRestore();
+    }
   });
 });

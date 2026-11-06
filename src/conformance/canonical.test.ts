@@ -8,6 +8,7 @@ import {
   compareUtf16,
   parseJson,
   serialize,
+  respell,
   withoutMembers,
 } from "./canonical.js";
 
@@ -187,6 +188,38 @@ describe("removing members", () => {
     const value = parseJson('{"a":[1]}');
     for (const pointer of ["/b", "/a/0", "/a/x/y", "", "a"]) {
       expect(() => withoutMembers(value, [pointer]), pointer).toThrow(CanonicalError);
+    }
+  });
+});
+
+describe("respelling only what a mark allows", () => {
+  const ls = esc("2028");
+  it("leaves the text as written when nothing is allowed", () => {
+    const text = `{"b":1.50E+2,"a":"x${ls}y"}`;
+    expect(respell(text, {})).toBe(text);
+  });
+
+  it("writes numbers canonically, keeping 64-bit integers exact", () => {
+    expect(respell('[1.50E+2,1e-07,5.0,9223372036854775807,"1e2"]', { numbers: true })).toBe(
+      '[150,1e-7,5,9223372036854775807,"1e2"]',
+    );
+  });
+
+  it("writes only the chosen characters canonically, in strings and keys", () => {
+    const lineSeparators = (c: number): boolean => c === 0x2028 || c === 0x2029;
+    expect(respell(`{"${ls}":"a${ls}${esc("0041")}"}`, { chars: lineSeparators })).toBe(
+      `{"${ch(0x2028)}":"a${ch(0x2028)}${esc("0041")}"}`,
+    );
+    expect(respell(`"${esc("d83d")}${esc("de00")}\\n${esc("000a")}"`, { chars: () => true })).toBe(`"${ch(0x1f600)}\\n\\n"`);
+  });
+
+  it("sorts keys by UTF-16 code units when key order is allowed", () => {
+    expect(respell('{"b":{"d":1,"c":2},"a":[{"z":1,"y":2}]}', { keyOrder: true })).toBe('{"a":[{"y":2,"z":1}],"b":{"c":2,"d":1}}');
+  });
+
+  it("gives up on text that isn't compact JSON, so whitespace is never hidden", () => {
+    for (const text of ['{"a": 1}', "[1,]", '"a', "01", "", '{"a":1}x']) {
+      expect(respell(text, { numbers: true, keyOrder: true, chars: () => true }), text).toBeUndefined();
     }
   });
 });

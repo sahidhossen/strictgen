@@ -4,7 +4,8 @@
 // It reads one JSON request per line on stdin and writes one JSON result per line on stdout, in
 // request order, in the format src/conformance/protocol.ts describes. The runner writes the
 // generated packages, strict and report, before it builds the command. Each has a conform.go,
-// also written by the runner, that decodes by type name through the package's fixture registry.
+// also written by the runner, that decodes by type name through the package's public entry
+// points (json.Unmarshal, DecodeX, Report[T], ReportX) or through its fixture registry.
 package main
 
 import (
@@ -24,9 +25,13 @@ import (
 // crash is the error code of a decoder that panicked instead of returning an error.
 const crash = "crash"
 
+// syntaxError is the error code for a *json.SyntaxError, which json.Unmarshal returns before the
+// generated decoder runs when the input isn't JSON.
+const syntaxError = "json.SyntaxError"
+
 // readMode is one generated package: a decoder by type name, and the fields of its DecodeError.
 type readMode struct {
-	decode func(typ string, data []byte) (value any, unknown []string, ok bool, err error)
+	decode func(typ, entry string, data []byte) (value any, unknown []string, ok bool, err error)
 	fields func(err error) (path, code, expected, found string, ok bool)
 }
 
@@ -40,6 +45,7 @@ type request struct {
 	Type    string `json:"type"`
 	Mode    string `json:"mode"`
 	Decoder string `json:"decoder"`
+	Entry   string `json:"entry"`
 	Hex     string `json:"hex"`
 }
 
@@ -71,20 +77,24 @@ func optional(text string) *string {
 // outcome decodes data as typ in one read mode and encodes the value again. A panic, in the
 // decoder or the encoder, becomes a result with the code crash. found is false when the mode
 // has no such type.
-func outcome(mode readMode, id int, typ string, data []byte) (r result, found bool) {
+func outcome(mode readMode, id int, typ, entry string, data []byte) (r result, found bool) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			r = result{ID: id, Error: &errorFields{Code: crash, Message: fmt.Sprint(recovered)}}
 			found = true
 		}
 	}()
-	value, unknown, ok, err := mode.decode(typ, data)
+	value, unknown, ok, err := mode.decode(typ, entry, data)
 	if !ok {
 		return result{}, false
 	}
 	if err != nil {
 		path, code, expected, foundText, isDecodeError := mode.fields(err)
 		if !isDecodeError {
+			var syntax *json.SyntaxError
+			if errors.As(err, &syntax) {
+				return result{ID: id, Error: &errorFields{Code: syntaxError, Message: err.Error()}}, true
+			}
 			return result{ID: id, Error: &errorFields{Code: crash, Message: "not a *DecodeError: " + err.Error()}}, true
 		}
 		return result{ID: id, Error: &errorFields{
@@ -121,6 +131,9 @@ func answer(line []byte) (result, error) {
 	if req.Decoder != "normal" {
 		return result{}, fmt.Errorf("decoder %q is not supported", req.Decoder)
 	}
+	if req.Entry != "public" && req.Entry != "registry" {
+		return result{}, fmt.Errorf("entry %q is not supported", req.Entry)
+	}
 	mode, ok := modes[req.Mode]
 	if !ok {
 		return result{}, fmt.Errorf("mode %q is not supported", req.Mode)
@@ -129,7 +142,7 @@ func answer(line []byte) (result, error) {
 	if err != nil {
 		return result{}, err
 	}
-	r, found := outcome(mode, *req.ID, req.Type, data)
+	r, found := outcome(mode, *req.ID, req.Type, req.Entry, data)
 	if !found {
 		return result{}, fmt.Errorf("no generated type %s", req.Type)
 	}

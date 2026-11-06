@@ -4,8 +4,8 @@
  * differential fuzzer can reuse it.
  *
  * A request is one line: `{"id": 0, "type": "Order", "mode": "strict", "decoder": "normal",
- * "hex": "7b7d"}`. The input is hex, since a case may be bytes that aren't UTF-8. A result is
- * one line per request, in request order:
+ * "entry": "public", "hex": "7b7d"}`. The input is hex, since a case may be bytes that aren't
+ * UTF-8. A result is one line per request, in request order:
  *
  * ```json
  * {"id": 0, "accepted": false, "unknown": null, "encoded": null, "encodeError": null,
@@ -31,8 +31,37 @@ export type Mode = (typeof MODES)[number];
 export type Decoder = "normal" | "llm";
 export const DECODERS: readonly Decoder[] = ["normal"];
 
+/**
+ * Which function decodes: `public`, the entry point users call (Go's `json.Unmarshal` into the
+ * type, `DecodeX` for a tagged union, `Report[T]` or `ReportX` in report mode; Rust's
+ * `T::from_json` and `T::report_from_json`; TypeScript's `decodeXFromJson` and
+ * `reportXFromJson`), or `registry`, the fixture registry the generated tests use. Go's registry
+ * calls the shared decoder directly; Rust's and TypeScript's fixture entry points are their public
+ * ones, so for them both entries run the same function.
+ */
+export type Entry = "public" | "registry";
+export const ENTRIES: readonly Entry[] = ["public", "registry"];
+
+/** One way of reading a case: a read mode, a decoder and an entry point. */
+export interface Variant {
+  readonly mode: Mode;
+  readonly decoder: Decoder;
+  readonly entry: Entry;
+}
+
+/** A variant as tables show it, like `strict` or `report/registry`. */
+export function variantName(v: Variant): string {
+  return [v.mode, ...(v.decoder === "normal" ? [] : [v.decoder]), ...(v.entry === "public" ? [] : [v.entry])].join("/");
+}
+
 /** The error code a driver reports when a decoder threw or panicked instead of returning an error. */
 export const CRASH = "crash";
+
+/**
+ * The error code the Go driver reports when `json.Unmarshal` refused the input with its own
+ * `*json.SyntaxError`, before the generated decoder ran.
+ */
+export const GO_SYNTAX_ERROR = "json.SyntaxError";
 
 export interface Request {
   readonly id: number;
@@ -40,6 +69,7 @@ export interface Request {
   readonly type: string;
   readonly mode: Mode;
   readonly decoder: Decoder;
+  readonly entry: Entry;
   /** The input bytes, as lowercase hex. */
   readonly hex: string;
 }
@@ -81,6 +111,7 @@ export function requestLine(request: Request): string {
     type: request.type,
     mode: request.mode,
     decoder: request.decoder,
+    entry: request.entry,
     hex: request.hex,
   });
 }
