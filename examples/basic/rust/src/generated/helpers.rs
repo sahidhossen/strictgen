@@ -1367,3 +1367,20 @@ const PATTERNS: [(&str, &str); 12] = [
     ("^a[^\u{a}\u{d}\u{2028}\u{2029}]c$", "^a.c$"),
     ("x", "x"),
 ];
+
+/// Decodes a value serde hands over with the strict decoder: serde_json gives its raw JSON text
+/// and [Decode::from_json] reads it, so a key given twice, a number spelled 1.0 for an integer
+/// and every other check fail as they do there. A [DecodeError] becomes a serde error whose
+/// message is its compact form, with the path relative to this value. serde's own parsing of
+/// what is around the value is not strict.
+///
+/// # Errors
+///
+/// The deserializer's error when it can't give the raw text, like a deserializer that isn't
+/// serde_json's, and a custom one for a [DecodeError].
+pub(super) fn deserialize_strict<'de, T: Decode, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<T, D::Error> {
+    let raw = <Box<serde_json::value::RawValue> as serde::Deserialize>::deserialize(deserializer)?;
+    T::from_json(raw.get()).map_err(|error| serde::de::Error::custom(error.compact()))
+}

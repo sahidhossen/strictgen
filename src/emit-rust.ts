@@ -37,6 +37,7 @@ import {
   RUST_HELPERS_TAGGED,
   RUST_NON_NULL,
   rustHelpersCore,
+  rustSerdeBridge,
   rustHelpersObject,
 } from "./rust-helpers.js";
 import { RUST_CLEANUP } from "./cleanup-helpers.js";
@@ -101,6 +102,8 @@ interface Ctx {
   /** True when the output has LLM decoders, so untagged variants run through `attempt`. */
   readonly llmOn: boolean;
   readonly cleanup: boolean;
+  /** True when every type that decodes also implements serde's `Deserialize` through the bridge. */
+  readonly bridge: boolean;
   /** Which values have constraints to check. */
   readonly checks: Checks;
   /** The index of each checked pattern in the helpers' table, by the pattern as written. */
@@ -154,6 +157,12 @@ export interface RustOptions {
    * given. It runs the cleanup step first when `cleanup` is on.
    */
   readonly llm?: LlmMaps;
+  /**
+   * Adds serde's `Deserialize` to every type that implements `Decode`: it takes the value's raw
+   * JSON text from serde_json (its `raw_value` feature) and decodes it with `Decode::from_json`.
+   * A plain type alias gets none, since Rust allows no impl on it.
+   */
+  readonly serdeBridge?: boolean;
 }
 
 /**
@@ -223,6 +232,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     llm: new Set(llm === undefined ? [] : llmTypes(model).map((d) => d.name)),
     llmOn: llm !== undefined,
     cleanup: options.cleanup === true,
+    bridge: options.serdeBridge === true,
     checks: new Checks(model.decls),
     patterns: new Map(patterns.map((p, i) => [p.source, i])),
   };
@@ -267,6 +277,9 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     patterns.length > 0 ? patternTable(patterns) : "",
     options.cleanup === true ? RUST_CLEANUP : "",
     llm === undefined ? "" : rustLlmSection(llm, report),
+    ctx.bridge && contents.some((c) => c.contents.includes(`${HELPERS}::deserialize_strict(`))
+      ? rustSerdeBridge(report)
+      : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -337,7 +350,7 @@ function checkParts(modules: readonly string[]): string[] {
  * The type a type expression stands for, through aliases that stay aliases. It stops at any
  * other declaration, a constrained alias generated as a type of its own included.
  */
-function plainTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
+function plainTarget(ctx: Pick<Ctx, "decls" | "checks">, type: TypeExpr): TypeExpr {
   let current = type;
   for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
     const decl = ctx.decls.get(current.name);
@@ -345,6 +358,23 @@ function plainTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
     current = decl.type;
   }
   return current;
+}
+
+/**
+ * The plain type aliases that, with `serdeBridge`, have no bridge to stand for: those that don't
+ * stand for a generated type, like `pub type Names = Vec<String>`. Rust allows no impl on an
+ * alias, so serde's own `Deserialize` for the standard type reads them, which is not strict. Each
+ * as `Names (Vec<String>)`, sorted by name.
+ */
+export function serdeFallbacks(model: Model): string[] {
+  const ctx = { decls: new Map(model.decls.map((d) => [d.name, d])), checks: new Checks(model.decls) };
+  return model.decls
+    .flatMap((d) => {
+      if (d.kind !== "alias" || ctx.checks.ownType(d)) return [];
+      const target = plainTarget(ctx, d.type);
+      return target.kind === "ref" ? [] : [`${d.name} (${typeText(target)})`];
+    })
+    .sort(compare);
 }
 
 function moduleNames(modules: readonly { schema: string; name: string }[]): Map<string, string> {
@@ -409,7 +439,12 @@ function rustModule(
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
     `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
-    ...decls.map((decl) => declaration(ctx, decl) + (ctx.llm.has(decl.name) ? llmFunction(ctx, decl) : "")),
+    ...decls.map(
+      (decl) =>
+        declaration(ctx, decl) +
+        (ctx.bridge && (decl.kind !== "alias" || ctx.checks.ownType(decl)) ? bridgeImpl(decl.name) : "") +
+        (ctx.llm.has(decl.name) ? llmFunction(ctx, decl) : ""),
+    ),
   ];
   return parts.join("\n");
 }
@@ -441,6 +476,20 @@ function llmFunction(ctx: Ctx, decl: Decl): string {
     `\n${lines.map((l) => (l === "" ? "///\n" : `/// ${l}\n`)).join("")}` +
     `pub fn ${name}(text: &str) -> Result<${decl.name}, ${HELPERS}::DecodeError> {\n` +
     `    ${HELPERS}::from_llm(${text}, ${String(isWrapped(decl))})\n}\n`
+  );
+}
+
+/**
+ * serde's `Deserialize` for a type that implements `Decode`, through the strict decoder. Only
+ * with `serdeBridge`.
+ */
+function bridgeImpl(name: string): string {
+  return (
+    `\nimpl<'de> serde::Deserialize<'de> for ${name} {\n` +
+    "    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.\n" +
+    `    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {\n` +
+    `        ${HELPERS}::deserialize_strict(deserializer)\n` +
+    `    }\n}\n`
   );
 }
 

@@ -24,6 +24,13 @@ impl helpers::Decode for Dot {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Dot {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Schema: `marks.json#/$defs/dot/properties/kind`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 pub enum DotKind {
@@ -62,6 +69,13 @@ impl helpers::Decode for DotKind {
             "dot\u{feff}\u{2028}" => Ok(Self::Dot),
             other => Err(helpers::not_in_enum(other, &["dot\u{feff}\u{2028}"])),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for DotKind {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -149,6 +163,13 @@ impl helpers::Decode for Mark {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Mark {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Odd text\u{feff} in\u{2028} a description\u{0} with \ and " and 😀 and */ end.
 ///
 /// Schema: `marks.json#`.
@@ -175,6 +196,13 @@ impl helpers::Decode for Marks {
         };
         object.finish()?;
         Ok(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Marks {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -224,6 +252,13 @@ impl helpers::Decode for MarksFixed {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for MarksFixed {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Schema: `marks.json#/$defs/shape`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(untagged)]
@@ -250,6 +285,13 @@ impl helpers::Decode for Shape {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Shape {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// Schema: `marks.json#/$defs/square`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,6 +312,13 @@ impl helpers::Decode for Square {
         };
         object.finish()?;
         Ok(value)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Square {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -311,5 +360,12 @@ impl helpers::Decode for SquareKind {
             "box\"\\\u{0}\u{1f600}" => Ok(Self::Box),
             other => Err(helpers::not_in_enum(other, &["box\"\\\u{0}\u{1f600}"])),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for SquareKind {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }

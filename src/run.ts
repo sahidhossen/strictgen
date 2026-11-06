@@ -7,7 +7,7 @@ import { differences } from "./check.js";
 import type { Config } from "./config.js";
 import { ConfigError, configFolders, DOCS_FORMATS, loadConfig } from "./config.js";
 import type { DocsFormat } from "./config.js";
-import { examples, UnknownTypeError, writeDocs } from "./examples.js";
+import { configModel, examples, UnknownTypeError, writeDocs } from "./examples.js";
 import { ExplainError, explain, explained, explanationLines } from "./explain.js";
 import { fixCommand } from "./fix-command.js";
 import { formatFiles, FormatterFailedError, FormatterMissingError } from "./format.js";
@@ -19,6 +19,7 @@ import { generateProject, writeOutput } from "./main.js";
 import { GenerateError } from "./payloads.js";
 import type { JsonObject } from "./schema.js";
 import { CodegenError } from "./schema.js";
+import { serdeFallbacks } from "./emit-rust.js";
 import { mainOptions } from "./targets.js";
 
 /** Exit codes: success, generation failed or `check` found a difference, bad usage or config. */
@@ -432,6 +433,15 @@ function generate(config: Config, io: Io): number {
     },
   });
   writeOutput(config.root, options.targets, files, config.header, [config.schemas, config.file]);
+  if (config.targets.rust?.serdeBridge === true) {
+    const fallbacks = serdeFallbacks(configModel(config).model);
+    if (fallbacks.length > 0) {
+      io.err(
+        `notice: targets.rust.serdeBridge can't bridge plain type aliases, so these use serde's own ` +
+          `Deserialize, which is not strict: ${fallbacks.join(", ")}. Decode them with from_json to keep them strict`,
+      );
+    }
+  }
   const names = options.targets.map((t) => t.name).join(", ");
   io.out(`Generated ${String(files.length)} files for ${names}.`);
   return EXIT_OK;

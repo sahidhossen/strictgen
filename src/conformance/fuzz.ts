@@ -251,8 +251,9 @@ function tree(c: Case): Json | undefined {
  * - `ts-unsafe-integer`: an integer beyond 2^53 - 1 either way, at the first such path, which
  *   TypeScript must reject with out_of_range_integer there.
  *
- * The other kinds (string-escaping, key-order, ts-no-bytes-api, go-unmarshal-syntax) never apply:
- * the generator's payloads are UTF-8 JSON text, with no value of `any` type spelled with escapes.
+ * The other kinds (string-escaping, key-order, ts-no-bytes-api, go-unmarshal-syntax,
+ * serde-outer-parse) never apply: the generator's payloads are UTF-8 JSON text, with no value of
+ * `any` type spelled with escapes.
  */
 export function fuzzMarks(c: Case): Mark[] {
   const out = vectorMarks({ ...c, valid: true });

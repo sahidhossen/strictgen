@@ -24,6 +24,13 @@ impl helpers::Decode for Code {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Code {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// At most two codes.
 ///
 /// Schema: `order.json#/$defs/codes`.
@@ -38,6 +45,13 @@ impl helpers::Decode for Codes {
 
     fn check(&self) -> Result<(), helpers::DecodeError> {
         helpers::check_items(&self.0, None, Some(2), helpers::Decode::check)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Codes {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -71,6 +85,13 @@ impl helpers::Decode for Line {
             helpers::check_integer(self.count, &[(">=", 1, "1")]),
         )?;
         Ok(())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Line {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }
 
@@ -188,6 +209,13 @@ impl helpers::Decode for Order {
     }
 }
 
+impl<'de> serde::Deserialize<'de> for Order {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
+    }
+}
+
 /// A size as a number from 1, or as a label of at most 2 characters.
 ///
 /// Schema: `order.json#/properties/size`.
@@ -216,5 +244,12 @@ impl helpers::Decode for OrderSize {
             Self::String(value) => helpers::check_length(value, None, Some(2)),
             Self::Integer(value) => helpers::check_integer(*value, &[(">=", 1, "1")]),
         }
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for OrderSize {
+    /// Decodes the value's raw JSON text from serde_json strictly, with `Decode::from_json`.
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        helpers::deserialize_strict(deserializer)
     }
 }

@@ -12,6 +12,11 @@
     },
     {
       "case": "Code/invalid/not-utf8-at-the-root",
+      "kind": "serde-outer-parse",
+      "reason": "serde_json::from_slice reads the text around the bridged value itself and refuses a byte 0xFF outside a string with its own syntax error, before the serde bridge gets any raw text. from_json and the registry give invalid_json."
+    },
+    {
+      "case": "Code/invalid/not-utf8-at-the-root",
       "kind": "ts-no-bytes-api",
       "reason": "The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them: the caller's UTF-8 decoding rejects them first. TypeScript is held to invalid_json at the root; Rust and Go are compared on every field."
     },
@@ -67,6 +72,11 @@
     },
     {
       "case": "Note/invalid/not-utf8-in-a-string",
+      "kind": "serde-outer-parse",
+      "reason": "serde_json::from_slice checks that the raw text it hands the serde bridge is UTF-8, and refuses the byte 0xFF in a string with its own error before the bridge runs. from_json and the registry give invalid_json."
+    },
+    {
+      "case": "Note/invalid/not-utf8-in-a-string",
       "kind": "ts-no-bytes-api",
       "reason": "The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them: the caller's UTF-8 decoding rejects them first. TypeScript is held to invalid_json at the root; Rust and Go are compared on every field."
     },
@@ -111,6 +121,11 @@
       "reason": "json.Unmarshal checks the syntax itself before the generated decoder runs, so for text that isn't JSON Go's public entry point in strict mode returns its own *json.SyntaxError. The registry, Report[T] and the other languages give the shared invalid_json error."
     },
     {
+      "case": "ShopOrder/invalid/invalid-json-in-unknown-value",
+      "kind": "serde-outer-parse",
+      "reason": "serde_json::from_slice checks the syntax of the whole value while it collects the raw text for the serde bridge, so it refuses the bad value under /extra/1 with its own syntax error before the bridge runs. from_json and the registry give invalid_json at /extra/1."
+    },
+    {
       "case": "Text/valid/space-line-separator",
       "kind": "line-separator-escaping",
       "reason": "Go's encoder escapes U+2028 and U+2029, so JSON pasted into a script can't break it, where Rust and TypeScript write the characters. Both spell the same string, so the canonical bytes are equal."
@@ -119,6 +134,11 @@
       "case": "UserId/invalid/byte-order-mark",
       "kind": "go-unmarshal-syntax",
       "reason": "json.Unmarshal checks the syntax itself before the generated decoder runs, so for text that isn't JSON Go's public entry point in strict mode returns its own *json.SyntaxError. The registry, Report[T] and the other languages give the shared invalid_json error."
+    },
+    {
+      "case": "UserId/invalid/byte-order-mark",
+      "kind": "serde-outer-parse",
+      "reason": "serde_json::from_slice reads the text around the bridged value itself and refuses a leading byte order mark with its own syntax error, before the serde bridge gets any raw text. from_json and the registry give invalid_json."
     }
   ]
 }

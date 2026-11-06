@@ -48,8 +48,9 @@ const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 /** Runs one request through the generated TypeScript, as the binaries do. `modules` are by package name. */
 export function runRequest(modules: Readonly<Record<string, TsModule>>, request: Request): Result {
   // decodeXFromJson and reportXFromJson are the public entry points, and what the fixture tests
-  // call, so both entries decode the same way.
-  if (request.entry !== "public" && request.entry !== "registry") throw new RunnerError(`entry ${String(request.entry)} is not supported`);
+  // call, so both entries decode the same way. TypeScript has no serde bridge, so the serde entry,
+  // Rust's, is compared with them too.
+  if (request.entry !== "public" && request.entry !== "registry" && request.entry !== "serde") throw new RunnerError(`entry ${String(request.entry)} is not supported`);
   if (request.decoder !== "normal" && request.decoder !== "llm" && request.decoder !== "cleanup") {
     throw new RunnerError(`decoder ${String(request.decoder)} is not supported`);
   }

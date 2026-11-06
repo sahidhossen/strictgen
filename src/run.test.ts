@@ -194,6 +194,29 @@ describe("generate", () => {
     }
   });
 
+  it("names the plain aliases the serde bridge can't cover, once, sorted, only with serdeBridge on", () => {
+    const lib = {
+      $id: `${BASE}lib.json`,
+      title: "Lib",
+      description: "Defs.",
+      $defs: {
+        tags: { description: "Tags.", type: "array", items: { type: "string" } },
+        count: { description: "A count.", type: "integer" },
+        order: { description: "An order.", $ref: `${BASE}order.json` },
+      },
+    };
+    const notice =
+      "notice: targets.rust.serdeBridge can't bridge plain type aliases, so these use serde's own Deserialize, " +
+      "which is not strict: Count (i64), Tags (Vec<String>). Decode them with from_json to keep them strict";
+    for (const serdeBridge of [true, false]) {
+      const root = project({ targets: { rust: { out: "rust/gen", serdeBridge } }, format: { rust: "none" } });
+      writeFileSync(join(root, "schemas", "lib.json"), JSON.stringify(lib));
+      const result = cli(root, []);
+      expect(result.code).toBe(EXIT_OK);
+      expect(result.err).toEqual(serdeBridge ? [notice] : []);
+    }
+  });
+
   it("exits 1 with the schema path when a schema is outside the conventions", () => {
     const root = project();
     writeFileSync(join(root, "schemas", "order.json"), JSON.stringify({ ...order, $id: "x" }));

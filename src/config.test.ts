@@ -48,6 +48,7 @@ const FULL = {
       allow: [{ lint: "clippy::doc_markdown", reason: "keys come without backticks" }],
       embedSchemas: true,
       read: "report",
+      serdeBridge: true,
     },
     go: { out: "go/types", package: "orders", shared: false, fixtures: true, read: "strict" },
     typescript: { out: "src/generated", decoders: true, read: "strict" },
@@ -80,6 +81,7 @@ describe("config defaults", () => {
       allow: DEFAULT_ALLOW,
       embedSchemas: false,
       read: "strict",
+      serdeBridge: false,
     });
     expect(parse({ targets: { rust: { out: "gen", fixtures: false } } }).targets.rust).not.toHaveProperty(
       "fixtures",
@@ -114,6 +116,7 @@ describe("config defaults", () => {
       allow: [{ lint: "clippy::doc_markdown", reason: "keys come without backticks" }],
       embedSchemas: true,
       read: "report",
+      serdeBridge: true,
     });
     expect(config.targets.go).toEqual({
       out: join(ROOT, "go/types"),
@@ -149,6 +152,7 @@ describe("config defaults", () => {
     const rust = defs.rust?.properties ?? {};
     expect(rust.allow?.default).toEqual(config.targets.rust?.allow);
     expect(rust.embedSchemas?.default).toBe(config.targets.rust?.embedSchemas);
+    expect(rust.serdeBridge?.default).toBe(config.targets.rust?.serdeBridge);
     expect(rust.fixtures?.default).toBe(false);
     const go = defs.go?.properties ?? {};
     expect(go.package?.default).toBe(config.targets.go?.package);
@@ -300,6 +304,7 @@ const INVALID: readonly (readonly [string, unknown, string, string])[] = [
   ["allow with a bad lint", { targets: { rust: { out: "r", allow: [{ lint: "Clippy::X", reason: "r" }] } } }, "targets.rust.allow[0].lint", "is not a lint name"],
   ["allow with a two-line reason", { targets: { rust: { out: "r", allow: [{ lint: "dead_code", reason: "a\nb" }] } } }, "targets.rust.allow[0].reason", "one line"],
   ["embedSchemas not a boolean", { targets: { rust: { out: "r", embedSchemas: "no" } } }, "targets.rust.embedSchemas", "true or false"],
+  ["serdeBridge not a boolean", { targets: { rust: { out: "r", serdeBridge: 1 } } }, "targets.rust.serdeBridge", "true or false"],
   ["Go package with a dash", { targets: { go: { out: "g", package: "my-types" } } }, "targets.go.package", "is not a Go identifier"],
   ["Go package starting with a digit", { targets: { go: { out: "g", package: "2types" } } }, "targets.go.package", "is not a Go identifier"],
   ["Go package that is a keyword", { targets: { go: { out: "g", package: "type" } } }, "targets.go.package", "can't name a Go package"],

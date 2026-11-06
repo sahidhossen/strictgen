@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Case, Mark, MarkKind } from "./cases.js";
 import { MARK_KINDS } from "./cases.js";
 import type { Disagreement, Run } from "./compare.js";
-import { around, cell, compareRun, firstDifference, table, TS_SAFE_RANGE, usedMarks } from "./compare.js";
+import { around, bridgeMessage, cell, compareRun, firstDifference, table, TS_SAFE_RANGE, usedMarks } from "./compare.js";
 import type { ErrorFields, Language, Result, Variant } from "./protocol.js";
 import { LANGUAGES, variantName } from "./protocol.js";
 import { compareAll, requestsFor, variants } from "./suite.js";
@@ -255,6 +255,48 @@ describe("marks that take a language out", () => {
     });
   });
 
+  describe("serde-outer-parse", () => {
+    const c = invalidCase("[1,]", "/1", "invalid_json");
+    const m = mark("serde-outer-parse", { case: c.id });
+    const shared = rejected({ path: "/1", code: "invalid_json" });
+    const rust = rejected({ path: "", code: "serde_json.Error", message: "expected value at line 1 column 4" });
+    const SERDE: Variant = { ...STRICT, entry: "serde" };
+
+    it("applies to Rust's serde entry only, in both read modes", () => {
+      for (const variant of [SERDE, { ...SERDE, mode: "report" as const }]) {
+        expect(compareRun(run(c, { rust, go: shared, ts: shared }, variant), [m]), variantName(variant)).toEqual([]);
+        expect(fields(compareRun(run(c, { rust, go: shared, ts: shared }, variant), [])), variantName(variant)).toEqual(["path", "code", "message"]);
+      }
+      for (const variant of [STRICT, REPORT, { ...STRICT, entry: "registry" as const }]) {
+        expect(fields(compareRun(run(c, { rust, go: shared, ts: shared }, variant), [m])), variantName(variant)).toEqual(["path", "code", "message"]);
+        expect(compareRun(run(c, every(shared), variant), [m])).toEqual([]);
+      }
+    });
+
+    it("holds Rust to serde_json's own error at the root", () => {
+      expect(fields(compareRun(run(c, every(shared), SERDE), [m]))).toEqual(["mark serde-outer-parse"]);
+      const accepting = { rust: accepted("[1]"), go: shared, ts: shared };
+      expect(fields(compareRun(run(c, accepting, SERDE), [m]))).toEqual(["mark serde-outer-parse"]);
+      const deeper = rejected({ path: "/1", code: "serde_json.Error" });
+      expect(fields(compareRun(run(c, { rust: deeper, go: shared, ts: shared }, SERDE), [m]))).toEqual(["mark serde-outer-parse"]);
+    });
+
+    it("doesn't hide a bridge error, a strict compact form, behind serde_json's code", () => {
+      for (const message of ["/1 invalid_json, found an invalid value at offset 3 at line 1 column 4", "missing_key", "/id missing_key"]) {
+        const bridge = rejected({ path: "", code: "serde_json.Error", message });
+        expect(fields(compareRun(run(c, { rust: bridge, go: shared, ts: shared }, SERDE), [m])), message).toEqual(["mark serde-outer-parse"]);
+      }
+    });
+
+    it("tells serde_json's own messages from the bridge's", () => {
+      expect(bridgeMessage("expected value at line 1 column 1")).toBe(false);
+      expect(bridgeMessage("invalid unicode code point at line 1 column 12")).toBe(false);
+      expect(bridgeMessage("trailing characters at line 1 column 9")).toBe(false);
+      expect(bridgeMessage("/quantity wrong_type, expected an integer, found 1.0 at line 1 column 93")).toBe(true);
+      expect(bridgeMessage("too_deep, expected at most 127 nested arrays and objects")).toBe(true);
+    });
+  });
+
   it("only apply to their own case", () => {
     const other = validCase('{"n":1}', "Order/valid/other");
     const big = accepted('{"n":1}');
@@ -314,6 +356,7 @@ describe("marks that aren't needed", () => {
       "key-order",
       "line-separator-escaping",
       "number-spelling",
+      "serde-outer-parse",
       "string-escaping",
       "ts-no-bytes-api",
       "ts-unsafe-integer",
@@ -325,7 +368,7 @@ describe("one run over every case", () => {
   it("numbers requests by variant, then case, and puts each result back with its case", () => {
     const cases = [validCase('{"a":1}', "Order/valid/a"), invalidCase("{}", "/id", "missing_key")];
     const list = variants(["strict", "report"]);
-    expect(list.map(variantName)).toEqual(["strict", "strict/registry", "report", "report/registry"]);
+    expect(list.map(variantName)).toEqual(["strict", "strict/registry", "strict/serde", "report", "report/registry", "report/serde"]);
     const requests = requestsFor(cases, list);
     expect(requests.slice(0, 3).map((r) => [r.id, r.mode, r.entry, r.decoder, r.type, r.hex])).toEqual([
       [0, "strict", "public", "normal", "Order", "7b2261223a317d"],
@@ -335,7 +378,8 @@ describe("one run over every case", () => {
     const good = list.flatMap(() => [accepted('{"a":1}'), rejected({ path: "/id", code: "missing_key" })]);
     const results = Object.fromEntries(LANGUAGES.map((l) => [l, good]));
     expect(compareAll(cases, list, results, [], { complete: true })).toEqual([]);
-    const swapped = { ...results, go: good.map((r, i) => (i >= 6 ? (good[i % 2 === 0 ? i + 1 : i - 1] as Result) : r)) };
+    // Requests 8 and 9 are the two cases of report/registry.
+    const swapped = { ...results, go: good.map((r, i) => (i === 8 || i === 9 ? (good[i % 2 === 0 ? i + 1 : i - 1] as Result) : r)) };
     expect(compareAll(cases, list, swapped, [], { complete: true }).map((r) => [r.case, r.variant && variantName(r.variant)])).toEqual([
       ["Order/valid/a", "report/registry"],
       ["Order/invalid/b", "report/registry"],

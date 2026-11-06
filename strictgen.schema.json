@@ -201,7 +201,12 @@
           "type": "boolean",
           "default": false
         },
-        "read": { "$ref": "#/$defs/read" }
+        "read": { "$ref": "#/$defs/read" },
+        "serdeBridge": {
+          "description": "Adds serde's Deserialize to every generated type, so it can sit inside your own serde types. It takes the value's raw JSON text from serde_json and decodes it with the strict decoder, which reports a strict error as a serde error with the compact message. Needs serde_json's raw_value feature. Plain type aliases get no impl of their own: an alias of a generated type uses that type's, and an alias of a standard type, like Vec<String>, uses serde's own, which is not strict, so generate lists those in a notice. docs/serde-bridge.md explains it.",
+          "type": "boolean",
+          "default": false
+        }
       },
       "required": ["out"],
       "additionalProperties": false

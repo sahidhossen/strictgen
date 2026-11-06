@@ -82,7 +82,7 @@ describe("fuzz marks", () => {
   });
 
   it("never apply the kinds the generator's payloads can't need", () => {
-    const never = ["string-escaping", "key-order", "ts-no-bytes-api", "go-unmarshal-syntax"];
+    const never = ["string-escaping", "key-order", "ts-no-bytes-api", "go-unmarshal-syntax", "serde-outer-parse"];
     expect(MARK_KINDS.filter((k) => !never.includes(k)).sort()).toEqual(["html-escaping", "line-separator-escaping", "number-spelling", "ts-unsafe-integer"]);
   });
 });
