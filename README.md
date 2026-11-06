@@ -12,7 +12,7 @@ Nothing crashed. Each language read the same JSON a little differently, and data
 
 ## What it does
 
-- **One schema, three languages.** A strict subset of JSON Schema 2020-12 becomes types and decoders in Rust, Go and TypeScript, for any of the three
+- **One schema, three languages.** A strict subset of JSON Schema 2020-12 becomes types and decoders in Rust, Go and TypeScript. Use two of them or all three
 - **Never silent.** An unknown key fails the decode, or in `report` mode is reported with its path. No mode drops it
 - **Same answer everywhere.** The same accept or reject, the same JSON Pointer, error code and message, and the same bytes when a value is written again
 - **Proven, not promised.** A conformance suite of hundreds of cases and a differential fuzzer run every language on every pull request and fail on any difference
@@ -46,7 +46,30 @@ A schema, from [`examples/quickstart`](examples/quickstart):
 ```
 <!-- /snippet -->
 
-`strictgen generate` writes the types and their decoders:
+A `strictgen.json` next to it names the targets:
+
+<!-- snippet: file examples/quickstart/strictgen.json -->
+```json
+{
+  "$schema": "../../strictgen.schema.json",
+  "schemas": "schemas",
+  "targets": {
+    "rust": { "out": "rust/src/generated" },
+    "go": { "out": "go/types", "package": "types" },
+    "typescript": { "out": "ts/generated" }
+  },
+  "llm": { "profiles": ["openai"], "out": "llm" }
+}
+```
+<!-- /snippet -->
+
+Then one command writes the types and their decoders, formatted with `rustfmt` and `gofmt`:
+
+```bash
+strictgen generate   # writes rust/src/generated, go/types, ts/generated and llm/openai
+```
+
+In Rust, Go and TypeScript:
 
 <!-- snippet: decl examples/quickstart/rust/src/generated/order.rs Order -->
 ```rust
@@ -161,7 +184,7 @@ After the first release:
 npm install --save-dev strictgen    # or: npx strictgen generate
 ```
 
-Single binaries for macOS, Linux and Windows will be attached to each GitHub release, so Rust and Go projects don't need Node. Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
+Single binaries for macOS, Linux and Windows are planned for the first release, so Rust and Go projects won't need Node. Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
 
 ## Docs
 
@@ -176,6 +199,8 @@ Single binaries for macOS, Linux and Windows will be attached to each GitHub rel
 | [LLM profiles](docs/llm.md) | Provider-ready schemas, each profile, the LLM decoders and the cleanup step |
 | [Breaking changes](docs/breaking-changes.md) | `strictgen breaking` and who each change breaks |
 | [Comparison](docs/comparison.md) | quicktype, typify, json-schema-to-typescript, go-jsonschema, typeshare, JSON Type Definition and BAML, and when to pick each |
+| [Rust serde bridge](docs/serde-bridge.md) | The optional `Deserialize` impl, so generated Rust types fit inside your own serde types, still strict |
+| [Playground](playground/README.md) | A static page that runs the generator and the TypeScript decoders in the browser. `pnpm playground:build && pnpm playground:serve` runs it locally |
 | [Conformance suite](conformance/README.md) | The cross-language proof and the fuzzer |
 | [Contributing](CONTRIBUTING.md) | Setup, ground rules, and how to run the proof suite |
 

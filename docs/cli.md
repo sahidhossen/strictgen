@@ -16,9 +16,22 @@ A `strictgen.json` at the project root drives everything. Paths are relative to 
 }
 ```
 
-Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`. TypeScript gets strict decoders next to the types, `decodeXFromJson`, `decodeX`, `encodeX` and their variants, unless `"decoders": false`; [typescript.md](typescript.md) explains them and their number limits. Rust types implement a `Decode` trait, so `User::from_json(text)` decodes strictly. Generated Rust depends on `serde` and `serde_json`, and on the `regex` crate as well when a schema uses `pattern` ([error-codes.md](error-codes.md#patterns)). Rust, Go and TypeScript report the same decode errors, described in [error-codes.md](error-codes.md). Each target reads `strict` by default, failing on unknown keys, or with `"read": "report"` accepts them and reports their paths through one hook and the report functions, the same paths in every language ([read-modes.md](read-modes.md)). [`strictgen.schema.json`](../strictgen.schema.json) documents every option and its default. [`examples/basic`](../examples/basic) has a full example, [`examples/report`](../examples/report) one in report mode, and [`examples/llm`](../examples/llm) one with LLM provider schemas and the cleanup step.
+[`strictgen.schema.json`](../strictgen.schema.json) documents every option and its default. [`examples/basic`](../examples/basic) has a full example, [`examples/report`](../examples/report) one in report mode, and [`examples/llm`](../examples/llm) one with LLM provider schemas and the cleanup step.
 
-With `"llm": { "profiles": ["openai", "anthropic", "gemini"], "out": "llm" }`, strictgen also writes the schema each LLM provider accepts for structured output, per type, projected from the real one: optional fields become nullable, unions become `anyOf`, and constraints a provider doesn't accept move into the description and the decoder. Each language gets an LLM decoder per type, `decodeXFromLlm`, `DecodeXFromLlm` and `decode_x_from_llm`, which reads what the model sends back, maps it to the real type (`null` back to absent) and checks every constraint, with errors in the compact form ready to send back to the model. Profiles are data files that a path in `llm.profiles` can replace. `"cleanup": true` adds a helper to every language that removes a code fence, a byte order mark and trailing commas from model output, and nothing else, which the LLM decoders run first ([llm.md](llm.md)).
+### Each language
+
+- **Rust.** Types implement a `Decode` trait, so `User::from_json(text)` decodes strictly. Generated Rust depends on `serde` and `serde_json`, and also on the `regex` crate when a schema uses `pattern` ([error-codes.md](error-codes.md#patterns)). `"serdeBridge": true` also gives the types serde's `Deserialize`, running the same strict decoder, so they can sit inside your own serde types. Plain aliases of standard types, like `Vec<String>`, can't get the impl and use serde's own, which is not strict; `generate` lists them in a notice ([serde-bridge.md](serde-bridge.md))
+- **Go.** `json.Unmarshal` into a generated type decodes strictly, and `DecodeX` decodes a tagged union. Only the standard library is used
+- **TypeScript.** Strict decoders sit next to the types, `decodeXFromJson`, `decodeX`, `encodeX` and their variants, unless `"decoders": false`. [typescript.md](typescript.md) explains them and their number limits
+- **Fixtures.** Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`
+
+All three report the same decode errors ([error-codes.md](error-codes.md)). Each target reads in `strict` mode by default, failing on unknown keys. With `"read": "report"` it accepts them and reports their paths, through one hook and the report functions, with the same paths in every language ([read-modes.md](read-modes.md)).
+
+### LLM output
+
+With `"llm": { "profiles": ["openai", "anthropic", "gemini"], "out": "llm" }`, strictgen also writes, per type, the schema each LLM provider accepts for structured output, projected from the real one. Optional fields become nullable, unions become `anyOf`, and constraints a provider doesn't accept move into the description and the decoder.
+
+Each language gets an LLM decoder per type: `decodeXFromLlm`, `DecodeXFromLlm` and `decode_x_from_llm`. It reads what the model sends back, maps it to the real type (`null` back to absent) and checks every constraint, with errors in the compact form, ready to send back to the model. Profiles are data files, and a path in `llm.profiles` can replace one. `"cleanup": true` adds a helper to every language that removes a code fence, a byte order mark and trailing commas from model output, and nothing else; the LLM decoders run it first ([llm.md](llm.md)).
 
 ## Command line
 

@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 
 import { ToolchainError } from "./conformance/drivers.js";
 import { DriverError } from "./conformance/protocol.js";
-import { SnippetError, staleFiles } from "./snippets.js";
+import { checkToolchains, SnippetError, staleFiles } from "./snippets.js";
 
 async function main(args: readonly string[]): Promise<number> {
   const check = args.includes("--check");
@@ -25,6 +25,7 @@ async function main(args: readonly string[]): Promise<number> {
   }
   const root = fileURLToPath(new URL("..", import.meta.url));
   try {
+    checkToolchains();
     const stale = await staleFiles(root);
     if (check) {
       for (const s of stale) process.stderr.write(`docs: ${s.file} is out of date, run pnpm docs\n`);

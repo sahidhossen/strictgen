@@ -2,6 +2,8 @@
 
 Every schema becomes one model, and every language is emitted from the model with the same rules. This page lists each construct: its kind in the model ([`src/model.ts`](../src/model.ts)), what Rust, Go and TypeScript get, and what an LLM provider-ready schema makes of it.
 
+Every Rust type decodes with its own strict reader, `T::from_json`. With `"serdeBridge": true` the types also implement serde's `Deserialize`, which runs the same reader ([serde-bridge.md](serde-bridge.md)).
+
 To see one type of your own schemas, run `strictgen explain <file.json#/pointer>` ([cli.md](cli.md#explain)). [`examples/basic`](../examples/basic) has generated code for most rows.
 
 ## The table
@@ -10,7 +12,7 @@ The rows are the mapping rules of the conformance suite (`RULES` in [`src/confor
 
 | Rule | Construct | Model | Rust | Go | TypeScript | LLM schema |
 | ---- | --------- | ----- | ---- | -- | ---------- | ---------- |
-| `object` | A closed object with `properties` | `struct` | `struct`, with `serde` renames to the keys | `struct`, with `json` tags | `interface` | Closed, every property listed in `required` |
+| `object` | A closed object with `properties` | `struct` | `struct`, with `serde` renames to the keys; `Deserialize` too with the [serde bridge](serde-bridge.md) | `struct`, with `json` tags | `interface` | Closed, every property listed in `required` |
 | `object.required` | A key in `required` | field, `required: true` | `T` | `T` | `key: T` | Required |
 | `object.optional` | A key not in `required` | field, `required: false` | `Option<T>`, left out when `None` | `*T` with `omitempty` | `key?: T` | Required and nullable: `anyOf: [T, null]`, `null` read as absent |
 | `object.exactly-one` | A `oneOf` beside properties whose branches only list `required` keys | `untagged` of one `struct` per choice, each with `forbidden` keys | `enum` with one struct per choice | `struct` with one pointer per choice, exactly one set | Union of one `interface` per choice, the other choices' keys typed `never` | `anyOf` of the choices |

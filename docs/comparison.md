@@ -13,7 +13,7 @@ strictgen does one narrow thing: from a strict subset of JSON Schema, it generat
 | [go-jsonschema](https://github.com/omissis/go-jsonschema) | JSON Schema | Go | Yes: required keys, enums and several constraints | Ignored by default | Go only, with YAML too and wider keyword support |
 | [typeshare](https://github.com/1Password/typeshare) | Rust source | TypeScript, Swift, Kotlin, Scala, and Go and Python as experiments | No | Not its concern | Rust is the source of truth for mobile or web clients |
 | [JSON Type Definition](https://www.rfc-editor.org/rfc/rfc8927.html) | JTD schemas (RFC 8927) | C#, Go, Java, Python, Rust, TypeScript, with [jtd-codegen](https://github.com/jsontypedef/json-typedef-codegen) | With separate validators | Rejected by default | You can adopt a small schema language that is strict by default |
-| [BAML](https://github.com/BoundaryML/baml) | Its own language for LLM functions | Python, TypeScript, Ruby and Go clients, and OpenAPI | Yes, with lenient repair of model output | Repaired by lenient parsing | You want prompts, model calls, tests and parsing of LLM output in one tool |
+| [BAML](https://github.com/BoundaryML/baml) | Its own language for LLM functions | Python, TypeScript, Ruby and Go clients, and others like Rust, Java and C# over REST | Yes, with lenient repair of model output | Repaired by lenient parsing | You want prompts, model calls, tests and parsing of LLM output in one tool |
 
 ## quicktype
 
@@ -25,13 +25,13 @@ Pick quicktype when you have example payloads and no schema, when you need a lan
 
 [typify](https://github.com/oxidecomputer/typify) turns JSON Schema into idiomatic Rust types with `serde`, through a macro (`import_types!`), the `cargo typify` command, or a builder for `build.rs`. A closed object (`additionalProperties: false`) gets `#[serde(deny_unknown_fields)]`, so unknown keys fail. Its README notes that value constraints, like bounded numbers, aren't enforced by the generated types.
 
-Pick typify for a Rust-only project, for broad JSON Schema support, or when you want plain `serde` derives that fit the rest of your Rust code. strictgen accepts a smaller subset, and in return checks every constraint it accepts in the decoder, reports errors with a JSON Pointer and a stable code, and generates Go and TypeScript that agree with the Rust. Its Rust types use a strict decoder of their own (`from_json`) rather than `serde` `Deserialize`.
+Pick typify for a Rust-only project, for broad JSON Schema support, or when you want plain `serde` derives that fit the rest of your Rust code. strictgen accepts a smaller subset, and in return checks every constraint it accepts in the decoder, reports errors with a JSON Pointer and a stable code, and generates Go and TypeScript that agree with the Rust. Its Rust types use a strict decoder of their own (`from_json`). They get `serde` `Deserialize` only with the optional [serde bridge](serde-bridge.md), which runs that same strict decoder, so they can sit inside your own serde types.
 
 ## json-schema-to-typescript
 
 [json-schema-to-typescript](https://github.com/bcherny/json-schema-to-typescript) compiles JSON Schema to TypeScript declarations: types only, no run time checks. Its `additionalProperties` option defaults to `true` for a schema that doesn't set it, so open objects get an index signature. Its schema model is draft 4, with most of drafts 6 and 7, and a list of 2019-09 and 2020-12 keywords it ignores.
 
-Pick it when you need types for a large or loose schema and validate data with a validator such as [Ajv](https://ajv.js.org), which supports drafts up to 2020-12. strictgen differs in generating the decoder too, so the type and the check can't drift, and in failing generation on a keyword it can't check rather than ignoring it.
+Pick it when you need types for a large or loose schema and validate data with a validator such as [Ajv](https://ajv.js.org), which supports drafts up to 2020-12. strictgen differs in generating the decoder too, so the type and the check can't drift, and in failing generation on most keywords it can't check rather than ignoring them. Two object keywords are still read without being checked, and will fail generation too ([schemas.md](schemas.md#not-checked-yet)).
 
 ## go-jsonschema
 
@@ -53,14 +53,14 @@ Pick JTD when you can choose the schema language and want strict defaults and va
 
 ## BAML
 
-[BAML](https://github.com/BoundaryML/baml) ([docs](https://docs.boundaryml.com)) is a language for LLM functions: prompts, the types they return, model clients, tests and an editor playground, with generated clients for Python, TypeScript, Ruby and Go, and an OpenAPI output. Its [schema-aligned parsing](https://boundaryml.com/blog/schema-aligned-parsing) repairs malformed model output: missing quotes and commas, comments, extra prose around the JSON, misnamed keys. At the time of writing, its docs describe the current language as v0 and a v1 in public beta.
+[BAML](https://github.com/BoundaryML/baml) ([docs](https://docs.boundaryml.com)) is a language for LLM functions: prompts, the types they return, model clients, tests and an editor playground, with generated clients for Python, TypeScript, Ruby and Go. Other languages, like Rust, Java and C#, call BAML functions over a [REST API](https://docs.boundaryml.com/guide/installation-language/rest-api-other-languages), with clients generated from OpenAPI (a preview feature). Its [schema-aligned parsing](https://boundaryml.com/blog/schema-aligned-parsing) repairs malformed model output: missing quotes and commas, comments, extra prose around the JSON, misnamed keys.
 
 Pick BAML when you want the whole LLM workflow in one tool, and when getting a usable answer from imperfect output matters more than rejecting it. strictgen is the other way round. It gives each provider a schema it accepts, then decodes the answer strictly, with the same checks as every other payload, and returns a compact error to send back to the model. Its cleanup step fixes only a code fence, a byte order mark and trailing commas, never a key or a value. Prompts, model calls and retries stay in your code.
 
 ## Where strictgen differs
 
 - **Proven agreement.** The [conformance suite](../conformance) runs every case through Rust, Go and TypeScript, in both read modes, through the public entry points and the LLM decoders, and fails on any difference in the result, the error, the unknown keys or the bytes written again. A differential fuzzer runs random payloads and near misses through the same decoders on every pull request, and a longer run every night
-- **No silent drops.** An unknown key fails the decode, or is reported in `report` mode. A keyword strictgen can't check the same way in every language fails generation instead of being ignored
+- **No silent drops.** An unknown key fails the decode, or is reported in `report` mode. A keyword strictgen can't check the same way in every language fails generation instead of being ignored, with one known gap that is being closed ([schemas.md](schemas.md#not-checked-yet))
 - **Breaking checks.** [`strictgen breaking`](breaking-changes.md) compares two versions of the schemas and says who each change breaks: strict consumers, all consumers or producers
 - **LLM profiles.** The same schema becomes the subset each provider accepts ([llm.md](llm.md)), and the decoders check what the provider couldn't
 

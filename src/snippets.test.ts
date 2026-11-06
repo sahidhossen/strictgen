@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { RULES as MAPPING_RULES } from "./conformance/coverage.js";
 import { ERROR_CODES } from "./errors.js";
 import { RULE_IDS } from "./rules.js";
-import { CODE_CASES, declaration, docsFiles, fill, markers, region, SnippetError, Snippets } from "./snippets.js";
+import { checkToolchains, CODE_CASES, declaration, docsFiles, fill, markers, region, SnippetError, Snippets, TOOLCHAINS_NEEDED } from "./snippets.js";
 import { RULE_EXAMPLES } from "./snippets-rules.js";
 
 const ROOT = join(import.meta.dirname, "..");
@@ -38,6 +38,12 @@ describe("snippet markers", () => {
     const text = "a\n<!-- snippet: x -->\nold\nlines\n<!-- /snippet -->\nb\n";
     const out = await fill(text, "t.md", (spec) => Promise.resolve(`new ${spec}\n`));
     expect(out).toBe("a\n<!-- snippet: x -->\nnew x\n<!-- /snippet -->\nb\n");
+  });
+
+  it("names the toolchains it needs in one line when they don't run", () => {
+    expect(() => checkToolchains({ PATH: join(ROOT, "no-such-folder") })).toThrow(
+      new SnippetError(`${TOOLCHAINS_NEEDED}: rustc is not installed or doesn't run`),
+    );
   });
 
   it("fails on an unknown kind", async () => {

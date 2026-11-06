@@ -1,6 +1,6 @@
 # Supported schemas
 
-strictgen reads a strict subset of [JSON Schema 2020-12](https://json-schema.org/draft/2020-12). Everything in the subset maps the same way in Rust, Go and TypeScript. Anything outside it fails generation with the file, the JSON Pointer, a stable rule id and, when there is an obvious fix, a hint. Nothing is ignored quietly, so a schema that generates means what every language does with it.
+strictgen reads a strict subset of [JSON Schema 2020-12](https://json-schema.org/draft/2020-12). Everything in the subset maps the same way in Rust, Go and TypeScript. Anything outside it fails generation with the file, the JSON Pointer, a stable rule id and, when there is an obvious fix, a hint. The aim is that nothing is ignored quietly, so a schema that generates means what every language does with it. Today [two object keywords](#not-checked-yet) are the exception: they are read, but not yet checked.
 
 Already have schemas that don't fit? [`strictgen fix`](#moving-an-existing-schema-in) rewrites most of them into the subset.
 
@@ -60,7 +60,10 @@ An object takes other keys only as data, with a schema for their values: `"addit
 - `required` keys must be present. Other keys are optional: absent, or present with a value, never `null`
 - `allOf` merges objects: the base's properties and required keys join the object's. A property declared twice must have the same schema (`property-redeclared`)
 - `oneOf` beside properties, with branches that only list `required` keys, is an exactly-one choice: one of the keys must be present, and the others must not
-- `anyOf` with branches that only list `required` keys, and `if` / `then` / `else` with branches that only give `properties` and `required`, are read for the type: the properties they name become optional fields. The decoders don't check the condition itself yet
+
+### Not checked yet
+
+`anyOf` with branches that only list `required` keys ("at least one of these"), and `if` / `then` / `else` with branches that only give `properties` and `required`, are read for the type: the properties they name become optional fields. The decoders don't check the condition, so `{}` decodes for `"anyOf": [{ "required": ["email"] }, { "required": ["phone"] }]`. That breaks the rule that nothing is ignored, so a coming release makes both fail generation. Until then, don't rely on them for validation: use an exactly-one `oneOf`, or check the condition in your own code.
 
 ## IDs
 
@@ -71,7 +74,8 @@ With the `ids` config option, string defs of one file whose name ends in a suffi
 | Kind | Keywords |
 | ---- | -------- |
 | Any schema | `type` (one of `object`, `array`, `string`, `integer`, `number`, `boolean`), `$ref`, `const`, `enum`, `oneOf`, `not` (only as `{ "not": { "const": null } }`), `description`, `$comment`, `title`, `default`, `examples` |
-| Objects | `properties`, `required`, `additionalProperties`, `unevaluatedProperties`, `propertyNames`, `allOf`, `oneOf`, `anyOf`, `if`, `then`, `else`, `minProperties` and `maxProperties` on a map |
+| Objects | `properties`, `required`, `additionalProperties`, `unevaluatedProperties`, `propertyNames`, `allOf`, `oneOf`, `minProperties` and `maxProperties` on a map |
+| Objects, not checked yet | `anyOf` whose branches only list `required` keys, and `if` / `then` / `else`. Read for the type, but the decoders don't check the condition. They [will fail generation](#not-checked-yet) |
 | Arrays | `items`, `minItems`, `maxItems`, `uniqueItems` |
 | Strings | `minLength`, `maxLength`, `pattern` (a [portable subset](error-codes.md#patterns)), `format` (`date-time`, `date`, `uuid`) |
 | Integers | `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf` |
@@ -82,7 +86,7 @@ With the `ids` config option, string defs of one file whose name ends in a suffi
 
 ## Generation rules
 
-Every rule id below is stable across releases. Each example is the schema, with its `$schema` and `$id` header left out, the config when it isn't just a TypeScript target, the error `strictgen generate` prints, and the schema fixed. `pnpm docs` runs each one, so the errors here are the real ones and every fixed schema generates.
+Every rule id below is stable across releases. In the `invalid-json` example, the words after `not valid JSON:` are Node's `JSON.parse` message, which changes between Node versions, so the docs show a placeholder. Each example is the schema, with its `$schema` and `$id` header left out, the config when it isn't just a TypeScript target, the error `strictgen generate` prints, and the schema fixed. `pnpm docs` runs each one, so the errors here are the real ones and every fixed schema generates.
 
 
 ### `read-failed`
@@ -127,7 +131,7 @@ A schema file is not valid JSON.
 ```
 
 ```text
-error: order.json: invalid-json: not valid JSON: Expected double-quoted property name in JSON at position 38 (line 1 column 39)
+error: order.json: invalid-json: not valid JSON: <the JSON.parse message>
 ```
 
 Fixed:

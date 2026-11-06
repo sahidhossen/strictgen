@@ -37,7 +37,8 @@ import type { Language, Request, Result } from "./conformance/protocol.js";
 import { withScratch } from "./conformance/suite.js";
 import { compactOf } from "./conformance/vectors.js";
 import { ERROR_CODES } from "./errors.js";
-import { builtinProfile, PROFILE_KEYWORDS } from "./llm-profile.js";
+import { isBuiltinProfile, PROFILE_KEYWORDS } from "./llm-profile.js";
+import { builtinProfile } from "./profile-files.js";
 
 /** The formats strictgen checks, in the order the docs list them. */
 const FORMATS = ["date-time", "date", "uuid"] as const;
@@ -229,7 +230,10 @@ export function ruleSnippet(id: string): string {
   const example = (RULE_EXAMPLES as Readonly<Record<string, RuleExample | null | undefined>>)[id];
   if (example === undefined || example === null) throw new SnippetError(`no example for the rule ${id} in src/snippets-rules.ts`);
   const broken = runExample(example, example.files);
-  const lines = broken.err.filter((l) => l.includes(`: ${id}: `) || l.startsWith(`error: ${id}: `));
+  const lines = broken.err
+    .filter((l) => l.includes(`: ${id}: `) || l.startsWith(`error: ${id}: `))
+    // What follows is V8's JSON.parse message, whose words change between Node versions.
+    .map((l) => l.replace(/(: invalid-json: not valid JSON: ).+$/, "$1<the JSON.parse message>"));
   if (broken.status === 0 || lines.length === 0) {
     throw new SnippetError(`the example of ${id} doesn't fail with it: exit ${String(broken.status)}, ${broken.err.join(" | ")}`);
   }
@@ -245,8 +249,8 @@ export function ruleSnippet(id: string): string {
 
 /** The `profile <name>` snippet: what a built in profile keeps and how it maps. */
 export function profileSnippet(name: string): string {
+  if (!isBuiltinProfile(name)) throw new SnippetError(`no built in profile ${name}`);
   const p = builtinProfile(name);
-  if (p === undefined) throw new SnippetError(`no built in profile ${name}`);
   const limits = Object.entries(p.limits ?? {}).map(([k, v]) => `\`${k}\` ${typeof v === "object" ? `${String(v.values)} values, ${String(v.maxSize)} characters` : String(v)}`);
   // Every constraint the provider doesn't take goes into the description as a hint, and only
   // the decoder checks it. A const it doesn't take is written as an enum of one value instead.
@@ -332,6 +336,31 @@ async function quickstart(root: string, decoder: Decoder): Promise<Map<Language,
     }
   }
   return results;
+}
+
+/** The toolchains `pnpm docs` needs, as one line for a run without them. */
+export const TOOLCHAINS_NEEDED = "needs Rust 1.97.0 (RUSTUP_TOOLCHAIN=1.97.0) and Go";
+
+/** The Rust the docs are made with: CI's, whose rustfmt formats the explain output. */
+const RUST_VERSION = /^rustc 1\.97\.\d+ /;
+
+/**
+ * Checks that Rust 1.97 with rustfmt, and Go, run, and throws one SnippetError naming what is
+ * missing, rather than a raw ENOENT or a cargo error about an edition later.
+ */
+export function checkToolchains(env: NodeJS.ProcessEnv = process.env): void {
+  const version = (command: string, args: readonly string[]): string | undefined => {
+    const r = spawnSync(command, args, { env, encoding: "utf8", timeout: 60_000, killSignal: "SIGKILL" });
+    return r.error === undefined && r.status === 0 ? r.stdout.trim() : undefined;
+  };
+  const rustc = version("rustc", ["--version"]);
+  let problem: string | undefined;
+  if (rustc === undefined) problem = "rustc is not installed or doesn't run";
+  else if (!RUST_VERSION.test(rustc)) problem = `found ${rustc}`;
+  else if (version("rustfmt", ["--version"]) === undefined) problem = "rustfmt is not installed for that toolchain";
+  else if (version("cargo", ["--version"]) === undefined) problem = "cargo doesn't run";
+  else if (version("go", ["version"]) === undefined) problem = "go is not installed or doesn't run";
+  if (problem !== undefined) throw new SnippetError(`${TOOLCHAINS_NEEDED}: ${problem}`);
 }
 
 /** The one code whose message differs by language: each names the integer range it holds. */
