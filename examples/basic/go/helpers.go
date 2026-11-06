@@ -4,6 +4,7 @@ package types
 
 import (
 	"bytes"
+	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,43 +19,153 @@ import (
 // fails, so Go and Rust accept the same documents and decoding stays bounded.
 const maxDepth = 128
 
-// Error codes of input that isn't JSON the decoders read, in DecodeError.Code.
+// foundMax is the number of code points of a string an error shows, before "...".
+const foundMax = 64
+
+// The error codes, in DecodeError.Code. Codes are public API: changing one is a major version.
 const (
-	// CodeInvalidJSON is a syntax error, invalid UTF-8, a lone surrogate, trailing data or a
-	// number out of range.
+	// CodeUnknownKey is a key the type doesn't name, at the key's path.
+	CodeUnknownKey = "unknown_key"
+	// CodeMissingKey is a required key that is absent, at the key's path.
+	CodeMissingKey = "missing_key"
+	// CodeNullNotAllowed is null where the type doesn't take it, like for an optional key.
+	CodeNullNotAllowed = "null_not_allowed"
+	// CodeWrongType is a value of another JSON type, or a fraction for an integer.
+	CodeWrongType = "wrong_type"
+	// CodeBadTag is a tag that no branch of a tagged union has, at the tag's path.
+	CodeBadTag = "bad_tag"
+	// CodeNotInEnum is a string the enum doesn't list.
+	CodeNotInEnum = "not_in_enum"
+	// CodeNotConst is a value other than the const.
+	CodeNotConst = "not_const"
+	// CodeTooShort is a string or array shorter than its minimum.
+	CodeTooShort = "too_short"
+	// CodeTooLong is a string or array longer than its maximum.
+	CodeTooLong = "too_long"
+	// CodeTooSmall is a number below its minimum.
+	CodeTooSmall = "too_small"
+	// CodeTooLarge is a number above its maximum.
+	CodeTooLarge = "too_large"
+	// CodePatternMismatch is a string that doesn't match its pattern.
+	CodePatternMismatch = "pattern_mismatch"
+	// CodeBadFormat is a string that isn't in its format, like date-time.
+	CodeBadFormat = "bad_format"
+	// CodeNotUnique is an array whose items must be unique, with a repeat.
+	CodeNotUnique = "not_unique"
+	// CodeOutOfRangeInteger is an integer the language can't hold exactly.
+	CodeOutOfRangeInteger = "out_of_range_integer"
+	// CodeInvalidJSON is text that isn't JSON: a syntax error, invalid UTF-8, a lone surrogate, data after the value or a number out of range.
 	CodeInvalidJSON = "invalid_json"
-	// CodeDuplicateKey is an object that gives the same key twice.
+	// CodeDuplicateKey is an object that gives the same key twice, at the key's path.
 	CodeDuplicateKey = "duplicate_key"
-	// CodeTooDeep is a value nested in maxDepth or more arrays and objects.
+	// CodeTooDeep is a value inside 128 or more arrays and objects.
 	CodeTooDeep = "too_deep"
 )
 
-// DecodeError is a value that doesn't fit its generated type. Path is a JSON Pointer to the
-// value, empty for the whole input. Code is the error code of a JSON decoding failure, like
-// CodeDuplicateKey, and empty for a value that doesn't fit its type.
+// codeTitles holds the words for each code in a message.
+var codeTitles = map[string]string{
+	CodeUnknownKey:        "unknown key",
+	CodeMissingKey:        "missing key",
+	CodeNullNotAllowed:    "null not allowed",
+	CodeWrongType:         "wrong type",
+	CodeBadTag:            "bad tag",
+	CodeNotInEnum:         "not in enum",
+	CodeNotConst:          "not const",
+	CodeTooShort:          "too short",
+	CodeTooLong:           "too long",
+	CodeTooSmall:          "too small",
+	CodeTooLarge:          "too large",
+	CodePatternMismatch:   "pattern mismatch",
+	CodeBadFormat:         "bad format",
+	CodeNotUnique:         "not unique",
+	CodeOutOfRangeInteger: "out of range integer",
+	CodeInvalidJSON:       "invalid JSON",
+	CodeDuplicateKey:      "duplicate key",
+	CodeTooDeep:           "too deep",
+}
+
+// DecodeError is a value that doesn't fit its generated type, or input that isn't JSON. Rust
+// and TypeScript report the same Path, Code, Expected and Found for the same input, and the
+// same message.
 type DecodeError struct {
-	Path   string
-	Reason string
-	Code   string
+	// Path is a JSON Pointer to the value that failed, like /items/0/price, empty for the
+	// whole input.
+	Path string
+	// Code says what failed, like CodeMissingKey.
+	Code string
+	// Expected is what the type takes there, like "a string", empty when the code has none.
+	Expected string
+	// Found is what the input has there, like 12.5 or "x", empty when the code has none.
+	Found string
 }
 
-// Error returns the path and the reason, like /items/0: kind "card": missing key "number".
-func (e *DecodeError) Error() string {
-	if e.Path == "" {
-		return e.Reason
+// describe builds a message: the path, then head, then expected and found when they are set.
+func describe(path, head, gap, expected, found string) string {
+	text := head
+	if path != "" {
+		text = path + gap + head
 	}
-	return e.Path + ": " + e.Reason
+	if expected != "" {
+		text += ", expected " + expected
+	}
+	if found != "" {
+		text += ", found " + found
+	}
+	return text
 }
 
-// failf returns a DecodeError at the current value.
-func failf(format string, args ...any) *DecodeError {
-	return &DecodeError{Reason: fmt.Sprintf(format, args...)}
+// Error returns the message, like /items/0: wrong type, expected a string, found 1.
+func (e *DecodeError) Error() string {
+	return describe(e.Path, codeTitles[e.Code], ": ", e.Expected, e.Found)
+}
+
+// Compact returns the one-line form, made for logs and for asking an LLM to retry, like
+// /items/0 wrong_type, expected a string, found 1.
+func (e *DecodeError) Compact() string {
+	return describe(e.Path, e.Code, " ", e.Expected, e.Found)
+}
+
+// fail returns a DecodeError at the current value.
+func fail(code, expected, found string) *DecodeError {
+	return &DecodeError{Code: code, Expected: expected, Found: found}
 }
 
 // at moves the error one level down, under an object key or array index.
 func (e *DecodeError) at(segment string) *DecodeError {
-	escaped := strings.ReplaceAll(strings.ReplaceAll(segment, "~", "~0"), "/", "~1")
-	return &DecodeError{Path: "/" + escaped + e.Path, Reason: e.Reason, Code: e.Code}
+	return &DecodeError{Path: pointer(segment) + e.Path, Code: e.Code, Expected: e.Expected, Found: e.Found}
+}
+
+// pointer returns segment as a JSON Pointer segment, with its slash.
+func pointer(segment string) string {
+	return "/" + strings.ReplaceAll(strings.ReplaceAll(segment, "~", "~0"), "/", "~1")
+}
+
+// quote shows a string as errors do in every language: in double quotes, with " and \ escaped
+// by a backslash and control characters (U+0000 to U+001F, U+007F to U+009F), U+2028 and
+// U+2029 as \u and four hex digits. A string of more than foundMax code points shows its first
+// foundMax, then ... after the quote.
+func quote(text string) string {
+	var out strings.Builder
+	out.WriteByte('"')
+	count := 0
+	for _, r := range text {
+		if count == foundMax {
+			out.WriteString("\"...")
+			return out.String()
+		}
+		count++
+		switch {
+		case r == '"' || r == '\\':
+			out.WriteByte('\\')
+			out.WriteRune(r)
+		case r < 0x20 || (r >= 0x7f && r <= 0x9f) || r == 0x2028 || r == 0x2029:
+			fmt.Fprintf(&out, "\\u%04x", r)
+		default:
+			out.WriteRune(r)
+		}
+	}
+	out.WriteByte('"')
+	return out.String()
 }
 
 // node is one parsed JSON value. Input is parsed once, then decoders walk the nodes, so
@@ -68,22 +179,34 @@ type node struct {
 	items  []*node          // the items of an array
 }
 
-// kindName names a node's kind for errors.
-func kindName(kind byte) string {
-	switch kind {
+// foundOf shows a value as errors do: null, true and false, a number as spelled, a string
+// quoted, "an array" and "an object".
+func foundOf(n *node) string {
+	switch n.kind {
 	case '{':
 		return "an object"
 	case '[':
 		return "an array"
 	case '"':
-		return "a string"
+		return quote(n.text)
 	case 'n':
 		return "null"
-	case 't', 'f':
-		return "a boolean"
+	case 't':
+		return "true"
+	case 'f':
+		return "false"
 	default:
-		return "a number"
+		return string(n.raw)
 	}
+}
+
+// mismatch is the error for a value that is not what expected names: CodeNullNotAllowed for
+// null, else CodeWrongType.
+func mismatch(expected string, n *node) *DecodeError {
+	if n.kind == 'n' {
+		return fail(CodeNullNotAllowed, expected, "")
+	}
+	return fail(CodeWrongType, expected, foundOf(n))
 }
 
 // expect fails unless the node is of the given kind.
@@ -91,7 +214,18 @@ func expect(n *node, kind byte) *DecodeError {
 	if n.kind == kind || (kind == 't' && n.kind == 'f') {
 		return nil
 	}
-	return failf("expected %s, found %s", kindName(kind), kindName(n.kind))
+	switch kind {
+	case '{':
+		return mismatch("an object", n)
+	case '[':
+		return mismatch("an array", n)
+	case '"':
+		return mismatch("a string", n)
+	case 't':
+		return mismatch("a boolean", n)
+	default:
+		return mismatch("a number", n)
+	}
 }
 
 // parser reads JSON like serde_json: strict grammar, valid UTF-8, no lone surrogates,
@@ -99,21 +233,24 @@ func expect(n *node, kind byte) *DecodeError {
 type parser struct {
 	data []byte
 	pos  int
+	// path holds the keys and indexes of the values being read, for the path of a failure.
+	path []string
 }
 
-// parse parses a whole JSON document. Every failure carries its error code.
+// parse parses a whole JSON document. Every failure carries its error code and the JSON
+// Pointer of the value being read, and Found gives the byte offset.
 func parse(data []byte) (*node, *DecodeError) {
-	if !utf8.Valid(data) {
-		return nil, failAt(CodeInvalidJSON, invalidUTF8At(data), "not valid UTF-8")
-	}
 	p := &parser{data: data}
+	if !utf8.Valid(data) {
+		return nil, p.failAt(invalidUTF8At(data), "invalid UTF-8")
+	}
 	n, err := p.value(0)
 	if err != nil {
 		return nil, err
 	}
 	p.space()
 	if p.pos != len(p.data) {
-		return nil, failAt(CodeInvalidJSON, p.pos, "trailing characters")
+		return nil, p.fail("trailing characters")
 	}
 	return n, nil
 }
@@ -131,13 +268,22 @@ func invalidUTF8At(data []byte) int {
 	return at
 }
 
-// failAt returns a JSON decoding failure with its error code, at a byte offset.
-func failAt(code string, offset int, reason string) *DecodeError {
-	return &DecodeError{Reason: fmt.Sprintf("invalid JSON at offset %d: %s", offset, reason), Code: code}
+// pointer returns the JSON Pointer of the value being read.
+func (p *parser) pointer() string {
+	var path strings.Builder
+	for _, segment := range p.path {
+		path.WriteString(pointer(segment))
+	}
+	return path.String()
 }
 
-func (p *parser) fail(reason string) *DecodeError {
-	return failAt(CodeInvalidJSON, p.pos, reason)
+// failAt returns a CodeInvalidJSON failure, what was found at a byte offset.
+func (p *parser) failAt(offset int, what string) *DecodeError {
+	return &DecodeError{Path: p.pointer(), Code: CodeInvalidJSON, Found: fmt.Sprintf("%s at offset %d", what, offset)}
+}
+
+func (p *parser) fail(what string) *DecodeError {
+	return p.failAt(p.pos, what)
 }
 
 func (p *parser) space() {
@@ -159,13 +305,18 @@ func (p *parser) accept(c byte) bool {
 func (p *parser) value(depth int) (*node, *DecodeError) {
 	p.space()
 	if p.pos >= len(p.data) {
-		return nil, p.fail("unexpected end of input")
+		return nil, p.fail("an unexpected end of input")
 	}
 	start := p.pos
 	switch c := p.data[p.pos]; c {
 	case '{', '[':
 		if depth+1 >= maxDepth {
-			return nil, failAt(CodeTooDeep, p.pos, fmt.Sprintf("recursion limit exceeded, more than %d nested arrays and objects", maxDepth-1))
+			return nil, &DecodeError{
+				Path:     p.pointer(),
+				Code:     CodeTooDeep,
+				Expected: fmt.Sprintf("at most %d nested arrays and objects", maxDepth-1),
+				Found:    fmt.Sprintf("more at offset %d", p.pos),
+			}
 		}
 		if c == '{' {
 			return p.object(start, depth+1)
@@ -192,7 +343,7 @@ func (p *parser) value(depth int) (*node, *DecodeError) {
 func (p *parser) literal(start int, word string, kind byte) (*node, *DecodeError) {
 	for i := 0; i < len(word); i++ {
 		if p.pos >= len(p.data) || p.data[p.pos] != word[i] {
-			return nil, p.fail("invalid literal")
+			return nil, p.fail("an invalid literal")
 		}
 		p.pos++
 	}
@@ -210,7 +361,7 @@ func (p *parser) object(start, depth int) (*node, *DecodeError) {
 	for {
 		p.space()
 		if p.pos >= len(p.data) || p.data[p.pos] != '"' {
-			return nil, p.fail("expected a key")
+			return nil, p.fail("a missing key")
 		}
 		keyAt := p.pos
 		key, err := p.str()
@@ -218,16 +369,22 @@ func (p *parser) object(start, depth int) (*node, *DecodeError) {
 			return nil, err
 		}
 		if _, seen := n.fields[key]; seen {
-			return nil, failAt(CodeDuplicateKey, keyAt, fmt.Sprintf("key %q given twice", key))
+			return nil, &DecodeError{
+				Path:  p.pointer() + pointer(key),
+				Code:  CodeDuplicateKey,
+				Found: fmt.Sprintf("%s at offset %d", quote(key), keyAt),
+			}
 		}
 		p.space()
 		if !p.accept(':') {
-			return nil, p.fail("expected a colon")
+			return nil, p.fail("a missing colon")
 		}
+		p.path = append(p.path, key)
 		value, err := p.value(depth)
 		if err != nil {
 			return nil, err
 		}
+		p.path = p.path[:len(p.path)-1]
 		n.keys = append(n.keys, key)
 		n.fields[key] = value
 		p.space()
@@ -236,7 +393,7 @@ func (p *parser) object(start, depth int) (*node, *DecodeError) {
 			return n, nil
 		}
 		if !p.accept(',') {
-			return nil, p.fail("expected a comma or a closing brace")
+			return nil, p.fail("a missing comma or closing brace")
 		}
 	}
 }
@@ -250,10 +407,12 @@ func (p *parser) array(start, depth int) (*node, *DecodeError) {
 		return n, nil
 	}
 	for {
+		p.path = append(p.path, strconv.Itoa(len(n.items)))
 		item, err := p.value(depth)
 		if err != nil {
 			return nil, err
 		}
+		p.path = p.path[:len(p.path)-1]
 		n.items = append(n.items, item)
 		p.space()
 		if p.accept(']') {
@@ -261,7 +420,7 @@ func (p *parser) array(start, depth int) (*node, *DecodeError) {
 			return n, nil
 		}
 		if !p.accept(',') {
-			return nil, p.fail("expected a comma or a closing bracket")
+			return nil, p.fail("a missing comma or closing bracket")
 		}
 	}
 }
@@ -273,7 +432,7 @@ func (p *parser) str() (string, *DecodeError) {
 	escaped := false
 	for {
 		if p.pos >= len(p.data) {
-			return "", p.fail("unterminated string")
+			return "", p.fail("an unterminated string")
 		}
 		switch c := p.data[p.pos]; {
 		case c == '"':
@@ -292,7 +451,7 @@ func (p *parser) str() (string, *DecodeError) {
 				return "", err
 			}
 		case c < 0x20:
-			return "", p.fail("control character in a string")
+			return "", p.fail("a control character in a string")
 		default:
 			p.pos++
 		}
@@ -310,7 +469,7 @@ func (p *parser) escape() *DecodeError {
 		return nil
 	}
 	if p.pos >= len(p.data) || p.data[p.pos] != 'u' {
-		return p.fail("invalid escape")
+		return p.fail("an invalid escape")
 	}
 	p.pos++
 	unit, err := p.hex4()
@@ -318,11 +477,11 @@ func (p *parser) escape() *DecodeError {
 		return err
 	}
 	if unit >= 0xDC00 && unit <= 0xDFFF {
-		return failAt(CodeInvalidJSON, start, "lone surrogate")
+		return p.failAt(start, "a lone surrogate")
 	}
 	if unit >= 0xD800 && unit <= 0xDBFF {
 		if p.pos+1 >= len(p.data) || p.data[p.pos] != '\\' || p.data[p.pos+1] != 'u' {
-			return failAt(CodeInvalidJSON, start, "lone surrogate")
+			return p.failAt(start, "a lone surrogate")
 		}
 		p.pos += 2
 		low, err := p.hex4()
@@ -330,7 +489,7 @@ func (p *parser) escape() *DecodeError {
 			return err
 		}
 		if low < 0xDC00 || low > 0xDFFF {
-			return failAt(CodeInvalidJSON, start, "lone surrogate")
+			return p.failAt(start, "a lone surrogate")
 		}
 	}
 	return nil
@@ -341,14 +500,14 @@ func (p *parser) hex4() (int, *DecodeError) {
 	unit := 0
 	for range 4 {
 		if p.pos >= len(p.data) {
-			return 0, p.fail("invalid escape")
+			return 0, p.fail("an invalid escape")
 		}
 		digit := strings.IndexByte("0123456789abcdefABCDEF", p.data[p.pos])
 		if digit > 15 {
 			digit -= 6
 		}
 		if digit < 0 {
-			return 0, p.fail("invalid escape")
+			return 0, p.fail("an invalid escape")
 		}
 		unit = unit*16 + digit
 		p.pos++
@@ -370,25 +529,25 @@ func (p *parser) number(start int) (*node, *DecodeError) {
 	p.accept('-')
 	if p.accept('0') {
 		if p.pos < len(p.data) && p.data[p.pos] >= '0' && p.data[p.pos] <= '9' {
-			return nil, p.fail("leading zero")
+			return nil, p.fail("a leading zero")
 		}
 	} else if p.digits() == 0 {
-		return nil, p.fail("invalid value")
+		return nil, p.fail("an invalid value")
 	}
 	if p.accept('.') && p.digits() == 0 {
-		return nil, p.fail("invalid number")
+		return nil, p.fail("an invalid number")
 	}
 	if p.accept('e') || p.accept('E') {
 		if !p.accept('+') {
 			p.accept('-')
 		}
 		if p.digits() == 0 {
-			return nil, p.fail("invalid number")
+			return nil, p.fail("an invalid number")
 		}
 	}
 	raw := p.data[start:p.pos]
 	if _, err := strconv.ParseFloat(string(raw), 64); err != nil {
-		return nil, failAt(CodeInvalidJSON, start, "number out of range")
+		return nil, p.failAt(start, "a number out of range")
 	}
 	return &node{kind: '0', raw: raw}, nil
 }
@@ -442,18 +601,20 @@ func decodeString(n *node) (string, *DecodeError) {
 	return n.text, expect(n, '"')
 }
 
-// decodeInt decodes a JSON integer that fits an int64. A fraction like 1.5, or 1.0, fails, and
-// so does -0, which serde_json reads as a float.
+// decodeInt decodes a JSON integer that fits an int64. A fraction like 1.5, a spelling like
+// 1.0 or 1e2, and -0, which serde_json reads as a float, fail with CodeWrongType. An integer
+// past the int64 range fails with CodeOutOfRangeInteger.
 func decodeInt(n *node) (int64, *DecodeError) {
-	if err := expect(n, '0'); err != nil {
-		return 0, err
+	if n.kind != '0' {
+		return 0, mismatch("an integer", n)
 	}
-	v, err := strconv.ParseInt(string(n.raw), 10, 64)
+	raw := string(n.raw)
+	if strings.ContainsAny(raw, ".eE") || raw == "-0" {
+		return 0, fail(CodeWrongType, "an integer", raw)
+	}
+	v, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0, failf("expected an integer, found %s", n.raw)
-	}
-	if v == 0 && n.raw[0] == '-' {
-		return 0, failf("expected an integer, found %s", n.raw)
+		return 0, fail(CodeOutOfRangeInteger, "an integer from -9223372036854775808 to 9223372036854775807", raw)
 	}
 	return v, nil
 }
@@ -524,7 +685,8 @@ func decodeMap[K comparable, V any](
 	}
 }
 
-// entry decodes one member of a map, its key as a JSON string.
+// entry decodes one member of a map, its key as a JSON string. A key that fails fails at its
+// own path, like the value under it.
 func entry[K, V any](
 	key func(*node) (K, *DecodeError),
 	value func(*node) (V, *DecodeError),
@@ -534,7 +696,7 @@ func entry[K, V any](
 	k, err := key(&node{kind: '"', text: name})
 	if err != nil {
 		var v V
-		return k, v, &DecodeError{Reason: fmt.Sprintf("key %q: %s", name, err.Reason), Code: err.Code}
+		return k, v, err.at(name)
 	}
 	v, err := value(n)
 	if err != nil {
@@ -551,7 +713,7 @@ type objectDecoder struct {
 }
 
 // decodeObject decodes a JSON object strictly: fill reads its keys, any key fill didn't read
-// fails, and commit stores the result only when everything decoded.
+// fails at its own path, and commit stores the result only when everything decoded.
 func decodeObject(n *node, fill func(*objectDecoder), commit func()) *DecodeError {
 	if err := expect(n, '{'); err != nil {
 		return err
@@ -563,20 +725,20 @@ func decodeObject(n *node, fill func(*objectDecoder), commit func()) *DecodeErro
 	}
 	for _, key := range n.keys {
 		if !d.used[key] {
-			return failf("unknown key %q", key)
+			return fail(CodeUnknownKey, "", "").at(key)
 		}
 	}
 	commit()
 	return nil
 }
 
-// required reads a key that must be present.
+// required reads a key that must be present. A missing key fails at its own path.
 func required[T any](d *objectDecoder, key string, dst *T, decode func(*node) (T, *DecodeError)) {
 	if d.err != nil {
 		return
 	}
 	if _, ok := d.n.fields[key]; !ok {
-		d.err = failf("missing key %q", key)
+		d.err = fail(CodeMissingKey, "", "").at(key)
 		return
 	}
 	optionalValue(d, key, dst, decode)
@@ -655,9 +817,70 @@ func encodeRequired(plain any, names []string, set ...bool) ([]byte, error) {
 	return data, nil
 }
 
+// checkKey fails when k is an enum value its type doesn't list. encoding/json writes a map key
+// of a string type without its MarshalText, so the encoders check keys first.
+func checkKey[K ~string](k K) error {
+	if m, ok := any(k).(encoding.TextMarshaler); ok {
+		if _, err := m.MarshalText(); err != nil {
+			return fmt.Errorf("key %q: %w", string(k), err)
+		}
+	}
+	return nil
+}
+
+// firstError returns the first error that is not nil.
+func firstError(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// mapKeys returns a check of the keys of a map, in sorted order, and of its values with inner
+// when it is not nil.
+func mapKeys[K ~string, V any](inner func(V) error) func(map[K]V) error {
+	return func(m map[K]V) error {
+		for _, k := range slices.Sorted(maps.Keys(m)) {
+			if err := checkKey(k); err != nil {
+				return err
+			}
+			if inner != nil {
+				if err := inner(m[k]); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+}
+
+// sliceKeys returns a check of the map keys inside each item of a slice.
+func sliceKeys[T any](inner func(T) error) func([]T) error {
+	return func(items []T) error {
+		for _, item := range items {
+			if err := inner(item); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+// ptrKeys returns a check of the map keys inside the value of a pointer, when it is not nil.
+func ptrKeys[T any](inner func(T) error) func(*T) error {
+	return func(p *T) error {
+		if p == nil {
+			return nil
+		}
+		return inner(*p)
+	}
+}
+
 // encodeWithRest encodes the named keys of a struct, then the keys of rest sorted, as one
 // object, the order Rust writes. It fails when rest holds one of the named keys, so no key
-// is written twice, or when a required field is nil.
+// is written twice, a key its enum type doesn't list, or when a required field is nil.
 func encodeWithRest[K ~string, V any](named any, rest map[K]V, keys, names []string, set ...bool) ([]byte, error) {
 	if err := checkRequired(names, set); err != nil {
 		return nil, err
@@ -673,6 +896,9 @@ func encodeWithRest[K ~string, V any](named any, rest map[K]V, keys, names []str
 		if slices.Contains(keys, string(key)) {
 			return nil, fmt.Errorf("rest holds the named key %q", string(key))
 		}
+		if err := checkKey(key); err != nil {
+			return nil, err
+		}
 		member, err := json.Marshal(map[K]V{key: rest[key]})
 		if err != nil {
 			return nil, fmt.Errorf("encoding key %q: %w", string(key), err)
@@ -687,30 +913,35 @@ func encodeWithRest[K ~string, V any](named any, rest map[K]V, keys, names []str
 	return out.Bytes(), nil
 }
 
-// decodeTagged reads the tag key of a JSON object and decodes only the branch it names,
-// naming the branch in errors.
-func decodeTagged[U any](n *node, key string, branches map[string]func(*node) (U, *DecodeError)) (U, *DecodeError) {
+// oneOf lists the values an enum or a tagged union takes, quoted, in the schema's order.
+func oneOf(values []string) string {
+	quoted := make([]string, len(values))
+	for i, v := range values {
+		quoted[i] = quote(v)
+	}
+	return "one of " + strings.Join(quoted, ", ")
+}
+
+// decodeTagged reads the tag key of a JSON object and decodes only the branch it names. A
+// missing tag fails with CodeMissingKey, a tag that isn't a string with CodeWrongType and a tag
+// no branch has with CodeBadTag, naming the tags in the schema's order, at the tag's path.
+func decodeTagged[U any](n *node, key string, tags []string, branches map[string]func(*node) (U, *DecodeError)) (U, *DecodeError) {
 	var zero U
 	if err := expect(n, '{'); err != nil {
 		return zero, err
 	}
 	tag, ok := n.fields[key]
 	if !ok {
-		return zero, failf("missing key %q", key)
+		return zero, fail(CodeMissingKey, "", "").at(key)
 	}
 	if tag.kind != '"' {
-		return zero, failf("%q must be a string, found %s", key, kindName(tag.kind))
+		return zero, mismatch("a string", tag).at(key)
 	}
 	decode, ok := branches[tag.text]
 	if !ok {
-		names := strings.Join(slices.Sorted(maps.Keys(branches)), ", ")
-		return zero, failf("unknown %s %q, expected one of %s", key, tag.text, names)
+		return zero, fail(CodeBadTag, oneOf(tags), quote(tag.text)).at(key)
 	}
-	v, err := decode(n)
-	if err != nil {
-		return zero, &DecodeError{Path: err.Path, Reason: fmt.Sprintf("%s %q: %s", key, tag.text, err.Reason), Code: err.Code}
-	}
-	return v, nil
+	return decode(n)
 }
 
 // branch decodes one branch of a tagged union as the union's interface type U.
@@ -726,7 +957,8 @@ func branch[U any, T any, PT interface {
 	return any(v).(U), nil
 }
 
-// decodeUntagged tries each variant in order and commits the first one that decodes.
+// decodeUntagged tries each variant in order and commits the first one that decodes. When
+// none does, it fails with CodeWrongType, or CodeNullNotAllowed for null, naming the union.
 func decodeUntagged(n *node, name string, commit func(), variants ...func(*node) bool) *DecodeError {
 	for _, variant := range variants {
 		if variant(n) {
@@ -734,7 +966,7 @@ func decodeUntagged(n *node, name string, commit func(), variants ...func(*node)
 			return nil
 		}
 	}
-	return failf("data did not match any variant of %s", name)
+	return mismatch(name, n)
 }
 
 // try returns a variant of an untagged union that decodes into a pointer field.
@@ -788,24 +1020,33 @@ func someRaw(raw json.RawMessage) any {
 	return raw
 }
 
-// decodeEnum decodes a JSON string that must be one of values.
+// decodeEnum decodes a JSON string that must be one of values. One it doesn't list fails with
+// CodeNotInEnum, naming the values in the schema's order, or with CodeNotConst for an enum of
+// one value.
 func decodeEnum[T ~string](n *node, dst *T, values ...T) *DecodeError {
 	s, err := decodeString(n)
 	if err != nil {
 		return err
 	}
 	if !slices.Contains(values, T(s)) {
-		return failf("unknown value %q", s)
+		if len(values) == 1 {
+			return fail(CodeNotConst, quote(string(values[0])), quote(s))
+		}
+		names := make([]string, len(values))
+		for i, v := range values {
+			names[i] = string(v)
+		}
+		return fail(CodeNotInEnum, oneOf(names), quote(s))
 	}
 	*dst = T(s)
 	return nil
 }
 
 // encodeEnum returns the text of v, failing when values doesn't list it. Used as MarshalText,
-// it covers values; a map key of a string type is written without it.
+// it covers values; checkKey covers map keys, which encoding/json writes without it.
 func encodeEnum[T ~string](v T, values ...T) ([]byte, error) {
 	if !slices.Contains(values, v) {
-		return nil, fmt.Errorf("unknown value %q", string(v))
+		return nil, fmt.Errorf("unknown value %s", quote(string(v)))
 	}
 	return []byte(v), nil
 }
@@ -827,7 +1068,7 @@ func decodeConstInt(n *node, want int64) *DecodeError {
 		return err
 	}
 	if v != want {
-		return failf("expected %d, found %d", want, v)
+		return fail(CodeNotConst, strconv.FormatInt(want, 10), string(n.raw))
 	}
 	return nil
 }
@@ -839,7 +1080,7 @@ func decodeConstBool(n *node, want bool) *DecodeError {
 		return err
 	}
 	if v != want {
-		return failf("expected %t, found %t", want, v)
+		return fail(CodeNotConst, strconv.FormatBool(want), strconv.FormatBool(v))
 	}
 	return nil
 }
@@ -860,7 +1101,7 @@ func (v *NonNullJson) UnmarshalJSON(data []byte) error { return unmarshal(data, 
 
 func (v *NonNullJson) decode(n *node) *DecodeError {
 	if n.kind == 'n' {
-		return failf("expected a JSON value other than null")
+		return fail(CodeNullNotAllowed, "a JSON value other than null", "")
 	}
 	*v = NonNullJson(bytes.Clone(n.raw))
 	return nil

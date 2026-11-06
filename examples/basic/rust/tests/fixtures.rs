@@ -19,7 +19,15 @@ struct Case {
     path: PathBuf,
 }
 
-/// Every `.json` file below `dir`, sorted by path.
+/// True for `<case>.expect.json`, the error an invalid case expects, which is not a case itself.
+/// The Go and TypeScript harnesses check it; Rust reports the shared error shape later.
+fn is_expectation(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".expect.json"))
+}
+
+/// Every `.json` file below `dir` but expectations, sorted by path.
 fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> = fs::read_dir(dir)
         .unwrap_or_else(|error| panic!("reading {}: {error}", dir.display()))
@@ -29,7 +37,7 @@ fn json_files(dir: &Path, out: &mut Vec<PathBuf>) {
     for path in entries {
         if path.is_dir() {
             json_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "json") {
+        } else if path.extension().is_some_and(|e| e == "json") && !is_expectation(&path) {
             out.push(path);
         }
     }

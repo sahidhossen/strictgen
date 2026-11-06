@@ -144,7 +144,7 @@ func DecodePaymentMethod(data []byte) (PaymentMethod, error) {
 
 // unionPaymentMethod decodes a parsed PaymentMethod by its "type" key.
 func unionPaymentMethod(n *node) (PaymentMethod, *DecodeError) {
-	return decodeTagged(n, "type", map[string]func(*node) (PaymentMethod, *DecodeError){
+	return decodeTagged(n, "type", []string{"card", "bank_account", "wallet"}, map[string]func(*node) (PaymentMethod, *DecodeError){
 		"card":         branch[PaymentMethod, Card],
 		"bank_account": branch[PaymentMethod, BankAccount],
 		"wallet":       branch[PaymentMethod, Wallet],

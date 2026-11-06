@@ -10,6 +10,8 @@ import {
   goType,
   literalName,
 } from "./emit-go.js";
+import { ERROR_CODES } from "./errors.js";
+import { GO_CODES } from "./go-helpers.js";
 import type { Model } from "./model.js";
 import type { JsonObject } from "./schema.js";
 import { schemaSet } from "./schema.js";
@@ -98,7 +100,7 @@ describe("Go files", () => {
 
   it("import only the standard library packages a file uses", () => {
     expect(file(model, "helpers.go")).toContain(
-      'import (\n\t"bytes"\n\t"encoding/json"\n\t"errors"\n\t"fmt"\n\t"maps"\n\t"slices"\n\t"strconv"\n\t"strings"\n\t"unicode/utf8"\n)\n',
+      'import (\n\t"bytes"\n\t"encoding"\n\t"encoding/json"\n\t"errors"\n\t"fmt"\n\t"maps"\n\t"slices"\n\t"strconv"\n\t"strings"\n\t"unicode/utf8"\n)\n',
     );
     const numbers = lib({
       size: closed({ ratio: { description: "See x.json.", type: "number" } }),
@@ -226,7 +228,7 @@ describe("Go tagged unions", () => {
       "func DecodePayment(data []byte) (Payment, error) { return decodeRoot(data, unionPayment) }\n\n" +
         '// unionPayment decodes a parsed Payment by its "type" key.\n' +
         "func unionPayment(n *node) (Payment, *DecodeError) {\n" +
-        '\treturn decodeTagged(n, "type", map[string]func(*node) (Payment, *DecodeError){\n' +
+        '\treturn decodeTagged(n, "type", []string{"card", "wire"}, map[string]func(*node) (Payment, *DecodeError){\n' +
         '\t\t"card": branch[Payment, CardPayment],\n' +
         '\t\t"wire": branch[Payment, WirePayment],\n' +
         "\t})\n}\n",
@@ -422,7 +424,7 @@ describe("Go scalars, ids, aliases and consts", () => {
 
   it("decode integers that serde_json reads as integers, so -0 fails", () => {
     expect(file(model, "helpers.go")).toContain(
-      "\tif v == 0 && n.raw[0] == '-' {\n\t\treturn 0, failf(\"expected an integer, found %s\", n.raw)\n\t}\n",
+      '\tif strings.ContainsAny(raw, ".eE") || raw == "-0" {\n\t\treturn 0, fail(CodeWrongType, "an integer", raw)\n\t}\n',
     );
   });
 
@@ -507,6 +509,43 @@ describe("Go determinism", () => {
   });
 });
 
+describe("Go enum map keys", () => {
+  const out = go(
+    lib({
+      currency: { enum: ["usd", "eur"] },
+      prices: closed(
+        {
+          byCurrency: {
+            type: "object",
+            propertyNames: { $ref: "#/$defs/currency" },
+            additionalProperties: { type: "integer" },
+          },
+          history: {
+            type: "array",
+            items: {
+              type: "object",
+              propertyNames: { $ref: "#/$defs/currency" },
+              additionalProperties: { type: "number" },
+            },
+          },
+          names: { type: "object", additionalProperties: { type: "string" } },
+        },
+        ["byCurrency"],
+      ),
+    }),
+  );
+
+  it("check every enum key before encoding, which encoding/json writes without MarshalText", () => {
+    expect(out).toContain(
+      "\tif err := firstError(\n" +
+        "\t\tmapKeys[Currency, int64](nil)(v.ByCurrency),\n" +
+        "\t\tptrKeys(sliceKeys[map[Currency]json.Number](mapKeys[Currency, json.Number](nil)))(v.History),\n" +
+        "\t); err != nil {\n\t\treturn nil, err\n\t}\n",
+    );
+    expect(out).not.toContain("(v.Names)");
+  });
+});
+
 describe("Go encoding checks", () => {
   const model = build({
     payment: schema("payment", {
@@ -572,36 +611,37 @@ describe("Go encoding checks", () => {
   });
 });
 
-describe("JSON error codes", () => {
+describe("Go error codes", () => {
   const helpers = file(lib({ name: { type: "string" } }), "helpers.go");
 
-  it("declare strictgen's own codes in the helpers", () => {
-    expect(helpers).toContain(
-      "const (\n" +
-        "\t// CodeInvalidJSON is a syntax error, invalid UTF-8, a lone surrogate, trailing data or a\n" +
-        "\t// number out of range.\n" +
-        '\tCodeInvalidJSON = "invalid_json"\n' +
-        "\t// CodeDuplicateKey is an object that gives the same key twice.\n" +
-        '\tCodeDuplicateKey = "duplicate_key"\n' +
-        "\t// CodeTooDeep is a value nested in maxDepth or more arrays and objects.\n" +
-        '\tCodeTooDeep = "too_deep"\n' +
-        ")\n",
-    );
+  it("declare every shared code, with the shared titles", () => {
+    for (const { code, title } of ERROR_CODES) {
+      expect(helpers).toMatch(new RegExp(`\\tCode[A-Za-z]+ = "${code}"\\n`));
+      expect(helpers).toMatch(new RegExp(`\\tCode[A-Za-z]+: +"${title}",\\n`));
+    }
+    expect(helpers).toContain('\tCodeInvalidJSON = "invalid_json"\n');
+    expect(helpers).toContain('\tCodeUnknownKey = "unknown_key"\n');
   });
 
-  it("report invalid JSON, a duplicate key and too deep nesting with them", () => {
-    expect(helpers).toContain('failAt(CodeInvalidJSON, invalidUTF8At(data), "not valid UTF-8")');
-    expect(helpers).toContain('failAt(CodeInvalidJSON, p.pos, "trailing characters")');
-    expect(helpers).toContain("return failAt(CodeInvalidJSON, p.pos, reason)");
-    expect(helpers).toContain('failAt(CodeInvalidJSON, start, "lone surrogate")');
-    expect(helpers).toContain('failAt(CodeInvalidJSON, start, "number out of range")');
-    expect(helpers).toContain("failAt(CodeDuplicateKey, keyAt,");
-    expect(helpers).toContain("failAt(CodeTooDeep, p.pos,");
+  it("give DecodeError the shared shape, its message and its compact form", () => {
+    expect(helpers).toContain("type DecodeError struct {\n");
+    for (const field of ["Path", "Code", "Expected", "Found"]) {
+      expect(helpers).toMatch(new RegExp(`\\t${field} string\\n`));
+    }
+    expect(helpers).toContain('return describe(e.Path, codeTitles[e.Code], ": ", e.Expected, e.Found)');
+    expect(helpers).toContain('return describe(e.Path, e.Code, " ", e.Expected, e.Found)');
+  });
+
+  it("report invalid JSON, a duplicate key and too deep nesting with their codes", () => {
+    expect(helpers).toContain("Code: CodeInvalidJSON, Found: fmt.Sprintf(\"%s at offset %d\", what, offset)");
+    expect(helpers).toContain("Code:  CodeDuplicateKey,");
+    expect(helpers).toContain("Code:     CodeTooDeep,");
   });
 
   it("use no code the helpers don't declare", () => {
+    const declared = new Set(GO_CODES);
     const used = new Set(helpers.match(/\bCode[A-Z][A-Za-z]*\b/g));
-    expect([...used].sort()).toEqual(["CodeDuplicateKey", "CodeInvalidJSON", "CodeTooDeep"]);
+    for (const name of used) expect(declared.has(name), name).toBe(true);
   });
 });
 

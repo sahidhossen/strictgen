@@ -5,4 +5,4 @@ export * from "./event.js";
 export * from "./payment-method.js";
 export * from "./subscription.js";
 export * from "./user.js";
-export { DecodeError, EncodeError, type DecodeResult } from "./helpers.js";
+export { DecodeError, EncodeError, type DecodeResult, ErrorCode } from "./helpers.js";

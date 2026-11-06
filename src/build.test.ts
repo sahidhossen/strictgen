@@ -1075,7 +1075,7 @@ describe("one file per schema", () => {
     expect(out[0]?.contents).toContain('import * as h from "./helpers.js";\n\n');
     expect(out[3]?.contents).toBe(
       `${HEADER}\n\nexport * from "./common.js";\nexport * from "./item-list.js";\n` +
-        'export { DecodeError, EncodeError, type DecodeResult } from "./helpers.js";\n',
+        'export { DecodeError, EncodeError, type DecodeResult, ErrorCode } from "./helpers.js";\n',
     );
   });
 

@@ -117,6 +117,8 @@ type User struct {
 	Labels map[string]string `json:"labels"`
 	// The createdAt key.
 	CreatedAt Timestamp `json:"createdAt"`
+	// How many seats the user may hand out, by role.
+	Quota *map[Role]int64 `json:"quota,omitempty"`
 }
 
 // UnmarshalJSON decodes strictly: unknown keys, missing required keys and explicit nulls fail.
@@ -131,11 +133,18 @@ func (v *User) decode(n *node) *DecodeError {
 		required(d, "role", &out.Role, decodeType[Role])
 		required(d, "labels", &out.Labels, decodeMap(decodeString, decodeString))
 		required(d, "createdAt", &out.CreatedAt, decodeString)
+		optional(d, "quota", &out.Quota, decodeMap(decodeType[Role], decodeInt))
 	}, func() { *v = out })
 }
 
 // MarshalJSON fails when a required slice, map, union or pointer is nil, which would encode as null.
+// It fails on a map key its enum doesn't list, which encoding/json would write.
 func (v User) MarshalJSON() ([]byte, error) {
+	if err := firstError(
+		ptrKeys(mapKeys[Role, int64](nil))(v.Quota),
+	); err != nil {
+		return nil, err
+	}
 	type plain User
 	return encodeRequired(plain(v), []string{"labels"}, v.Labels != nil)
 }

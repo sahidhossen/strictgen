@@ -70,17 +70,24 @@ export function tryDecodeEventFromJson(text: string): h.DecodeResult<Event> {
  * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
  */
 export function encodeEvent(value: Event): unknown {
-  h.encodeObject(value);
-  const out = {};
-  h.member(out, "id", value.id, encodeEventId);
-  h.member(out, "type", value.type, encodeEventType);
-  h.member(out, "occurredAt", value.occurredAt, encodeTimestamp);
-  h.member(out, "attempt", value.attempt, h.encodeInteger);
-  h.member(out, "user", value.user, encodeUser);
-  if (value.paymentMethod !== undefined) h.member(out, "paymentMethod", value.paymentMethod, encodePaymentMethod);
-  if (value.metadata !== undefined) h.member(out, "metadata", value.metadata, h.encodeMap(h.encodeString, h.encodeString));
+  const out = h.encodeObject(value);
+  h.member(out, value, "id", encodeEventId);
+  h.member(out, value, "type", encodeEventType);
+  h.member(out, value, "occurredAt", encodeTimestamp);
+  h.member(out, value, "attempt", h.encodeInteger);
+  h.member(out, value, "user", encodeUser);
+  h.member(out, value, "paymentMethod", encodePaymentMethod, true);
+  h.member(out, value, "metadata", h.encodeMap(h.encodeString, h.encodeString), true);
   h.encodeClosed(value, ["id", "type", "occurredAt", "attempt", "user", "paymentMethod", "metadata"]);
   return out;
+}
+
+/**
+ * Encodes Event as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeEvent.
+ */
+export function encodeEventToJson(value: Event): string {
+  return h.toJson(encodeEvent(value));
 }
 
 /** What happened. */
@@ -119,4 +126,12 @@ export function tryDecodeEventTypeFromJson(text: string): h.DecodeResult<EventTy
  */
 export function encodeEventType(value: EventType): unknown {
   return h.encodeEnum(value, ["user.created", "user.updated", "payment_method.attached"] as const);
+}
+
+/**
+ * Encodes EventType as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeEventType.
+ */
+export function encodeEventTypeToJson(value: EventType): string {
+  return h.toJson(encodeEventType(value));
 }

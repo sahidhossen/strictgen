@@ -15,7 +15,7 @@ Five schemas and what strictgen generates from them.
 
 ## Fixtures
 
-A fixture for a schema's root type lives in `fixtures/<schema>/valid` or `fixtures/<schema>/invalid`, and one for a def in `fixtures/<schema>/<def>/valid` or `invalid`. The Rust and Go tests decode every fixture with the type generated for its folder. The repository tests run them through the TypeScript decoders too, except the `duplicate-key.json` cases: `JSON.parse` keeps the last of two equal keys, so only a reader of the JSON text can reject them. A valid case must decode and encode again to the same JSON value, and an invalid case must fail.
+A fixture for a schema's root type lives in `fixtures/<schema>/valid` or `fixtures/<schema>/invalid`, and one for a def in `fixtures/<schema>/<def>/valid` or `invalid`. The Rust and Go tests decode every fixture with the type generated for its folder. The repository tests run them through the TypeScript decoders too, from the JSON text. A valid case must decode and encode again to the same JSON value, and an invalid case must fail with the `path` and `code` in the `<case>.expect.json` next to it, which the Go and TypeScript runs check (see [`docs/error-codes.md`](../../docs/error-codes.md)).
 
 ```bash
 cd examples/basic/rust && cargo test

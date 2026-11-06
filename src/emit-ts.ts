@@ -12,7 +12,7 @@ const WIDTH = 100;
 export const TS_HELPERS = "helpers.ts";
 
 /** What `index.ts` re-exports from the helpers, besides the generated types and functions. */
-const HELPER_EXPORTS = ["DecodeError", "EncodeError", "DecodeResult"];
+const HELPER_EXPORTS = ["DecodeError", "EncodeError", "DecodeResult", "ErrorCode"];
 
 /**
  * Global types the generated TypeScript names, and the helper names `index.ts` re-exports.
@@ -186,7 +186,11 @@ function functions(ctx: Ctx, decl: Decl): string {
     `  return h.attemptJson(decode${name}, text);\n}\n\n` +
     `/**\n * Encodes ${name} as a JSON value, ready for JSON.stringify.\n` +
     ` * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.\n */\n` +
-    `export function encode${name}(value: ${name}): unknown {\n${encodeBody(ctx, decl)}}\n`
+    `export function encode${name}(value: ${name}): unknown {\n${encodeBody(ctx, decl)}}\n\n` +
+    `/**\n * Encodes ${name} as JSON text, keys in the order Rust and Go write them.\n` +
+    ` * Throws an EncodeError like encode${name}.\n */\n` +
+    `export function encode${name}ToJson(value: ${name}): string {\n` +
+    `  return h.toJson(encode${name}(value));\n}\n`
   );
 }
 
@@ -293,9 +297,8 @@ function encodeBody(ctx: Ctx, decl: Decl): string {
 function encodeStruct(ctx: Ctx, decl: StructDecl): string {
   const named = `[${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}]`;
   const lines = decl.fields.map((f) => {
-    const read = `value${access(f.name)}`;
-    const put = `h.member(out, ${JSON.stringify(f.name)}, ${read}, ${encoder(ctx, f.type)});\n`;
-    return f.required ? `  ${put}` : `  if (${read} !== undefined) ${put}`;
+    const optional = f.required ? "" : ", true";
+    return `  h.member(out, value, ${JSON.stringify(f.name)}, ${encoder(ctx, f.type)}${optional});\n`;
   });
   if (decl.rest !== undefined) {
     const key = encoder(ctx, decl.rest.key);
@@ -304,7 +307,7 @@ function encodeStruct(ctx: Ctx, decl: StructDecl): string {
   } else {
     lines.push(`  h.encodeClosed(value, ${named});\n`);
   }
-  return `  h.encodeObject(value);\n  const out = {};\n${lines.join("")}  return out;\n`;
+  return `  const out = h.encodeObject(value);\n${lines.join("")}  return out;\n`;
 }
 
 /** An expression for the decoder of a type, a `Decoder<T>`. */
@@ -370,11 +373,6 @@ function encoder(ctx: Ctx, type: TypeExpr): string {
 /** A property name in an object literal. `__proto__` is computed, so it stays an own key. */
 function literalKey(name: string): string {
   return name === "__proto__" ? `[${JSON.stringify(name)}]` : property(name);
-}
-
-/** Reads a property: `.name`, or `["name"]` when the key is not an identifier, or is `__proto__`. */
-function access(name: string): string {
-  return IDENTIFIER.test(name) && name !== "__proto__" ? `.${name}` : `[${JSON.stringify(name)}]`;
 }
 
 function struct(decl: StructDecl, decls: ReadonlyMap<string, Decl>): string {

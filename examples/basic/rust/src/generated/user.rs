@@ -101,4 +101,11 @@ pub struct User {
     pub labels: BTreeMap<String, String>,
     /// The `createdAt` key.
     pub created_at: Timestamp,
+    /// How many seats the user may hand out, by role.
+    #[serde(
+        default,
+        deserialize_with = "present",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub quota: Option<BTreeMap<Role, i64>>,
 }
