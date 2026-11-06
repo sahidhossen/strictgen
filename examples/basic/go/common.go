@@ -32,7 +32,24 @@ func (v OrderId) check() *DecodeError {
 // Timestamp is generated from common.json#/$defs/timestamp.
 //
 // An RFC 3339 date and time in UTC.
-type Timestamp = string
+type Timestamp string
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Timestamp) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Timestamp) decode(n *node) *DecodeError {
+	x, err := decodeString(n)
+	if err != nil {
+		return err
+	}
+	*v = Timestamp(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Timestamp.
+func (v Timestamp) check() *DecodeError {
+	return checkString(string(v), -1, -1, checkDateTime)
+}
 
 // UserId is generated from common.json#/$defs/userId.
 //

@@ -96,3 +96,25 @@ export function codeName(code: string, go: boolean): string {
     .map((part) => (go && part === "json" ? "JSON" : `${part.charAt(0).toUpperCase()}${part.slice(1)}`))
     .join("");
 }
+
+/**
+ * Expected for a string a format check rejects, by format, like `/at: bad format, expected a
+ * date-time, found "2024-13-01"`.
+ */
+export const FORMAT_EXPECTED = {
+  "date-time": "a date-time",
+  date: "a date",
+  uuid: "a UUID",
+} as const;
+
+/**
+ * Expected for a string that doesn't match its pattern starts with this, then the pattern as
+ * the schema writes it, like `matching ^[A-Z]{3}$`.
+ */
+export const PATTERN_EXPECTED = "matching ";
+
+/** Expected for an array whose items must be unique. */
+export const UNIQUE_EXPECTED = "unique items";
+
+/** Found for a repeated item starts with this, then the index of the item it repeats, like `a repeat of item 0`. */
+export const UNIQUE_FOUND = "a repeat of item ";

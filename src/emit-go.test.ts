@@ -7,6 +7,7 @@ import {
   emitGoAttributes,
   emitGoFixtures,
   fileName,
+  goString,
   goType,
   literalName,
 } from "./emit-go.js";
@@ -100,7 +101,7 @@ describe("Go files", () => {
 
   it("import only the standard library packages a file uses", () => {
     expect(file(model, "helpers.go")).toContain(
-      'import (\n\t"bytes"\n\t"encoding"\n\t"encoding/json"\n\t"errors"\n\t"fmt"\n\t"maps"\n\t"slices"\n\t"strconv"\n\t"strings"\n\t"unicode/utf8"\n)\n',
+      'import (\n\t"bytes"\n\t"encoding"\n\t"encoding/json"\n\t"errors"\n\t"fmt"\n\t"maps"\n\t"slices"\n\t"strconv"\n\t"strings"\n\t"unicode/utf16"\n\t"unicode/utf8"\n)\n',
     );
     const numbers = lib({
       size: closed({ ratio: { description: "See x.json.", type: "number" } }),
@@ -123,7 +124,7 @@ describe("Go files", () => {
     const registry = emitGoFixtures(model);
     expect(registry.startsWith(`${HEADER}\n\npackage types\n`)).toBe(true);
     expect(registry).toContain('\t\t"order": asAny(decodeType[Order]),\n');
-    expect(registry).toContain('\t\t"user-profile/name": asAny(decodeString),\n');
+    expect(registry).toContain('\t\t"user-profile/name": asAny(decodeType[Name]),\n');
     expect(registry).toContain('\t\t"user-profile/point": asAny(decodeType[Point]),\n');
   });
 });
@@ -289,7 +290,7 @@ describe("Go untagged unions", () => {
     expect(out).toContain(
       '\treturn decodeUntagged(n, "AmountsOrRef", func() { *v = out },\n' +
         "\t\ttry(&out.AccountRef, decodeType[AccountRef]),\n" +
-        "\t\ttry(&out.CurrencyAmounts, decodeMap(decodeString, decodeString)),\n\t)\n",
+        "\t\ttry(&out.CurrencyAmounts, decodeType[CurrencyAmounts]),\n\t)\n",
     );
   });
 
@@ -391,33 +392,49 @@ describe("Go scalars, ids, aliases and consts", () => {
     );
   });
 
-  it("make aliases Go aliases and keep typed map keys", () => {
-    expect(out).toContain("type Children = []OrderId\n");
-    expect(out).toContain("type Index = map[OrderId]bool\n");
-    expect(emitGoFixtures(model)).toContain(
-      '"common/index": asAny(decodeMap(decodeType[OrderId], decodeBool)),',
+  it("make aliases defined types that decode strictly, and keep typed map keys", () => {
+    expect(out).toContain("type Children []OrderId\n");
+    expect(out).toContain("type Index map[OrderId]bool\n");
+    expect(out).toContain(
+      "// UnmarshalJSON decodes strictly.\n" +
+        "func (v *Index) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }\n\n" +
+        "func (v *Index) decode(n *node) *DecodeError {\n" +
+        "\tx, err := decodeMap(decodeType[OrderId], decodeBool)(n)\n",
     );
+    expect(out).not.toContain("func (v Index) check()");
+    expect(emitGoFixtures(model)).toContain('"common/index": asAny(decodeType[Index]),');
+    expect(emitGoFixtures(model)).toContain("\t\tnew(Index),\n");
   });
 
   it("keep numbers as json.Number and any JSON as json.RawMessage, null distinct from absent", () => {
     expect(out).toContain('\tRatio json.Number `json:"ratio"`\n');
     expect(out).toContain('\tValue AnyValue `json:"value,omitempty"`\n');
-    expect(out).toContain('\t\toptionalValue(d, "value", &out.Value, decodeAny)\n');
+    expect(out).toContain('\t\toptionalValue(d, "value", &out.Value, decodeType[AnyValue])\n');
+    expect(out).toContain("type AnyValue json.RawMessage\n");
+    expect(out).toContain(
+      "func (v AnyValue) MarshalJSON() ([]byte, error) { return json.RawMessage(v).MarshalJSON() }\n",
+    );
     expect(out).toContain('\tJson *JsonValue `json:"json,omitempty"`\n');
-    expect(out).toContain("type JsonValue = NonNullJson\n");
+    expect(out).toContain("type JsonValue NonNullJson\n");
+    expect(out).toContain(
+      "func (v JsonValue) MarshalJSON() ([]byte, error) { return NonNullJson(v).MarshalJSON() }\n",
+    );
     expect(out).toContain('\tAt *string `json:"at,omitempty"`\n');
   });
 
   it("make integer and boolean consts types that decode only their value", () => {
-    expect(out).toContain("type Version = ConstInt1\n");
-    expect(out).toContain("type Flag = ConstBoolTrue\n");
+    expect(out).toContain("type Version ConstInt1\n");
+    expect(out).toContain("type Flag ConstBoolTrue\n");
+    expect(out).toContain(
+      "func (v Version) MarshalJSON() ([]byte, error) { return ConstInt1(v).MarshalJSON() }\n",
+    );
     expect(out).toContain(
       'func (ConstInt1) MarshalJSON() ([]byte, error) { return []byte("1"), nil }\n',
     );
     expect(out).toContain(
       "func (*ConstBoolTrue) decode(n *node) *DecodeError { return decodeConstBool(n, true) }\n",
     );
-    expect(out).toContain('\t\toptional(d, "next", &out.Next, decodeType[ConstInt1])\n');
+    expect(out).toContain('\t\toptional(d, "next", &out.Next, decodeType[Version])\n');
     expect(literalName(-2)).toBe("ConstIntMinus2");
     expect(literalName(false)).toBe("ConstBoolFalse");
   });
@@ -441,15 +458,16 @@ describe("Go scalars, ids, aliases and consts", () => {
 });
 
 describe("Go string families", () => {
-  it("keep a patterned string a plain string, the pattern not checked yet", () => {
+  it("keep a patterned string a plain string, which checks the pattern", () => {
     const out = go(
       lib({
         orderRef: { type: "string", pattern: "^order\\..+$" },
         note: closed({ ref: { type: "string", pattern: "^order\\..+$" } }, ["ref"]),
       }),
     );
-    expect(out).toMatch(/type OrderRef = string\n/);
+    expect(out).toMatch(/type OrderRef string\n/);
     expect(out).toMatch(/\tRef string `json:"ref"`\n/);
+    expect(out).toContain("\treturn checkString(string(v), -1, -1, patterns[0].check)\n");
   });
 });
 
@@ -670,6 +688,58 @@ describe("Go constraints", () => {
   });
 });
 
+describe("Go patterns, formats and unique items", () => {
+  const entries: JsonObject = {
+    item: closed(
+      {
+        code: { type: "string", maxLength: 4, pattern: "^[A-Z]+$" },
+        day: { type: "string", pattern: "^20", format: "date" },
+        at: { type: "string", format: "date-time" },
+        id: { type: "string", format: "uuid" },
+        tags: { type: "array", items: { type: "string", maxLength: 1 }, maxItems: 3, uniqueItems: true },
+        byCode: {
+          type: "object",
+          propertyNames: { type: "string", pattern: "^[a-z]+$" },
+          additionalProperties: { type: "integer" },
+        },
+      },
+      [],
+    ),
+    stamp: { type: "string", format: "date-time" },
+  };
+  const model = lib(entries);
+  const out = go(model);
+
+  it("check the length, then the pattern, then the format, one after the other", () => {
+    expect(out).toContain("checkString(*v.Code, -1, 4, patterns[1].check)");
+    expect(out).toContain("checkString(*v.Day, -1, -1, patterns[0].check, checkDate)");
+    expect(out).toContain("checkString(*v.At, -1, -1, checkDateTime)");
+    expect(out).toContain("checkString(*v.Id, -1, -1, checkUUID)");
+    expect(out).toContain(
+      "checkUniqueItems(*v.Tags, -1, 3, func(item string) *DecodeError { return checkLength(item, -1, 1) })",
+    );
+    expect(out).toContain("func(item string) *DecodeError { return checkString(item, -1, -1, patterns[2].check) }");
+  });
+
+  it("compile the patterns once, from a table in the portable form, importing regexp only then", () => {
+    const helpers = file(model, "helpers.go");
+    expect(helpers).toContain(
+      'var patterns = [...]pattern{\n\t{regexp.MustCompile("^20"), "^20"},\n\t{regexp.MustCompile("^[A-Z]+$"), "^[A-Z]+$"},\n',
+    );
+    expect(helpers).toContain('\t"regexp"\n');
+    expect(file(lib({ at: entries.stamp ?? {} }), "helpers.go")).not.toContain("regexp");
+  });
+
+  it("check an id's pattern", () => {
+    const ids = go(build({ common: schema("common", { $defs: { orderId: { type: "string", pattern: "^ord_" } } }) }));
+    expect(ids).toContain("\treturn checkString(string(v), -1, -1, patterns[0].check)\n");
+  });
+
+  it("escape every character outside printable ASCII in a Go string", () => {
+    expect(goString('a"\\\u2028\ufeff\u{1f600}\n')).toBe('"a\\"\\\\\\u2028\\ufeff\\U0001f600\\u000a"');
+  });
+});
+
 describe("Go constrained aliases", () => {
   const model = build({
     lib: schema("lib", {
@@ -736,10 +806,12 @@ describe("Go constrained aliases", () => {
     );
   });
 
-  it("keep an alias of another declaration and an alias without constraints plain", () => {
+  it("keep an alias of another declaration a Go alias, and make one without constraints a defined type", () => {
     expect(out).toContain("type MoreCodes = Codes\n");
     expect(out).toContain("type ItemAlias = Item\n");
-    expect(out).toContain("type Names = []string\n");
+    expect(out).toContain("type Names []string\n");
+    expect(out).toContain("// UnmarshalJSON decodes strictly.\nfunc (v *Names) UnmarshalJSON(");
+    expect(out).not.toContain("func (v Names) check()");
   });
 
   it("check and decode a field of a constrained alias through its type", () => {
@@ -753,7 +825,8 @@ describe("Go constrained aliases", () => {
     expect(registry).toContain('\t\t"lib/codes": asAny(decodeType[Codes]),\n');
     expect(registry).toContain('\t\t"lib/moreCodes": asAny(decodeType[Codes]),\n');
     expect(registry).toContain("\t\tnew(Codes),\n");
-    expect(registry).not.toContain("new(MoreCodes)");
+    expect(registry).not.toContain("\t\tnew(MoreCodes),\n");
+    expect(registry).toContain('\t\t"lib/moreCodes": func() json.Unmarshaler { return new(MoreCodes) },\n');
   });
 });
 

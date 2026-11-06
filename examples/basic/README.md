@@ -1,13 +1,13 @@
 # Basic example
 
-Five schemas and what strictgen generates from them.
+Eight schemas and what strictgen generates from them.
 
 | Path | What it is |
 | ---- | ---------- |
 | `strictgen.json` | The config: where the schemas are and which targets to write |
-| `schemas/` | A webhook event envelope (`event.json`), a user with a contact that is an email or a phone, exactly one (`user.json`), a payment method picked by its `type` key (`payment-method.json`), a webhook subscription whose keys are keywords in Rust, Go or TypeScript (`subscription.json`) and shared IDs (`common.json`) |
-| `rust/src/generated/` | The Rust types, a module per schema. `rust/` is a crate that depends on `serde` and `serde_json` only. `tests/fixtures.rs` and `tests/errors.rs` are written by hand |
-| `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go`, `aliases_test.go`, `codes_test.go` and `encode_test.go` are written by hand |
+| `schemas/` | A webhook event envelope (`event.json`), a user with a contact that is an email or a phone, exactly one (`user.json`), a payment method picked by its `type` key (`payment-method.json`), a webhook subscription whose keys are keywords in Rust, Go or TypeScript (`subscription.json`), an order with a limit of every kind (`order.json`), a shipment with patterns, formats and unique items (`shipment.json`), enum values, consts and tags holding a byte order mark, a line separator, NUL, a backslash, a quote and an emoji (`marks.json`) and shared IDs (`common.json`) |
+| `rust/src/generated/` | The Rust types, a module per schema. `rust/` is a crate that depends on `serde`, `serde_json` and, since the schemas use `pattern`, `regex`. `tests/fixtures.rs` and `tests/errors.rs` are written by hand |
+| `go/` | The Go types (`*.go` other than tests), standard library only. `go.mod`, `fixtures_test.go`, `aliases_test.go` (every fixture through `json.Unmarshal` too), `codes_test.go` and `encode_test.go` are written by hand |
 | `ts/generated/` | The TypeScript types and their decoders, with `helpers.ts`, which they share |
 | `fixtures/` | JSON documents each language must accept (`valid/`) or reject (`invalid/`) |
 

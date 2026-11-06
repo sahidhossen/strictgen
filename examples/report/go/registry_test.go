@@ -31,6 +31,23 @@ func asAny[T any](decode func(*node) (T, *DecodeError)) func([]byte) (any, []str
 	}
 }
 
+// fixtureTypes maps each fixture folder whose type json.Unmarshal can decode to a function that
+// returns a new value of that type, so tests can decode every fixture through json.Unmarshal too.
+func fixtureTypes() map[string]func() json.Unmarshaler {
+	return map[string]func() json.Unmarshaler{
+		"order":            func() json.Unmarshaler { return new(Order) },
+		"order/attributes": func() json.Unmarshaler { return new(Attributes) },
+		"order/carrier":    func() json.Unmarshaler { return new(Carrier) },
+		"order/courier":    func() json.Unmarshaler { return new(Courier) },
+		"order/customer":   func() json.Unmarshaler { return new(Customer) },
+		"order/delivery":   func() json.Unmarshaler { return new(Delivery) },
+		"order/line":       func() json.Unmarshaler { return new(Line) },
+		"order/note":       func() json.Unmarshaler { return new(Note) },
+		"order/pickup":     func() json.Unmarshaler { return new(Pickup) },
+		"order/tags":       func() json.Unmarshaler { return new(Tags) },
+	}
+}
+
 // unmarshalers returns a new value of every generated type with an UnmarshalJSON method.
 func unmarshalers() []json.Unmarshaler {
 	return []json.Unmarshaler{

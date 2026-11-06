@@ -16,11 +16,13 @@ export const RULES = {
   "unsupported-keyword": "the keyword is outside the supported subset",
   "misplaced-keyword": "the keyword is supported, but not in this position",
   "unsupported-type": "type must be one of object, array, string, integer, number or boolean",
-  "unsupported-format": "only the date-time and date formats are supported",
+  "unsupported-format": "only the date-time, date and uuid formats are supported",
+  "unsupported-pattern":
+    "a pattern uses syntax Rust's regex, Go's RE2 and ECMAScript don't read the same way",
   "unsupported-constraint":
     "the constraint can't be checked the same way in every language, or isn't checked yet",
   "invalid-constraint": "a constraint's value is out of range, or its limits can't both hold",
-  "unsupported-not": "not may only exclude null, or a pattern or values beside a string type",
+  "unsupported-not": 'not may only exclude null, as { "not": { "const": null } }',
   "unsupported-const": "a const must be a string, an integer or a boolean, matching its type",
   "unsupported-enum": "enum values must be unique strings",
   "missing-type": "a schema needs a type, $ref, const, enum or oneOf",

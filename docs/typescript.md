@@ -76,7 +76,7 @@ A string whose `pattern` is a fixed prefix or suffix around a part that allows a
 
 The prefix and suffix are literal characters or syntax characters escaped with a backslash, like `\.` or `\$`. Every other pattern, like `^[a-z]+$`, `^\d+$` or an alternation, types the string as `string`. The template literal type holds every string the pattern matches, so it never rejects a valid value at compile time, and is a little wider: `` `order.${string}` `` also holds `order.` itself, which `.+` does not match.
 
-The decoders check that the value is a string. They don't check the pattern yet, in any language, so a decoded value can be outside its family until pattern validation lands.
+The decoders check the pattern itself too, in every language, as [error-codes.md](error-codes.md#patterns) describes, so a decoded value is always in its family. With `"validation": false` they check only that the value is a string.
 
 ## Unions
 

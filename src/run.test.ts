@@ -14,7 +14,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { formatFiles, FormatterFailedError } from "./format.js";
 import { EXIT_FAILED, EXIT_OK, EXIT_USAGE, run, version } from "./run.js";
@@ -708,14 +708,21 @@ describe("file system errors", () => {
 });
 
 describe("the built command", () => {
-  it("exits quietly when the reader of its output goes away", async () => {
-    const out = temp();
+  // Compiling the command is the slow part, so it runs once, with a timeout of its own that a
+  // loaded machine stays well inside, and the test only runs the command.
+  let out = "";
+  beforeAll(() => {
+    out = temp();
     const tsc = spawnSync(
       process.execPath,
       [resolve("node_modules/typescript/bin/tsc"), "-p", "tsconfig.build.json", "--outDir", out],
-      { encoding: "utf8" },
+      { encoding: "utf8", timeout: 170_000 },
     );
+    expect(tsc.error).toBeUndefined();
     expect(tsc.stdout + tsc.stderr).toBe("");
+  }, 180_000);
+
+  it("exits quietly when the reader of its output goes away", async () => {
     const root = project();
     const child = spawn(process.execPath, [join(out, "cli.js"), "dirs", "--json"], {
       cwd: root,

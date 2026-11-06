@@ -132,9 +132,17 @@ func (v *User) decode(n *node) *DecodeError {
 		optional(d, "displayName", &out.DisplayName, decodeString)
 		required(d, "role", &out.Role, decodeType[Role])
 		required(d, "labels", &out.Labels, decodeMap(decodeString, decodeString))
-		required(d, "createdAt", &out.CreatedAt, decodeString)
+		required(d, "createdAt", &out.CreatedAt, decodeType[Timestamp])
 		optional(d, "quota", &out.Quota, decodeMap(decodeType[Role], decodeInt))
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded User.
+func (v User) check() *DecodeError {
+	if err := v.CreatedAt.check(); err != nil {
+		return err.at("createdAt")
+	}
+	return nil
 }
 
 // MarshalJSON fails when a required slice, map, union or pointer is nil, which would encode as null.

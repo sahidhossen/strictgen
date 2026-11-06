@@ -171,4 +171,9 @@ impl helpers::Decode for User {
         object.finish()?;
         Ok(value)
     }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within("createdAt", helpers::Decode::check(&self.created_at))?;
+        Ok(())
+    }
 }

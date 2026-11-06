@@ -87,10 +87,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt
+          components: rustfmt, clippy
       # The generated files are formatted by strictgen; this keeps the hand written tests formatted too.
       - run: cargo fmt --check
       - run: cargo check --locked --all-targets
+      # Pedantic lints on the generated code and the hand written tests alike.
+      - run: cargo clippy --locked --all-targets -- -D warnings -W clippy::pedantic
       - name: Round trip the fixtures
         run: cargo test --locked
 

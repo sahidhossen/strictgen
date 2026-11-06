@@ -122,7 +122,7 @@ fn found_strings() {
 #[test]
 fn enum_keys_encode_in_code_point_order() {
     let user = User::from_json(
-        r#"{"id":"usr_1","email":"a@example.com","role":"member","labels":{},"createdAt":"t","quota":{"owner":1,"member":2,"admin":3}}"#,
+        r#"{"id":"usr_1","email":"a@example.com","role":"member","labels":{},"createdAt":"2024-01-02T03:04:05Z","quota":{"owner":1,"member":2,"admin":3}}"#,
     )
     .expect("a user");
     let text = serde_json::to_string(&user).expect("encodes");
@@ -133,7 +133,7 @@ fn enum_keys_encode_in_code_point_order() {
     assert!(Role::Admin < Role::Member && Role::Member < Role::Owner);
 }
 
-/// The messages of constraint errors, the same as Go's TestConstraintMessages and the
+/// The messages of constraint errors, the same as Go's `TestConstraintMessages` and the
 /// TypeScript tests: counts in code points, items and keys, and numbers as JavaScript writes them.
 #[test]
 fn constraint_messages() {

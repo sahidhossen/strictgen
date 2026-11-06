@@ -406,7 +406,8 @@ describe("maps", () => {
       kind: "alias",
       type: { kind: "map", key: { kind: "ref", name: "CurrencyCode" }, value: { kind: "string" } },
     });
-    expect(rustOf(model)).toContain("pub type CurrencyAmounts = BTreeMap<CurrencyCode, String>;");
+    // CurrencyCode checks its pattern, so in Rust the map is a type of its own that checks it.
+    expect(rustOf(model)).toContain("pub struct CurrencyAmounts(pub BTreeMap<CurrencyCode, String>);");
     expect(tsOf(model)).toContain("export type CurrencyAmounts = Record<CurrencyCode, string>;");
   });
 
@@ -533,10 +534,19 @@ describe("string families", () => {
     });
   });
 
-  it("type a family as a template literal in TypeScript only, a plain string in Rust", () => {
+  it("type a family as a template literal in TypeScript only, a checked string in Rust", () => {
     expect(tsOf(model)).toContain("export type OrderRef = `order.${string}`;\n");
     expect(tsOf(model)).toContain("export type Code = string;\n");
-    expect(rustOf(model)).toContain("pub type OrderRef = String;\n");
+    expect(rustOf(model)).toContain("pub struct OrderRef(pub String);\n");
+  });
+
+  it("keep the family type with validation off, when nothing checks the pattern", () => {
+    const off = buildModel(
+      schemaSet(defs({ orderRef: { type: "string", pattern: "^order\\..+$" } })),
+      { validation: false },
+    );
+    expect(tsOf(off)).toContain("export type OrderRef = `order.${string}`;\n");
+    expect(rustOf(off)).toContain("pub type OrderRef = String;\n");
   });
 });
 
@@ -1132,6 +1142,8 @@ describe("one file per schema", () => {
 describe("validation constraints", () => {
   const entries: JsonObject = {
     note: { type: "string", minLength: 1, maxLength: 5, pattern: "^n", format: "date" },
+    digits: { type: "string", pattern: "\\d.$" },
+    unique: { type: "array", items: { type: "string" }, uniqueItems: true },
     count: {
       type: "integer",
       minimum: 0,
@@ -1157,13 +1169,30 @@ describe("validation constraints", () => {
     return decl.kind === "alias" ? decl.type : decl;
   };
 
-  it("reads minLength and maxLength, and keeps pattern and format", () => {
+  it("reads minLength, maxLength, pattern and format", () => {
     expect(typeOf("Note")).toEqual({
       kind: "string",
       pattern: "^n",
+      match: { source: "^n", regex: "^n" },
       format: "date",
       minLength: 1,
       maxLength: 5,
+    });
+  });
+
+  it("keeps a pattern as written and in its portable form", () => {
+    expect(typeOf("Digits")).toEqual({
+      kind: "string",
+      pattern: "\\d.$",
+      match: { source: "\\d.$", regex: "[0-9][^\n\r\u2028\u2029]$" },
+    });
+  });
+
+  it("reads uniqueItems true, and leaves out false", () => {
+    expect(typeOf("Unique")).toEqual({
+      kind: "array",
+      items: { kind: "string" },
+      uniqueItems: true,
     });
   });
 
@@ -1214,15 +1243,22 @@ describe("validation constraints", () => {
     });
   });
 
-  it("leaves constraints out with validation off, but keeps pattern and format", () => {
+  it("leaves constraints out with validation off, but keeps the pattern for typing", () => {
     const off = buildModel(schemaSet(defs(entries)), { validation: false });
-    expect(find(off, "Note")).toMatchObject({
-      type: { kind: "string", pattern: "^n", format: "date" },
-    });
-    for (const name of ["Count", "Ratio", "Tags", "Labels"]) {
+    expect(find(off, "Note")).toMatchObject({ type: { kind: "string", pattern: "^n" } });
+    for (const name of ["Note", "Count", "Ratio", "Tags", "Labels", "Unique"]) {
       const decl = find(off, name);
-      expect(JSON.stringify(decl)).not.toMatch(/min|max|multiple/i);
+      const type = decl.kind === "alias" ? decl.type : decl;
+      expect(JSON.stringify(type)).not.toMatch(/min|max|multiple|match|format|unique/i);
     }
+  });
+
+  it("still fails on a pattern outside the subset with validation off", () => {
+    expect(() =>
+      buildModel(schemaSet(defs({ x: { type: "string", pattern: "(?=a)" } })), {
+        validation: false,
+      }),
+    ).toThrow("unsupported-pattern");
   });
 
   it("still fails on a bad constraint with validation off", () => {
@@ -1276,9 +1312,101 @@ describe("validation constraints", () => {
       'lib.json#/$defs/x/multipleOf: unsupported-constraint: multipleOf on a number can give different results in each language, since floats round. Hint: use "type": "integer" with a multipleOf, or remove it',
     ],
     [
-      "uniqueItems, not checked yet",
-      { x: { type: "array", items: { type: "string" }, uniqueItems: true } },
-      "lib.json#/$defs/x/uniqueItems: unsupported-constraint: uniqueItems is not checked yet. Hint: remove it, strictgen doesn't check it in any language yet",
+      "a non-boolean uniqueItems",
+      { x: { type: "array", items: { type: "string" }, uniqueItems: 1 } },
+      "lib.json#/$defs/x/uniqueItems: invalid-constraint: uniqueItems must be true or false",
+    ],
+    [
+      "a format other than date-time, date and uuid",
+      { x: { type: "string", format: "email" } },
+      'lib.json#/$defs/x/format: unsupported-format: only the date-time, date and uuid formats are supported. Hint: remove "format", or check the shape with "pattern"',
+    ],
+    [
+      "a not beside a string",
+      { x: { type: "string", not: { pattern: "^_" } } },
+      'lib.json#/$defs/x/not: unsupported-not: not beside a string type is not checked. Hint: use "pattern" for the strings that are allowed, or an "enum" of them',
+    ],
+    [
+      "a not of values beside a string",
+      { x: { type: "string", not: { enum: ["a"] } } },
+      "lib.json#/$defs/x/not: unsupported-not",
+    ],
+    [
+      "a lookahead",
+      { x: { type: "string", pattern: "^(?!_)" } },
+      "lib.json#/$defs/x/pattern: unsupported-pattern: lookarounds are not supported by Rust's regex and Go's RE2 at character 2",
+    ],
+    [
+      "a lookbehind",
+      { x: { type: "string", pattern: "(?<=a)b" } },
+      "unsupported-pattern: lookarounds are not supported",
+    ],
+    [
+      "a backreference",
+      { x: { type: "string", pattern: "(a)\\1" } },
+      "unsupported-pattern: backreferences are not supported by Rust's regex and Go's RE2 at character 4",
+    ],
+    [
+      "a named group",
+      { x: { type: "string", pattern: "(?<year>[0-9]{4})" } },
+      'unsupported-pattern: named groups are not supported at character 1. Hint: use a plain group, "(...)"',
+    ],
+    [
+      "a word boundary",
+      { x: { type: "string", pattern: "\\bword" } },
+      "unsupported-pattern: the word boundary \\b at character 1. Hint: Rust's regex reads it by Unicode rules, Go and ECMAScript by ASCII ones",
+    ],
+    [
+      "a Unicode property escape",
+      { x: { type: "string", pattern: "\\p{Lu}" } },
+      "unsupported-pattern: Unicode property escapes are not supported",
+    ],
+    [
+      "a repeat above 1000",
+      { x: { type: "string", pattern: "a{1001}" } },
+      "unsupported-pattern: a repeat count above 1000, which Go's RE2 rejects",
+    ],
+    [
+      "nested repeats above 1000",
+      { x: { type: "string", pattern: "(a{50}){21}" } },
+      "unsupported-pattern: nested repeats that multiply to more than 1000",
+    ],
+    [
+      "repeats in a row too large for Rust's regex to compile",
+      { x: { type: "string", pattern: `^${".{1000}".repeat(8)}$` } },
+      "lib.json#/$defs/x/pattern: unsupported-pattern: a pattern of 336002 steps once its repeats are written out, " +
+        "above the 100000 that Rust's regex compiles safely. Hint: lower the repeat counts, or check the length with minLength and maxLength",
+    ],
+    [
+      "a pattern with too many parts for V8",
+      { x: { type: "string", pattern: "a?".repeat(1001) } },
+      "unsupported-pattern: a pattern of 2002 parts, above the 2000 that V8 compiles safely",
+    ],
+    [
+      "a pattern that isn't ECMAScript",
+      { x: { type: "string", pattern: "a{2,1}" } },
+      "unsupported-pattern: not a valid ECMAScript pattern with the u flag",
+    ],
+    [
+      "a pattern that ECMAScript only reads without the u flag",
+      { x: { type: "string", pattern: "\\-" } },
+      "unsupported-pattern: not a valid ECMAScript pattern with the u flag",
+    ],
+    [
+      "a class that matches nothing",
+      { x: { type: "string", pattern: "[]" } },
+      "unsupported-pattern: a class that matches nothing",
+    ],
+    [
+      "a pattern on a map key",
+      {
+        x: {
+          type: "object",
+          propertyNames: { type: "string", pattern: "(?=a)" },
+          additionalProperties: { type: "string" },
+        },
+      },
+      "lib.json#/$defs/x/propertyNames/pattern: unsupported-pattern",
     ],
     [
       "contains, outside the subset",

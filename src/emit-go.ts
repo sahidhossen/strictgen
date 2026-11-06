@@ -1,19 +1,21 @@
 import type { EmittedFile } from "./common.js";
-import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER } from "./common.js";
+import { bySchema, commentHeader, commentText, compare, declTypes, DEFAULT_HEADER } from "./common.js";
 import type {
   AliasDecl,
   Decl,
   EnumDecl,
   Field,
+  Format,
   Model,
+  Pattern,
   StructDecl,
   TaggedDecl,
   TypeExpr,
   UntaggedDecl,
 } from "./model.js";
-import { Checks, limitsOf } from "./checks.js";
+import { Checks, limitsOf, patternsOf } from "./checks.js";
 import type { ReadMode } from "./config.js";
-import { GO_CODES, GO_NON_NULL, goHelpersBody } from "./go-helpers.js";
+import { GO_CODES, GO_NON_NULL, GO_PATTERN_TYPE, goHelpersBody } from "./go-helpers.js";
 import { GO_KEYWORDS, pascal, RENAME_TYPE, variantName } from "./naming.js";
 import { CodegenError } from "./schema.js";
 
@@ -62,14 +64,32 @@ interface Ctx {
   readonly report: boolean;
   /** Which values have constraints to check. */
   readonly checks: Checks;
+  /** The patterns the decoders check, in the order of the helpers' table. */
+  readonly patterns: readonly Pattern[];
+  /** The index of each checked pattern in the helpers' table, by the pattern as written. */
+  readonly indexes: ReadonlyMap<string, number>;
 }
 
 function context(model: Model, report: boolean): Ctx {
+  const patterns = patternsOf(model.decls);
   return {
     decls: new Map(model.decls.map((d) => [d.name, d])),
     report,
     checks: new Checks(model.decls),
+    patterns,
+    indexes: new Map(patterns.map((p, i) => [p.source, i])),
   };
+}
+
+/**
+ * True for an alias Go generates as a defined type, like `type Tags []string`, rather than as
+ * a Go alias: every alias but one of another declaration. A defined type has an UnmarshalJSON
+ * that reads with strictgen's strict parser, so json.Unmarshal and Report into it accept and
+ * reject the same JSON as Rust and TypeScript, and a check method when it has constraints. An
+ * alias of a declaration stays a Go alias, since that declaration has those methods itself.
+ */
+function own(decl: Decl): boolean {
+  return decl.kind === "alias" && decl.type.kind !== "ref";
 }
 
 /** Options for the Go emitters. */
@@ -112,8 +132,9 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   return [
     {
       name: GO_HELPERS,
-      contents: goFile(goHead(options, ""), helperImports(ctx.report), [
+      contents: goFile(goHead(options, ""), helperImports(ctx.report, ctx.patterns.length > 0), [
         goHelpersBody(ctx.report),
+        ...(ctx.patterns.length > 0 ? [patternTable(ctx.patterns)] : []),
         ...literals.map(literalType),
       ]),
     },
@@ -121,9 +142,41 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   ];
 }
 
-/** True for a constrained alias of a map with enum keys, whose MarshalJSON calls json.Marshal. */
+/**
+ * The table of the patterns the decoders check, compiled once when the package loads: each from
+ * its portable form, which Rust's regex and ECMAScript read the same way, with the pattern as the
+ * schema writes it, for errors.
+ */
+function patternTable(patterns: readonly Pattern[]): string {
+  const rows = patterns.map((p) => `\t{regexp.MustCompile(${goString(p.regex)}), ${goString(p.source)}},\n`);
+  return (
+    GO_PATTERN_TYPE +
+    `// patterns holds the patterns schemas check: each compiled once from its portable form, which\n` +
+    `// Rust's regex and ECMAScript read the same way, and as the schema writes it, for errors.\n` +
+    `var patterns = [...]pattern{\n${rows.join("")}}\n`
+  );
+}
+
+/**
+ * A Go interpreted string literal of text: printable ASCII as itself, with " and \ escaped,
+ * and every other character as a \u or \U escape, so no byte the Go compiler rejects, like a
+ * byte order mark, reaches the source.
+ */
+export function goString(text: string): string {
+  let out = '"';
+  for (const c of text) {
+    const code = c.codePointAt(0) ?? 0;
+    if (c === '"' || c === "\\") out += `\\${c}`;
+    else if (code >= 0x20 && code < 0x7f) out += c;
+    else if (code <= 0xffff) out += `\\u${code.toString(16).padStart(4, "0")}`;
+    else out += `\\U${code.toString(16).padStart(8, "0")}`;
+  }
+  return `${out}"`;
+}
+
+/** True for an alias of a map with enum keys, whose MarshalJSON calls json.Marshal. */
 function marshalsKeys(ctx: Ctx, decl: Decl): boolean {
-  return decl.kind === "alias" && ctx.checks.ownType(decl) && keyCheck(ctx, decl.type) !== undefined;
+  return decl.kind === "alias" && own(decl) && keyCheck(ctx, decl.type) !== undefined;
 }
 
 /** True when a declaration spells a type from encoding/json: `json.Number` or `json.RawMessage`. */
@@ -271,7 +324,7 @@ function declaration(ctx: Ctx, decl: Decl): string {
     case "untagged":
       return head + untagged(ctx, decl);
     case "alias":
-      return ctx.checks.ownType(decl)
+      return own(decl)
         ? head + definedType(ctx, decl)
         : `${head}type ${decl.name} = ${goType(decl.type)}\n`;
     case "id":
@@ -353,7 +406,7 @@ function struct(ctx: Ctx, decl: StructDecl): string {
     reads.length === 0
       ? "func(*objectDecoder) {}"
       : `func(d *objectDecoder) {\n${reads.join("")}\t}`;
-  const forbidden = ctx.report ? decl.forbidden.map((k) => `, ${JSON.stringify(k)}`).join("") : "";
+  const forbidden = ctx.report ? decl.forbidden.map((k) => `, ${goString(k)}`).join("") : "";
   const doc = ctx.report
     ? `// UnmarshalJSON decodes strictly: missing required keys and explicit nulls fail. Unknown keys\n` +
       `// are accepted, and their paths go to the hook set with SetUnknownKeyHook.\n`
@@ -386,7 +439,7 @@ function structCheck(ctx: Ctx, decl: StructDecl, names: readonly string[]): stri
     const pointer = fieldType(ctx, f).startsWith("*");
     const check = goCheck(ctx, f.type, pointer ? `*${name}` : name);
     if (check === undefined) return [];
-    const key = JSON.stringify(f.name);
+    const key = goString(f.name);
     const test = `if err := ${check}; err != nil {\n`;
     if (!pointer || f.required) return [`\t${test}\t\treturn err.at(${key})\n\t}\n`];
     return [`\tif ${name} != nil {\n\t\t${test}\t\t\treturn err.at(${key})\n\t\t}\n\t}\n`];
@@ -400,35 +453,41 @@ function structCheck(ctx: Ctx, decl: StructDecl, names: readonly string[]): stri
 }
 
 /**
- * A constrained alias of a type that can't check it, like a list of codes, as a defined type
- * with the methods of a generated type, so json.Unmarshal into it, Report and every type that
- * holds it check its constraints. It encodes as the value it holds: a number through
- * json.Number, which encoding/json would otherwise write as a string, and a map with enum keys
- * after checking them.
+ * An alias of a type that isn't a declaration, like a list of codes or a string with a format,
+ * as a defined type with the methods of a generated type, so json.Unmarshal into it, Report and
+ * every type that holds it decode strictly and check its constraints. It encodes as the value it
+ * holds: a number through json.Number, which encoding/json would otherwise write as a string, a
+ * map with enum keys after checking them, and a type with a MarshalJSON of its own, like
+ * json.RawMessage, through that method, which a defined type doesn't inherit.
  */
 function definedType(ctx: Ctx, decl: AliasDecl): string {
   const name = decl.name;
   const inner = goType(decl.type);
   const keys = keyCheck(ctx, decl.type);
+  const kind = decl.type.kind;
+  const checked = ctx.checks.decl(name);
   const marshal =
-    decl.type.kind === "number"
+    kind === "number"
       ? `\n// MarshalJSON encodes the number as it was decoded.\n` +
         `func (v ${name}) MarshalJSON() ([]byte, error) { return json.Marshal(json.Number(v)) }\n`
-      : keys !== undefined
-        ? `\n// MarshalJSON fails on a map key its enum doesn't list, which encoding/json would write.\n` +
-          `func (v ${name}) MarshalJSON() ([]byte, error) {\n` +
-          `\tif err := ${keys}(${inner}(v)); err != nil {\n\t\treturn nil, err\n\t}\n` +
-          `\treturn json.Marshal(${inner}(v))\n}\n`
-        : "";
+      : kind === "any" || kind === "nonNull" || kind === "literal"
+        ? `\n// MarshalJSON encodes the value as ${inner} does.\n` +
+          `func (v ${name}) MarshalJSON() ([]byte, error) { return ${inner}(v).MarshalJSON() }\n`
+        : keys !== undefined
+          ? `\n// MarshalJSON fails on a map key its enum doesn't list, which encoding/json would write.\n` +
+            `func (v ${name}) MarshalJSON() ([]byte, error) {\n` +
+            `\tif err := ${keys}(${inner}(v)); err != nil {\n\t\treturn nil, err\n\t}\n` +
+            `\treturn json.Marshal(${inner}(v))\n}\n`
+          : "";
   return (
     `type ${name} ${inner}\n\n` +
-    `// UnmarshalJSON decodes strictly, then checks the constraints.\n` +
+    `// UnmarshalJSON decodes strictly${checked ? ", then checks the constraints" : ""}.\n` +
     unmarshalMethod(name) +
     `func (v *${name}) decode(n *node) *DecodeError {\n` +
     `\tx, err := ${decoder(ctx, decl.type)}(n)\n` +
     `\tif err != nil {\n\t\treturn err\n\t}\n` +
     `\t*v = ${name}(x)\n\treturn nil\n}\n` +
-    checkMethod(name, [`\treturn ${goCheck(ctx, decl.type, `${inner}(v)`) ?? "nil"}\n`], true) +
+    checkMethod(name, [`\treturn ${goCheck(ctx, decl.type, `${inner}(v)`) ?? "nil"}\n`], checked) +
     marshal
   );
 }
@@ -443,28 +502,44 @@ function goCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
   switch (type.kind) {
     case "ref": {
       const decl = ctx.decls.get(type.name);
-      if (decl?.kind === "alias" && !ctx.checks.ownType(decl)) return goCheck(ctx, decl.type, v);
+      if (decl?.kind === "alias" && !own(decl)) return goCheck(ctx, decl.type, v);
       if (decl?.kind === "tagged") return `checkValue(${v})`;
       return v.startsWith("*") ? `(${v}).check()` : `${v}.check()`;
     }
-    case "string":
-      return `checkLength(${v}, ${n(type.minLength)}, ${n(type.maxLength)})`;
+    case "string": {
+      // The length, then the pattern, then the format, in the order of src/checks.ts.
+      const checks: string[] = [];
+      if (type.match !== undefined)
+        checks.push(`patterns[${String(ctx.indexes.get(type.match.source) ?? -1)}].check`);
+      if (type.format !== undefined) checks.push(FORMAT_CHECKS[type.format]);
+      if (checks.length === 0) return `checkLength(${v}, ${n(type.minLength)}, ${n(type.maxLength)})`;
+      return `checkString(${v}, ${n(type.minLength)}, ${n(type.maxLength)}, ${checks.join(", ")})`;
+    }
     case "integer":
     case "number": {
       const go = type.kind === "integer" ? "int64" : "float64";
       const limits = limitsOf(type).map(
-        (l) => `limit[${go}]{${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)}}`,
+        (l) => `limit[${go}]{${goString(l.op)}, ${String(l.bound)}, ${goString(l.text)}}`,
       );
       return `${type.kind === "integer" ? "checkInt" : "checkNumber"}(${v}, ${limits.join(", ")})`;
     }
-    case "array":
-      return `checkItems(${v}, ${n(type.minItems)}, ${n(type.maxItems)}, ${goCheckFn(ctx, type.items)})`;
+    case "array": {
+      const check = type.uniqueItems === true ? "checkUniqueItems" : "checkItems";
+      return `${check}(${v}, ${n(type.minItems)}, ${n(type.maxItems)}, ${goCheckFn(ctx, type.items)})`;
+    }
     case "map":
       return `checkEntries(${v}, ${n(type.minProperties)}, ${n(type.maxProperties)}, ${goCheckFn(ctx, type.key)}, ${goCheckFn(ctx, type.value)})`;
     default:
       return undefined;
   }
 }
+
+/** The helper that checks each format. */
+const FORMAT_CHECKS: Readonly<Record<Format, string>> = {
+  "date-time": "checkDateTime",
+  date: "checkDate",
+  uuid: "checkUUID",
+};
 
 /** A Go `func(T) *DecodeError` that checks a value of `type`, or `nil` when there is nothing to check. */
 function goCheckFn(ctx: Ctx, type: TypeExpr): string {
@@ -509,7 +584,7 @@ function marshal(ctx: Ctx, decl: StructDecl, names: readonly string[]): string {
     }
   }
   if (decl.rest === undefined && checks.length === 0 && enumKeys.length === 0) return "";
-  const keys = `[]string{${checks.map((c) => JSON.stringify(c.key)).join(", ")}}`;
+  const keys = `[]string{${checks.map((c) => goString(c.key)).join(", ")}}`;
   const set = checks.map((c) => `, v.${c.name} != nil`).join("");
   const checkKeys =
     enumKeys.length === 0
@@ -529,7 +604,7 @@ function marshal(ctx: Ctx, decl: StructDecl, names: readonly string[]): string {
       `\treturn encodeRequired(plain(v), ${keys}${set})\n}\n`
     );
   }
-  const named = `[]string{${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}}`;
+  const named = `[]string{${decl.fields.map((f) => goString(f.name)).join(", ")}}`;
   return (
     `\n// MarshalJSON encodes the named keys, then the keys of Rest in order, as one object.\n` +
     `// It fails when Rest holds a named key, so no key is written twice, or when a required\n` +
@@ -565,7 +640,7 @@ function keyCheck(ctx: Ctx, type: TypeExpr): string | undefined {
 
 /** The statement that reads one key in a struct's UnmarshalJSON. */
 function read(ctx: Ctx, f: Field, name: string): string {
-  const key = JSON.stringify(f.name);
+  const key = goString(f.name);
   const decode = decoder(ctx, f.type);
   if (f.required) {
     return `required(d, ${key}, &out.${name}, ${f.boxed ? `boxed(${decode})` : decode})`;
@@ -597,7 +672,7 @@ function resolve(ctx: Ctx, type: TypeExpr, plain = false): TypeExpr {
   let current = type;
   for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
     const decl = ctx.decls.get(current.name);
-    if (decl?.kind !== "alias" || (plain && ctx.checks.ownType(decl))) return current;
+    if (decl?.kind !== "alias" || (plain && own(decl))) return current;
     current = decl.type;
   }
   return current;
@@ -623,7 +698,7 @@ function enumeration(decl: EnumDecl): string {
   const consts = enumConsts(decl);
   const lines = consts.map(
     (c) =>
-      `\t// ${c.name} is ${JSON.stringify(c.value)}.\n\t${c.name} ${decl.name} = ${JSON.stringify(c.value)}\n`,
+      `\t// ${c.name} is ${goString(c.value)}.\n\t${c.name} ${decl.name} = ${goString(c.value)}\n`,
   );
   return (
     `type ${decl.name} string\n\n` +
@@ -648,13 +723,13 @@ function branchTypes(ctx: Ctx, decl: TaggedDecl): string[] {
 
 function tagged(ctx: Ctx, decl: TaggedDecl): string {
   const types = branchTypes(ctx, decl);
-  const key = JSON.stringify(decl.tag);
+  const key = goString(decl.tag);
   const marker = `is${decl.name}`;
   const branches = decl.variants.map(
-    (v, i) => `\t\t${JSON.stringify(v.value)}: branch[${decl.name}, ${types[i] ?? ""}],\n`,
+    (v, i) => `\t\t${goString(v.value)}: branch[${decl.name}, ${types[i] ?? ""}],\n`,
   );
   const markers = types.map((t) => `func (${t}) ${marker}() {}\n`);
-  const tags = `[]string{${decl.variants.map((v) => JSON.stringify(v.value)).join(", ")}}`;
+  const tags = `[]string{${decl.variants.map((v) => goString(v.value)).join(", ")}}`;
   return (
     `//\n// It holds one of ${list(types)}, picked by the ${key} key.\n` +
     `// Decode it with Decode${decl.name}, which reads the key first.\n` +
@@ -683,17 +758,23 @@ function untagged(ctx: Ctx, decl: UntaggedDecl): string {
       decode: decoder(ctx, v.type),
       value,
       raw: resolve(ctx, v.type).kind === "any",
+      // An alias of any JSON is a defined type, which someRaw takes as bytes.
+      named: v.type.kind === "ref",
       doc: `${v.name} is set when the value decodes as ${goType(v.type)}.`,
     };
   });
   const lines = fields.map((f) => `\t// ${f.doc}\n\t${f.name} ${f.type}\n`);
   const encode = fields.map((f) =>
-    f.raw ? `someRaw(v.${f.name})` : f.value ? `v.${f.name}` : `some(v.${f.name})`,
+    f.raw
+      ? `someRaw(${f.named ? `[]byte(v.${f.name})` : `v.${f.name}`})`
+      : f.value
+        ? `v.${f.name}`
+        : `some(v.${f.name})`,
   );
   const tries = fields.map(
     (f) => `\t\t${f.value ? "tryValue" : "try"}(&out.${f.name}, ${f.decode}),\n`,
   );
-  const name = JSON.stringify(decl.name);
+  const name = goString(decl.name);
   const enumKeys = decl.variants.flatMap((v) => {
     const check = keyCheck(ctx, v.type);
     return check === undefined ? [] : [`\t\tptrKeys(${check})(v.${v.name}),\n`];
@@ -765,7 +846,7 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
   switch (type.kind) {
     case "ref": {
       const decl = ctx.decls.get(type.name);
-      if (decl?.kind === "alias" && !ctx.checks.ownType(decl)) return decoder(ctx, decl.type);
+      if (decl?.kind === "alias" && !own(decl)) return decoder(ctx, decl.type);
       if (decl?.kind === "tagged") return `union${type.name}`;
       return `decodeType[${type.name}]`;
     }
@@ -792,7 +873,7 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
 
 /** Go comment lines. */
 function comment(lines: readonly string[], indent: string): string {
-  return lines.map((line) => `${indent}//${line === "" ? "" : ` ${line}`}\n`).join("");
+  return lines.map((line) => `${indent}//${line === "" ? "" : ` ${commentText(line)}`}\n`).join("");
 }
 
 /**
@@ -809,13 +890,22 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
         d.source?.def === undefined
           ? (d.source?.schema ?? "")
           : `${d.source.schema}/${d.source.def}`,
+      name: d.name,
       decode: `asAny(${decoder(ctx, { kind: "ref", name: d.name })})`,
     }))
-    .sort((a, b) => compare(a.key, b.key))
-    .map((e) => `\t\t${JSON.stringify(e.key)}: ${e.decode},\n`);
+    .sort((a, b) => compare(a.key, b.key));
+  // A tagged union is an interface, which json.Unmarshal can't fill: DecodeX reads it instead.
+  const unmarshaled = entries.flatMap((e) => {
+    const resolved = resolve(ctx, { kind: "ref", name: e.name }, true);
+    const target = resolved.kind === "ref" ? ctx.decls.get(resolved.name) : undefined;
+    return target === undefined || target.kind === "tagged"
+      ? []
+      : [`\t\t${goString(e.key)}: func() json.Unmarshaler { return new(${e.name}) },\n`];
+  });
+  const decoders = entries.map((e) => `\t\t${goString(e.key)}: ${e.decode},\n`);
   const types = [
     ...model.decls
-      .filter((d) => (d.kind !== "alias" || ctx.checks.ownType(d)) && d.kind !== "tagged")
+      .filter((d) => (d.kind !== "alias" || own(d)) && d.kind !== "tagged")
       .map((d) => d.name),
     ...literalsOf(model).map(literalName),
     GO_NON_NULL,
@@ -828,7 +918,7 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
 // paths of its unknown keys.
 func fixtureDecoders() map[string]func([]byte) (any, []string, error) {
 \treturn map[string]func([]byte) (any, []string, error){
-${entries.join("")}\t}
+${decoders.join("")}\t}
 }
 
 // asAny returns a decoder of JSON that parses it once, then decodes it with decode.
@@ -843,7 +933,7 @@ func asAny[T any](decode func(*node) (T, *DecodeError)) func([]byte) (any, []str
 // to a function that decodes JSON as the type generated for it.
 func fixtureDecoders() map[string]func([]byte) (any, error) {
 \treturn map[string]func([]byte) (any, error){
-${entries.join("")}\t}
+${decoders.join("")}\t}
 }
 
 // asAny returns a decoder of JSON that parses it once, then decodes it with decode.
@@ -857,6 +947,13 @@ func asAny[T any](decode func(*node) (T, *DecodeError)) func([]byte) (any, error
   return `${goHead(options, "")}import "encoding/json"
 
 ${registry}
+// fixtureTypes maps each fixture folder whose type json.Unmarshal can decode to a function that
+// returns a new value of that type, so tests can decode every fixture through json.Unmarshal too.
+func fixtureTypes() map[string]func() json.Unmarshaler {
+\treturn map[string]func() json.Unmarshaler{
+${unmarshaled.join("")}\t}
+}
+
 // unmarshalers returns a new value of every generated type with an UnmarshalJSON method.
 func unmarshalers() []json.Unmarshaler {
 \treturn []json.Unmarshaler{
@@ -866,7 +963,7 @@ ${types.join("")}\t}
 }
 
 /** Standard library packages the helpers file uses, in import order. Report mode adds sync/atomic. */
-function helperImports(report: boolean): string[] {
+function helperImports(report: boolean, patterns: boolean): string[] {
   return [
     "bytes",
     "encoding",
@@ -874,10 +971,12 @@ function helperImports(report: boolean): string[] {
     "errors",
     "fmt",
     "maps",
+    ...(patterns ? ["regexp"] : []),
     "slices",
     "strconv",
     "strings",
     ...(report ? ["sync/atomic"] : []),
+    "unicode/utf16",
     "unicode/utf8",
   ];
 }

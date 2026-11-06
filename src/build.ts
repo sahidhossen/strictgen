@@ -1,9 +1,11 @@
 import type {
   Decl,
   Field,
+  Format,
   IntegerType,
   Model,
   NumberType,
+  Pattern,
   Rest,
   Source,
   StringType,
@@ -14,6 +16,7 @@ import type {
 } from "./model.js";
 import { compare } from "./common.js";
 import { pascal, RENAME_TYPE } from "./naming.js";
+import { PatternError, portablePattern } from "./pattern.js";
 import type { DefKey, Json, JsonObject, Loc, SchemaSet } from "./schema.js";
 import {
   at,
@@ -75,8 +78,8 @@ const STRUCTURAL = new Set([
   "format",
 ]);
 const TYPES = new Set(["object", "array", "string", "integer", "number", "boolean"]);
-/** `date-time` and `date` stay strings, so they re-encode byte for byte. */
-const FORMATS = new Set(["date-time", "date"]);
+/** The formats decoders check. They stay strings, so they re-encode byte for byte. */
+const FORMATS: ReadonlySet<string> = new Set<Format>(["date-time", "date", "uuid"]);
 /** The hint for a type name that clashes or can't be used. */
 const RENAME = RENAME_TYPE;
 /** The hint for a type that contains itself through aliases. */
@@ -97,7 +100,7 @@ export interface BuildOptions {
   /**
    * Puts the constraints, like `maxLength`, in the model, so decoders check them. Defaults to
    * true. When false, constraints are still read and a bad one still fails generation, but
-   * the model leaves them out. `pattern` and `format` stay, since they type TypeScript strings.
+   * the model leaves them out. A string's `pattern` stays, since it types TypeScript strings.
    */
   readonly validation?: boolean;
 }
@@ -399,25 +402,15 @@ function typeOf(
   }
   switch (schema.type) {
     case "string":
-      only(schema, loc, ["type", "not", "format"]);
-      if (schema.not !== undefined && !isStringExclusion(schema.not)) {
+      if (schema.not !== undefined) {
         fail(
           at(loc, "not"),
           "unsupported-not",
-          "not beside a string type may only exclude a pattern or values",
+          "not beside a string type is not checked",
+          'use "pattern" for the strings that are allowed, or an "enum" of them',
         );
       }
-      if (
-        schema.format !== undefined &&
-        (typeof schema.format !== "string" || !FORMATS.has(schema.format))
-      ) {
-        fail(
-          at(loc, "format"),
-          "unsupported-format",
-          "only the date-time and date formats are supported",
-          'remove "format", or check the shape with "pattern"',
-        );
-      }
+      only(schema, loc, ["type", "format"]);
       return stringType(ctx, schema, loc);
     case "integer":
     case "number":
@@ -449,18 +442,6 @@ function arrayAt(value: Json | undefined, loc: Loc): readonly Json[] {
 
 function isNullConst(value: Json | undefined): boolean {
   return isObject(value) && structural(value).length === 1 && value.const === null;
-}
-
-/** A `not` beside a string type that excludes a pattern or a list of values, like reserved field keys. */
-function isStringExclusion(value: Json | undefined): boolean {
-  if (!isObject(value)) return false;
-  const keys = structural(value);
-  const excludes = typeof value.pattern === "string" || Array.isArray(value.enum);
-  return (
-    excludes &&
-    keys.every((k) => k === "type" || k === "enum") &&
-    (value.type === undefined || value.type === "string")
-  );
 }
 
 function refType(ctx: Ctx, schema: JsonObject, loc: Loc): TypeExpr {
@@ -515,6 +496,9 @@ function constType(
       "const must be a string, an integer or a boolean",
     );
   }
+  if (LONE_SURROGATE.test(value)) {
+    fail(at(loc, "const"), "unsupported-const", `the const holds a lone surrogate, ${NO_SURROGATES}`);
+  }
   return hoist(ctx, name, loc, () => ({
     kind: "enum",
     name,
@@ -526,14 +510,20 @@ function constType(
   }));
 }
 
+/** A UTF-16 surrogate without its pair, which no Rust or Go string holds. */
+const LONE_SURROGATE = /\p{Surrogate}/u;
+const NO_SURROGATES = "which Rust and Go strings can't";
+
 function enumType(ctx: Ctx, schema: JsonObject, loc: Loc, name: string, source?: Source): TypeExpr {
   only(schema, loc, ["enum", "type"]);
   if (schema.type !== undefined && schema.type !== "string")
     fail(at(loc, "type"), "unsupported-enum", "enums must be strings");
   const values = arrayAt(schema.enum, at(loc, "enum")).map((v, i) =>
-    typeof v === "string"
-      ? v
-      : fail(at(loc, "enum", i), "unsupported-enum", "enum values must be strings"),
+    typeof v !== "string"
+      ? fail(at(loc, "enum", i), "unsupported-enum", "enum values must be strings")
+      : LONE_SURROGATE.test(v)
+        ? fail(at(loc, "enum", i), "unsupported-enum", `the value holds a lone surrogate, ${NO_SURROGATES}`)
+        : v,
   );
   if (new Set(values).size !== values.length)
     fail(at(loc, "enum"), "unsupported-enum", "enum values must be unique");
@@ -568,19 +558,17 @@ function arrayType(
     });
   }
   limitsOnly(schema, loc, ARRAY_CONSTRAINTS, "to an array");
-  if (schema.uniqueItems !== undefined && schema.uniqueItems !== false) {
-    fail(
-      at(loc, "uniqueItems"),
-      "unsupported-constraint",
-      "uniqueItems is not checked yet",
-      "remove it, strictgen doesn't check it in any language yet",
-    );
-  }
+  if (schema.uniqueItems !== undefined && typeof schema.uniqueItems !== "boolean")
+    fail(at(loc, "uniqueItems"), "invalid-constraint", "uniqueItems must be true or false");
   const minItems = count(schema, loc, "minItems");
   const maxItems = count(schema, loc, "maxItems");
   ordered(loc, "minItems", minItems, "maxItems", maxItems, true);
   const limits = ctx.validation
-    ? { ...defined("minItems", minItems), ...defined("maxItems", maxItems) }
+    ? {
+        ...defined("minItems", minItems),
+        ...defined("maxItems", maxItems),
+        ...(schema.uniqueItems === true ? { uniqueItems: true as const } : {}),
+      }
     : {};
   if (lifted !== undefined) return { kind: "array", items: lifted, ...limits };
   if (schema.items === undefined)
@@ -661,19 +649,44 @@ function keyType(ctx: Ctx, value: Json, loc: Loc, name: string): TypeExpr {
 /** A string, with its `pattern`, `format` and length limits when it has them. */
 function stringType(ctx: Ctx, schema: JsonObject, loc: Loc): StringType {
   limitsOnly(schema, loc, STRING_CONSTRAINTS, "to a string");
-  if (schema.pattern !== undefined && typeof schema.pattern !== "string")
+  const pattern = schema.pattern;
+  if (pattern !== undefined && typeof pattern !== "string")
     fail(at(loc, "pattern"), "invalid-constraint", "pattern must be a string");
+  const format = schema.format;
+  if (format !== undefined && (typeof format !== "string" || !FORMATS.has(format))) {
+    fail(
+      at(loc, "format"),
+      "unsupported-format",
+      "only the date-time, date and uuid formats are supported",
+      'remove "format", or check the shape with "pattern"',
+    );
+  }
   const minLength = count(schema, loc, "minLength");
   const maxLength = count(schema, loc, "maxLength");
   ordered(loc, "minLength", minLength, "maxLength", maxLength, true);
+  const match = typeof pattern === "string" ? portable(pattern, at(loc, "pattern")) : undefined;
   return {
     kind: "string",
-    ...(typeof schema.pattern === "string" ? { pattern: schema.pattern } : {}),
-    ...(typeof schema.format === "string" ? { format: schema.format } : {}),
+    ...(typeof pattern === "string" ? { pattern } : {}),
     ...(ctx.validation
-      ? { ...defined("minLength", minLength), ...defined("maxLength", maxLength) }
+      ? {
+          ...(match === undefined ? {} : { match }),
+          ...(typeof format === "string" ? { format: format as Format } : {}),
+          ...defined("minLength", minLength),
+          ...defined("maxLength", maxLength),
+        }
       : {}),
   };
+}
+
+/** A pattern and its portable form, or a generation error saying why it has none. */
+function portable(source: string, loc: Loc): Pattern {
+  try {
+    return { source, regex: portablePattern(source) };
+  } catch (error) {
+    if (!(error instanceof PatternError)) throw error;
+    return fail(loc, "unsupported-pattern", error.message, error.hint);
+  }
 }
 
 /** An integer or a number, with its bounds and, for an integer, `multipleOf`. */

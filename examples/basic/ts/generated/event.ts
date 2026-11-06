@@ -27,11 +27,8 @@ export interface Event {
   metadata?: Record<string, string>;
 }
 
-/**
- * Decodes parsed JSON as Event, strictly. Throws a DecodeError at the JSON Pointer of
- * the first problem, under `path` when given.
- */
-export function decodeEvent(json: unknown, path = ""): Event {
+/** Decodes the structure of Event, checking constraints only while h.checked asks for it. */
+function readEvent(json: unknown, path: string): Event {
   const o = h.object(json, path);
   const value: Event = {
     id: h.required(o, "id", path, decodeEventId),
@@ -44,6 +41,15 @@ export function decodeEvent(json: unknown, path = ""): Event {
   };
   h.closed(o, path, ["id", "type", "occurredAt", "attempt", "user", "paymentMethod", "metadata"]);
   return value;
+}
+
+/**
+ * Decodes parsed JSON as Event, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeEvent(json: unknown, path = ""): Event {
+  return h.checked(json, path, readEvent);
 }
 
 /** Like decodeEvent, but returns the DecodeError instead of throwing it. */

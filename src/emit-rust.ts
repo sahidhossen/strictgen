@@ -1,13 +1,15 @@
 import type { EmittedFile } from "./common.js";
-import { bySchema, commentHeader, compare, declTypes, DEFAULT_HEADER, imports } from "./common.js";
-import { Checks, limitsOf } from "./checks.js";
+import { bySchema, commentHeader, commentText, compare, declTypes, DEFAULT_HEADER, imports } from "./common.js";
+import { Checks, limitsOf, patternsOf } from "./checks.js";
 import type {
   AliasDecl,
   Decl,
   EnumDecl,
   Field,
+  Format,
   IdDecl,
   Model,
+  Pattern,
   StructDecl,
   TaggedDecl,
   TypeExpr,
@@ -89,6 +91,8 @@ interface Ctx {
   readonly report: boolean;
   /** Which values have constraints to check. */
   readonly checks: Checks;
+  /** The index of each checked pattern in the helpers' table, by the pattern as written. */
+  readonly patterns: ReadonlyMap<string, number>;
 }
 
 /** A lint the generated `mod.rs` allows for every module, and why. */
@@ -134,17 +138,17 @@ export interface RustOptions {
 }
 
 /**
- * A Rust string literal: `text` with backslashes and quotes escaped, and control characters,
- * U+2028 and U+2029 as `\u{...}` escapes, so any JSON key or value can be written.
+ * A Rust string literal of text in ASCII only: printable ASCII as itself, with " and \ escaped,
+ * and every other character as a `\u{...}` escape. So any JSON key or value can be written, and
+ * no lint sees a character that is hard to read, like a line separator or a byte order mark.
  */
 export function rustString(text: string): string {
   let out = '"';
   for (const c of text) {
     const code = c.codePointAt(0) ?? 0;
     if (c === "\\" || c === '"') out += `\\${c}`;
-    else if (code < 0x20 || (code >= 0x7f && code <= 0x9f) || code === 0x2028 || code === 0x2029)
-      out += `\\u{${code.toString(16)}}`;
-    else out += c;
+    else if (code >= 0x20 && code < 0x7f) out += c;
+    else out += `\\u{${code.toString(16)}}`;
   }
   return `${out}"`;
 }
@@ -190,10 +194,12 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
       );
     }
   }
+  const patterns = patternsOf(model.decls);
   const ctx: Ctx = {
     decls: new Map(model.decls.map((d) => [d.name, d])),
     report,
     checks: new Checks(model.decls),
+    patterns: new Map(patterns.map((p, i) => [p.source, i])),
   };
   const contents = modules.map((m) => ({
     name: `${m.name}.rs`,
@@ -226,6 +232,7 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     literals.has("boolean") ? RUST_HELPERS_CONST_BOOL : "",
     report && usesUntagged ? RUST_HELPERS_ATTEMPT : "",
     ...checkParts(contents.map((c) => c.contents)),
+    patterns.length > 0 ? patternTable(patterns) : "",
   ]
     .filter((part) => part !== "")
     .join("\n");
@@ -251,6 +258,26 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     { name: `${HELPERS}.rs`, contents: helpers },
     ...contents,
   ];
+}
+
+/**
+ * The table of the patterns the decoders check, which check_pattern compiles once with the
+ * `regex` crate: each in its portable form, which Go's RE2 and ECMAScript read the same way,
+ * and as the schema writes it.
+ */
+function patternTable(patterns: readonly Pattern[]): string {
+  // Each row as rustfmt writes it, on one line when it fits in 100 columns, so the output is the
+  // same whichever rustfmt formats it, or none.
+  const rows = patterns.map((p) => {
+    const [regex, source] = [rustString(p.regex), rustString(p.source)];
+    const line = `    (${regex}, ${source}),\n`;
+    return line.length <= 101 ? line : `    (\n        ${regex},\n        ${source},\n    ),\n`;
+  });
+  return (
+    `/// The patterns schemas check: each in the portable form, which Go's RE2 and ECMAScript read\n` +
+    `/// the same way, and as the schema writes it, for errors.\n` +
+    `const PATTERNS: [(&str, &str); ${String(patterns.length)}] = [\n${rows.join("")}];\n`
+  );
 }
 
 /** The check helpers the modules call, with the parts they need, in a fixed order. */
@@ -526,7 +553,7 @@ function enumeration(decl: EnumDecl): string {
     name: unique(variantName(value), seen, decl.path),
   }));
   const lines = variants.map(
-    (v) => `    /// \`${v.value}\`\n    #[serde(rename = ${rustString(v.value)})]\n    ${v.name},\n`,
+    (v) => `    /// \`${rustString(v.value).slice(1, -1)}\`\n    #[serde(rename = ${rustString(v.value)})]\n    ${v.name},\n`,
   );
   const texts = variants.map((v) => `            Self::${v.name} => ${rustString(v.value)},\n`);
   const arms = variants.map((v) => `            ${rustString(v.value)} => Ok(Self::${v.name}),\n`);
@@ -563,7 +590,7 @@ function tagged(ctx: Ctx, decl: TaggedDecl): string {
     text: v.boxed ? `Box<${v.type}>` : v.type,
   }));
   const lines = variants.map(
-    (v) => `    /// The \`${v.value}\` branch.\n    ${v.name}(${v.text}),\n`,
+    (v) => `    /// The \`${rustString(v.value).slice(1, -1)}\` branch.\n    ${v.name}(${v.text}),\n`,
   );
   const tag = rustString(decl.tag);
   const arms = variants.map(
@@ -636,29 +663,46 @@ function rustCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
       if (decl?.kind === "alias" && !ctx.checks.ownType(decl)) return rustCheck(ctx, decl.type, v);
       return `${HELPERS}::Decode::check(${v})`;
     }
-    case "string":
-      return `${HELPERS}::check_length(${v}, ${n(type.minLength)}, ${n(type.maxLength)})`;
+    case "string": {
+      // One check after the other, in the order of src/checks.ts.
+      const checks: string[] = [];
+      if (type.minLength !== undefined || type.maxLength !== undefined)
+        checks.push(`${HELPERS}::check_length(${v}, ${n(type.minLength)}, ${n(type.maxLength)})`);
+      if (type.match !== undefined)
+        checks.push(`${HELPERS}::check_pattern(${v}, ${String(ctx.patterns.get(type.match.source) ?? -1)})`);
+      if (type.format !== undefined) checks.push(`${HELPERS}::${FORMAT_CHECKS[type.format]}(${v})`);
+      return checks.map((c, i) => (i === 0 ? c : `.and_then(|()| ${c})`)).join("");
+    }
     case "integer": {
       const limits = limitsOf(type).map(
-        (l) => `(${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)})`,
+        (l) => `(${rustString(l.op)}, ${String(l.bound)}, ${rustString(l.text)})`,
       );
       const value = v.startsWith("&") ? v.slice(1) : `*${v}`;
       return `${HELPERS}::check_integer(${value}, &[${limits.join(", ")}])`;
     }
     case "number": {
       const limits = limitsOf(type).map(
-        (l) => `(${JSON.stringify(l.op)}, ${floatLiteral(l.bound)}, ${JSON.stringify(l.text)})`,
+        (l) => `(${rustString(l.op)}, ${floatLiteral(l.bound)}, ${rustString(l.text)})`,
       );
       return `${HELPERS}::check_number(${v}, &[${limits.join(", ")}])`;
     }
-    case "array":
-      return `${HELPERS}::check_items(${v}, ${n(type.minItems)}, ${n(type.maxItems)}, ${rustCheckFn(ctx, type.items)})`;
+    case "array": {
+      const check = type.uniqueItems === true ? "check_unique_items" : "check_items";
+      return `${HELPERS}::${check}(${v}, ${n(type.minItems)}, ${n(type.maxItems)}, ${rustCheckFn(ctx, type.items)})`;
+    }
     case "map":
       return `${HELPERS}::check_entries(${v}, ${n(type.minProperties)}, ${n(type.maxProperties)}, ${keyText(ctx, type.key)}, ${rustCheckFn(ctx, type.key)}, ${rustCheckFn(ctx, type.value)})`;
     default:
       return undefined;
   }
 }
+
+/** The helper that checks each format. */
+const FORMAT_CHECKS: Readonly<Record<Format, string>> = {
+  "date-time": "check_date_time",
+  date: "check_date",
+  uuid: "check_uuid",
+};
 
 /** A Rust `Fn(&T) -> Result<(), DecodeError>` that checks a value of `type`. */
 function rustCheckFn(ctx: Ctx, type: TypeExpr): string {
@@ -839,7 +883,7 @@ export function emitRustFixtures(
     .map((d) => ({ decl: d, schema: d.source?.schema ?? "", def: d.source?.def }))
     .sort((a, b) => compare(`${a.schema}#${a.def ?? ""}`, `${b.schema}#${b.def ?? ""}`))
     .map(({ decl, schema, def }) => {
-      const pattern = `(${JSON.stringify(schema)}, ${def === undefined ? "None" : `Some(${JSON.stringify(def)})`})`;
+      const pattern = `(${rustString(schema)}, ${def === undefined ? "None" : `Some(${rustString(def)})`})`;
       return `        ${pattern} => run::<${crate}::${decl.name}>(json),\n`;
     });
   return `${commentHeader(options.header ?? DEFAULT_HEADER)}
@@ -865,7 +909,7 @@ ${registryTail(report, arms.join(""))}`;
 function docs(lines: readonly string[], indent: string, extra: readonly string[]): string {
   const all =
     lines.length > 0 && extra.length > 0 ? [...lines, "", ...extra] : [...lines, ...extra];
-  return all.map((line) => `${indent}///${line === "" ? "" : ` ${line}`}\n`).join("");
+  return all.map((line) => `${indent}///${line === "" ? "" : ` ${commentText(line)}`}\n`).join("");
 }
 
 /** The end of the registry: round_trip, holding the match arms, and run. */

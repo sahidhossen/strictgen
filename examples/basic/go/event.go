@@ -32,12 +32,23 @@ func (v *Event) decode(n *node) *DecodeError {
 	return decodeObject(n, func(d *objectDecoder) {
 		required(d, "id", &out.Id, decodeType[EventId])
 		required(d, "type", &out.Type, decodeType[EventType])
-		required(d, "occurredAt", &out.OccurredAt, decodeString)
+		required(d, "occurredAt", &out.OccurredAt, decodeType[Timestamp])
 		required(d, "attempt", &out.Attempt, decodeInt)
 		required(d, "user", &out.User, decodeType[User])
 		optionalValue(d, "paymentMethod", &out.PaymentMethod, unionPaymentMethod)
 		optional(d, "metadata", &out.Metadata, decodeMap(decodeString, decodeString))
 	}, func() { *v = out })
+}
+
+// check checks the constraints of a decoded Event.
+func (v Event) check() *DecodeError {
+	if err := v.OccurredAt.check(); err != nil {
+		return err.at("occurredAt")
+	}
+	if err := v.User.check(); err != nil {
+		return err.at("user")
+	}
+	return nil
 }
 
 // EventType is generated from event.json#/$defs/eventType.

@@ -669,6 +669,12 @@ export interface Order {
   /** Notes on the order, by the team that wrote them. */
   notes?: Record<string, Note>;
   attributes?: Attributes;
+  /** When the order was placed, an RFC 3339 date-time. */
+  placedAt?: string;
+  /** A coupon code, like SPRING-10. */
+  coupon?: string;
+  /** Items given away with the order, no two the same once decoded. */
+  gifts?: Line[];
 }
 
 /**
@@ -696,8 +702,11 @@ function readOrder(json: unknown, path: string): Order {
     ...h.optional(o, "delivery", path, decodeDelivery),
     ...h.optional(o, "notes", path, h.map(h.decodeString, decodeNote)),
     ...h.optional(o, "attributes", path, decodeAttributes),
+    ...h.optional(o, "placedAt", path, h.format(h.decodeString, "date-time")),
+    ...h.optional(o, "coupon", path, h.matches(h.decodeString, 0)),
+    ...h.optional(o, "gifts", path, h.array(decodeLine, undefined, undefined, true)),
   };
-  h.closed(o, path, ["id", "customer", "lines", "payment", "delivery", "notes", "attributes"]);
+  h.closed(o, path, ["id", "customer", "lines", "payment", "delivery", "notes", "attributes", "placedAt", "coupon", "gifts"]);
   return value;
 }
 
@@ -738,7 +747,10 @@ export function encodeOrder(value: Order): unknown {
   h.member(out, value, "delivery", encodeDelivery, true);
   h.member(out, value, "notes", h.encodeMap(h.encodeString, encodeNote), true);
   h.member(out, value, "attributes", encodeAttributes, true);
-  h.encodeClosed(value, ["id", "customer", "lines", "payment", "delivery", "notes", "attributes"]);
+  h.member(out, value, "placedAt", h.encodeString, true);
+  h.member(out, value, "coupon", h.encodeString, true);
+  h.member(out, value, "gifts", h.encodeArray(encodeLine), true);
+  h.encodeClosed(value, ["id", "customer", "lines", "payment", "delivery", "notes", "attributes", "placedAt", "coupon", "gifts"]);
   return out;
 }
 

@@ -1,11 +1,11 @@
-import { Checks, limitsOf } from "./checks.js";
+import { Checks, limitsOf, patternsOf } from "./checks.js";
 import type { EmittedFile } from "./common.js";
-import { bySchema, commentHeader, compare, DEFAULT_HEADER, declTypes, imports } from "./common.js";
+import { bySchema, commentHeader, commentText, compare, DEFAULT_HEADER, declTypes, imports } from "./common.js";
 import type { ReadMode } from "./config.js";
 import { CodegenError } from "./schema.js";
 import type { Decl, Model, StructDecl, TypeExpr } from "./model.js";
 import { RENAME_TYPE, TS_RESERVED } from "./naming.js";
-import { tsHelpersBody } from "./ts-helpers.js";
+import { asciiString, tsHelpersBody } from "./ts-helpers.js";
 
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const WIDTH = 100;
@@ -52,6 +52,8 @@ interface Ctx {
   readonly checks: Checks;
   /** The generated functions of declarations a file calls, like `decodeUserId`. */
   readonly calls: Set<string>;
+  /** The index of each checked pattern in the helpers' table, by the pattern as written. */
+  readonly patterns: ReadonlyMap<string, number>;
 }
 
 /**
@@ -68,6 +70,8 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   if (report && !decoders) throw new Error("report mode needs the decoders");
   const decls = new Map(model.decls.map((d) => [d.name, d]));
   const checks = new Checks(model.decls);
+  const patterns = patternsOf(model.decls);
+  const indexes = new Map(patterns.map((p, i) => [p.source, i]));
   for (const decl of model.decls) {
     if (RESERVED.has(decl.name) || TS_RESERVED.has(decl.name)) {
       throw new CodegenError(
@@ -86,7 +90,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
         `a schema named ${schema} clashes with ${schema}.ts`,
         "rename the schema file",
       );
-    const ctx: Ctx = { decls, report, checks, calls: new Set() };
+    const ctx: Ctx = { decls, report, checks, calls: new Set(), patterns: indexes };
     const body = own.map((decl) => declaration(ctx, decl, decoders)).join("\n");
     const what = decoders ? "Types and decoders" : "Types";
     const head = `${header}\n\n/** ${what} for \`${schema}.json\`. */\n\n`;
@@ -108,7 +112,7 @@ export function emitTypeScript(model: Model, options: TypeScriptOptions = {}): E
   }
   return [
     ...files,
-    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report)}` }] : []),
+    ...(decoders ? [{ name: TS_HELPERS, contents: `${header}\n\n${tsHelpersBody(report, patterns)}` }] : []),
     { name: "index.ts", contents: `${header}\n\n${index.join("")}` },
   ];
 }
@@ -158,7 +162,7 @@ function typeDeclaration(ctx: Ctx, decl: Decl): string {
     case "enum":
       return union(
         decl.name,
-        decl.values.map((v) => JSON.stringify(v)),
+        decl.values.map((v) => asciiString(v)),
       );
     case "tagged":
       return union(
@@ -174,7 +178,7 @@ function typeDeclaration(ctx: Ctx, decl: Decl): string {
       return `export type ${decl.name} = ${typeText(decl.type, ctx.decls)};\n`;
     case "id":
       // Branded, so ids of different kinds don't mix. Only the decoder or the cast makes one.
-      return `export type ${decl.name} = string & { readonly __brand: ${JSON.stringify(decl.name)} };\n`;
+      return `export type ${decl.name} = string & { readonly __brand: ${asciiString(decl.name)} };\n`;
     default:
       return unreachable(decl);
   }
@@ -267,30 +271,25 @@ function decodeBody(ctx: Ctx, decl: Decl): string {
     case "struct":
       return decodeStruct(ctx, decl);
     case "enum":
-      return `  return h.enumValue(json, path, [${decl.values.map((v) => JSON.stringify(v)).join(", ")}] as const);\n`;
+      return `  return h.enumValue(json, path, [${decl.values.map((v) => asciiString(v)).join(", ")}] as const);\n`;
     case "id": {
-      // An id is a branded string, so its pattern types nothing.
-      const { minLength, maxLength } = decl.type;
-      const string = decoder(ctx, {
-        kind: "string",
-        ...(minLength === undefined ? {} : { minLength }),
-        ...(maxLength === undefined ? {} : { maxLength }),
-      });
-      return `  return ${string}(json, path) as ${decl.name};\n`;
+      // An id is a branded string, so its pattern types nothing, though it is checked.
+      const { pattern: _, ...checked } = decl.type;
+      return `  return ${decoder(ctx, checked)}(json, path) as ${decl.name};\n`;
     }
     case "alias":
       return `  return ${decoder(ctx, decl.type)}(json, path);\n`;
     case "tagged": {
       // The model spreads nested tagged unions, so every variant here is one branch struct.
       const branches = decl.variants.map(
-        (v) => `[${JSON.stringify(v.value)}, ${decoder(ctx, { kind: "ref", name: v.type })}]`,
+        (v) => `[${asciiString(v.value)}, ${decoder(ctx, { kind: "ref", name: v.type })}]`,
       );
-      const head = `  return h.tagged<${decl.name}>(json, path, ${JSON.stringify(decl.tag)}, `;
+      const head = `  return h.tagged<${decl.name}>(json, path, ${asciiString(decl.tag)}, `;
       return `${head}${list(branches, "  ", head.length + 2)});\n`;
     }
     case "untagged": {
       const variants = decl.variants.map((v) => decoder(ctx, v.type));
-      const head = `  return h.untagged<${decl.name}>(json, path, ${JSON.stringify(decl.name)}, `;
+      const head = `  return h.untagged<${decl.name}>(json, path, ${asciiString(decl.name)}, `;
       return `${head}${list(variants, "  ", head.length + 2)});\n`;
     }
     default:
@@ -303,12 +302,12 @@ function decodeBody(ctx: Ctx, decl: Decl): string {
  * so the first missing or bad key in schema order is the error.
  */
 function decodeStruct(ctx: Ctx, decl: StructDecl): string {
-  const named = `[${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}]`;
+  const named = `[${decl.fields.map((f) => asciiString(f.name)).join(", ")}]`;
   if (decl.fields.length === 0 && decl.rest === undefined) {
     return `  h.closed(h.object(json, path), path, []);\n  return {};\n`;
   }
   const lines = decl.fields.map((f) => {
-    const key = JSON.stringify(f.name);
+    const key = asciiString(f.name);
     const decode = decoder(ctx, f.type);
     return f.required
       ? `    ${literalKey(f.name)}: h.required(o, ${key}, path, ${decode}),\n`
@@ -321,7 +320,7 @@ function decodeStruct(ctx: Ctx, decl: StructDecl): string {
   }
   const forbidden =
     ctx.report && decl.forbidden.length > 0
-      ? `, [${decl.forbidden.map((k) => JSON.stringify(k)).join(", ")}]`
+      ? `, [${decl.forbidden.map((k) => asciiString(k)).join(", ")}]`
       : "";
   const check = decl.rest === undefined ? `  h.closed(o, path, ${named}${forbidden});\n` : "";
   return (
@@ -335,21 +334,21 @@ function encodeBody(ctx: Ctx, decl: Decl): string {
     case "struct":
       return encodeStruct(ctx, decl);
     case "enum":
-      return `  return h.encodeEnum(value, [${decl.values.map((v) => JSON.stringify(v)).join(", ")}] as const);\n`;
+      return `  return h.encodeEnum(value, [${decl.values.map((v) => asciiString(v)).join(", ")}] as const);\n`;
     case "id":
       return "  return h.encodeString(value);\n";
     case "alias":
       return `  return ${encoder(ctx, decl.type)}(value);\n`;
     case "tagged": {
       const branches = decl.variants.map(
-        (v) => `[${JSON.stringify(v.value)}, ${encoder(ctx, { kind: "ref", name: v.type })}]`,
+        (v) => `[${asciiString(v.value)}, ${encoder(ctx, { kind: "ref", name: v.type })}]`,
       );
-      const head = `  return h.encodeTagged(value, ${JSON.stringify(decl.tag)}, `;
+      const head = `  return h.encodeTagged(value, ${asciiString(decl.tag)}, `;
       return `${head}${list(branches, "  ", head.length + 2)});\n`;
     }
     case "untagged": {
       const variants = decl.variants.map((v) => encoder(ctx, v.type));
-      const head = `  return h.encodeUntagged(value, ${JSON.stringify(decl.name)}, `;
+      const head = `  return h.encodeUntagged(value, ${asciiString(decl.name)}, `;
       return `${head}${list(variants, "  ", head.length + 2)});\n`;
     }
     default:
@@ -363,10 +362,10 @@ function encodeBody(ctx: Ctx, decl: Decl): string {
  * and Go could not hold it and dropping it would lose data.
  */
 function encodeStruct(ctx: Ctx, decl: StructDecl): string {
-  const named = `[${decl.fields.map((f) => JSON.stringify(f.name)).join(", ")}]`;
+  const named = `[${decl.fields.map((f) => asciiString(f.name)).join(", ")}]`;
   const lines = decl.fields.map((f) => {
     const optional = f.required ? "" : ", true";
-    return `  h.member(out, value, ${JSON.stringify(f.name)}, ${encoder(ctx, f.type)}${optional});\n`;
+    return `  h.member(out, value, ${asciiString(f.name)}, ${encoder(ctx, f.type)}${optional});\n`;
   });
   if (decl.rest !== undefined) {
     const key = encoder(ctx, decl.rest.key);
@@ -390,16 +389,22 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
       ctx.calls.add(`decode${type.name}`);
       return `decode${type.name}`;
     case "string": {
+      // Each wrapper checks after the decoder it wraps, so the checks run in the order of
+      // src/checks.ts: the length, then the pattern, then the format.
       const text = stringType(type.pattern);
-      const base = text === "string" ? "h.decodeString" : `h.family<${text}>()`;
-      if (type.minLength === undefined && type.maxLength === undefined) return base;
-      return `h.length(${base}, ${limit(type.minLength)}, ${limit(type.maxLength)})`;
+      let out = text === "string" ? "h.decodeString" : `h.family<${text}>()`;
+      if (type.minLength !== undefined || type.maxLength !== undefined)
+        out = `h.length(${out}, ${limit(type.minLength)}, ${limit(type.maxLength)})`;
+      if (type.match !== undefined)
+        out = `h.matches(${out}, ${String(ctx.patterns.get(type.match.source) ?? -1)})`;
+      if (type.format !== undefined) out = `h.format(${out}, ${asciiString(type.format)})`;
+      return out;
     }
     case "integer":
     case "number": {
       const base = type.kind === "integer" ? "h.decodeInteger" : "h.decodeNumber";
       const limits = limitsOf(type).map(
-        (l) => `[${JSON.stringify(l.op)}, ${String(l.bound)}, ${JSON.stringify(l.text)}]`,
+        (l) => `[${asciiString(l.op)}, ${String(l.bound)}, ${asciiString(l.text)}]`,
       );
       return limits.length === 0 ? base : `h.limits(${base}, [${limits.join(", ")}])`;
     }
@@ -413,6 +418,8 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
       return "h.decodeNonNull";
     case "array": {
       const items = decoder(ctx, type.items);
+      if (type.uniqueItems === true)
+        return `h.array(${items}, ${limit(type.minItems)}, ${limit(type.maxItems)}, true)`;
       if (type.minItems === undefined && type.maxItems === undefined) return `h.array(${items})`;
       return `h.array(${items}, ${limit(type.minItems)}, ${limit(type.maxItems)})`;
     }
@@ -459,7 +466,7 @@ function encoder(ctx: Ctx, type: TypeExpr): string {
 
 /** A property name in an object literal. `__proto__` is computed, so it stays an own key. */
 function literalKey(name: string): string {
-  return name === "__proto__" ? `[${JSON.stringify(name)}]` : property(name);
+  return name === "__proto__" ? `[${asciiString(name)}]` : property(name);
 }
 
 function struct(decl: StructDecl, decls: ReadonlyMap<string, Decl>): string {
@@ -488,7 +495,7 @@ function union(name: string, members: readonly string[]): string {
 }
 
 function property(name: string): string {
-  return IDENTIFIER.test(name) ? name : JSON.stringify(name);
+  return IDENTIFIER.test(name) ? name : asciiString(name);
 }
 
 function typeText(type: TypeExpr, decls: ReadonlyMap<string, Decl>): string {
@@ -582,7 +589,10 @@ export function stringFamily(pattern: string): { prefix: string; suffix: string 
 function stringType(pattern: string | undefined): string {
   const family = pattern === undefined ? undefined : stringFamily(pattern);
   if (family === undefined) return "string";
-  const text = (s: string): string => s.replace(/[`\\$]/g, (c) => `\\${c}`);
+  const text = (s: string): string =>
+    s.replace(/[`\\$]|[^\x20-\x7e]/gu, (c) =>
+      "`\\$".includes(c) ? `\\${c}` : `\\u{${(c.codePointAt(0) ?? 0).toString(16)}}`,
+    );
   return `\`${text(family.prefix)}\${string}${text(family.suffix)}\``;
 }
 
@@ -601,7 +611,7 @@ function isEnum(type: TypeExpr, decls: ReadonlyMap<string, Decl>): boolean {
 /** A TSDoc comment, or nothing when there is no text. */
 export function doc(text: string, indent: string): string {
   if (text === "") return "";
-  const lines = text.replaceAll("*/", "*\\/").split("\n");
+  const lines = text.replaceAll("*/", "*\\/").split("\n").map(commentText);
   if (lines.length === 1) return `${indent}/** ${lines[0] ?? ""} */\n`;
   return `${indent}/**\n${lines.map((l) => `${indent} *${l === "" ? "" : ` ${l}`}`).join("\n")}\n${indent} */\n`;
 }

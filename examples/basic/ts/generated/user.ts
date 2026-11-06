@@ -243,11 +243,8 @@ export interface User {
   quota?: Partial<Record<Role, number>>;
 }
 
-/**
- * Decodes parsed JSON as User, strictly. Throws a DecodeError at the JSON Pointer of
- * the first problem, under `path` when given.
- */
-export function decodeUser(json: unknown, path = ""): User {
+/** Decodes the structure of User, checking constraints only while h.checked asks for it. */
+function readUser(json: unknown, path: string): User {
   const o = h.object(json, path);
   const value: User = {
     id: h.required(o, "id", path, decodeUserId),
@@ -260,6 +257,15 @@ export function decodeUser(json: unknown, path = ""): User {
   };
   h.closed(o, path, ["id", "email", "displayName", "role", "labels", "createdAt", "quota"]);
   return value;
+}
+
+/**
+ * Decodes parsed JSON as User, strictly, then checks its constraints. Throws a DecodeError
+ * at the JSON Pointer of the first problem, under `path` when given: the first structure
+ * error, else the first constraint the value breaks.
+ */
+export function decodeUser(json: unknown, path = ""): User {
+  return h.checked(json, path, readUser);
 }
 
 /** Like decodeUser, but returns the DecodeError instead of throwing it. */

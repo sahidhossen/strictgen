@@ -48,6 +48,12 @@ impl helpers::Decode for Event {
         object.finish()?;
         Ok(value)
     }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::within("occurredAt", helpers::Decode::check(&self.occurred_at))?;
+        helpers::within("user", helpers::Decode::check(&self.user))?;
+        Ok(())
+    }
 }
 
 /// What happened.

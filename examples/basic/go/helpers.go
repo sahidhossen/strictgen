@@ -9,9 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf16"
 	"unicode/utf8"
 )
 
@@ -1159,6 +1161,239 @@ func checkLength(text string, min, max int) *DecodeError {
 	return checkCount(utf8.RuneCountInString(text), min, max, "character", "characters")
 }
 
+// checkString checks the length of a string in code points, then each of checks in order, like a
+// pattern and a format.
+func checkString(text string, min, max int, checks ...func(string) *DecodeError) *DecodeError {
+	if err := checkLength(text, min, max); err != nil {
+		return err
+	}
+	for _, check := range checks {
+		if err := check(text); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// digitsAt returns the number the count ASCII digits from start of text stand for, or -1 when
+// they aren't all digits.
+func digitsAt(text string, start, count int) int {
+	if start+count > len(text) {
+		return -1
+	}
+	n := 0
+	for i := start; i < start+count; i++ {
+		c := text[i]
+		if c < '0' || c > '9' {
+			return -1
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n
+}
+
+// dateAt reports whether text starts with a full-date: YYYY-MM-DD, a day the month has,
+// Gregorian leap years.
+func dateAt(text string) bool {
+	year, month, day := digitsAt(text, 0, 4), digitsAt(text, 5, 2), digitsAt(text, 8, 2)
+	if year < 0 || text[4] != '-' || text[7] != '-' || month < 1 || month > 12 || day < 1 {
+		return false
+	}
+	leap := year%4 == 0 && (year%100 != 0 || year%400 == 0)
+	days := 31
+	switch {
+	case month == 2 && leap:
+		days = 29
+	case month == 2:
+		days = 28
+	case month == 4, month == 6, month == 9, month == 11:
+		days = 30
+	}
+	return day <= days
+}
+
+// checkDate checks that text is a date: an RFC 3339 full-date, like 2024-02-29.
+func checkDate(text string) *DecodeError {
+	if len(text) == 10 && dateAt(text) {
+		return nil
+	}
+	return fail(CodeBadFormat, "a date", quote(text))
+}
+
+// checkDateTime checks that text is a date-time: an RFC 3339 date-time, like
+// 2024-02-29T23:59:60.5-01:30. T and Z may be lower case, a fraction has one digit or more, and
+// a leap second is 23:59:60 in UTC.
+func checkDateTime(text string) *DecodeError {
+	if isDateTime(text) {
+		return nil
+	}
+	return fail(CodeBadFormat, "a date-time", quote(text))
+}
+
+func isDateTime(text string) bool {
+	if len(text) < 20 || !dateAt(text) || (text[10] != 'T' && text[10] != 't') || text[13] != ':' || text[16] != ':' {
+		return false
+	}
+	hour, minute, second := digitsAt(text, 11, 2), digitsAt(text, 14, 2), digitsAt(text, 17, 2)
+	if hour < 0 || hour > 23 || minute < 0 || minute > 59 || second < 0 || second > 60 {
+		return false
+	}
+	i := 19
+	if text[i] == '.' {
+		i++
+		start := i
+		for digitsAt(text, i, 1) >= 0 {
+			i++
+		}
+		if i == start {
+			return false
+		}
+	}
+	offset := 0
+	switch {
+	case i < len(text) && (text[i] == 'Z' || text[i] == 'z'):
+		i++
+	case i < len(text) && (text[i] == '+' || text[i] == '-'):
+		hours, minutes := digitsAt(text, i+1, 2), digitsAt(text, i+4, 2)
+		if hours < 0 || hours > 23 || minutes < 0 || minutes > 59 || text[i+3] != ':' {
+			return false
+		}
+		offset = hours*60 + minutes
+		if text[i] == '-' {
+			offset = -offset
+		}
+		i += 6
+	default:
+		return false
+	}
+	if i != len(text) {
+		return false
+	}
+	return second != 60 || ((hour*60+minute-offset)%1440+1440)%1440 == 1439
+}
+
+// checkUUID checks that text is a UUID: RFC 9562's text form, 8-4-4-4-12 hex digits in either
+// case, of any version.
+func checkUUID(text string) *DecodeError {
+	valid := len(text) == 36
+	for i := 0; valid && i < 36; i++ {
+		c := text[i]
+		if i == 8 || i == 13 || i == 18 || i == 23 {
+			valid = c == '-'
+		} else {
+			valid = '0' <= c && c <= '9' || 'a' <= c && c <= 'f' || 'A' <= c && c <= 'F'
+		}
+	}
+	if valid {
+		return nil
+	}
+	return fail(CodeBadFormat, "a UUID", quote(text))
+}
+
+// checkUniqueItems checks the number of items of an array, then that no two are equal, then
+// each item with item, if not nil. Two items are equal when their RFC 8785 canonical JSON is,
+// as in Rust and TypeScript, so 1 and 1.0 are equal and key order doesn't count. The error is
+// at the later of the two.
+func checkUniqueItems[T any](items []T, min, max int, item func(T) *DecodeError) *DecodeError {
+	if err := checkCount(len(items), min, max, "item", "items"); err != nil {
+		return err
+	}
+	seen := make(map[string]int, len(items))
+	for i, v := range items {
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fail(CodeWrongType, "a JSON value", err.Error()).at(strconv.Itoa(i))
+		}
+		n, perr := parse(data)
+		if perr != nil {
+			return perr.at(strconv.Itoa(i))
+		}
+		var key strings.Builder
+		canonical(n, &key)
+		if first, ok := seen[key.String()]; ok {
+			return fail(CodeNotUnique, "unique items", "a repeat of item "+strconv.Itoa(first)).at(strconv.Itoa(i))
+		}
+		seen[key.String()] = i
+	}
+	return checkItems(items, -1, -1, item)
+}
+
+// canonical writes the RFC 8785 canonical JSON of a parsed value: object keys sorted by UTF-16
+// code units, numbers as JavaScript writes them with -0 as 0, and strings escaped as
+// JSON.stringify does.
+func canonical(n *node, out *strings.Builder) {
+	switch n.kind {
+	case '{':
+		keys := slices.Clone(n.keys)
+		slices.SortFunc(keys, func(a, b string) int {
+			return slices.Compare(utf16.Encode([]rune(a)), utf16.Encode([]rune(b)))
+		})
+		out.WriteByte('{')
+		for i, k := range keys {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			canonicalString(k, out)
+			out.WriteByte(':')
+			canonical(n.fields[k], out)
+		}
+		out.WriteByte('}')
+	case '[':
+		out.WriteByte('[')
+		for i, item := range n.items {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			canonical(item, out)
+		}
+		out.WriteByte(']')
+	case '"':
+		canonicalString(n.text, out)
+	case '0':
+		f, err := strconv.ParseFloat(string(n.raw), 64)
+		if err != nil {
+			out.Write(n.raw)
+			return
+		}
+		if f == 0 {
+			f = 0
+		}
+		out.WriteString(numberText(f))
+	default:
+		out.Write(n.raw)
+	}
+}
+
+// canonicalString writes a string as JSON.stringify does: " and \ escaped, \b, \f, \n, \r and
+// \t, and the other control characters as \u and four lower case hex digits.
+func canonicalString(text string, out *strings.Builder) {
+	out.WriteByte('"')
+	for _, r := range text {
+		switch r {
+		case '"', '\\':
+			out.WriteByte('\\')
+			out.WriteRune(r)
+		case '\b':
+			out.WriteString("\\b")
+		case '\f':
+			out.WriteString("\\f")
+		case '\n':
+			out.WriteString("\\n")
+		case '\r':
+			out.WriteString("\\r")
+		case '\t':
+			out.WriteString("\\t")
+		default:
+			if r < 0x20 {
+				fmt.Fprintf(out, "\\u%04x", r)
+			} else {
+				out.WriteRune(r)
+			}
+		}
+	}
+	out.WriteByte('"')
+}
+
 // checkItems checks the number of items of an array, then each item with item, if not nil.
 func checkItems[T any](items []T, min, max int, item func(T) *DecodeError) *DecodeError {
 	if err := checkCount(len(items), min, max, "item", "items"); err != nil {
@@ -1280,4 +1515,37 @@ func numberText(f float64) string {
 		return sign + head + "e-" + strconv.Itoa(1-n)
 	}
 	return sign + head + "e+" + strconv.Itoa(n-1)
+}
+
+// pattern is a pattern a schema checks: compiled once from its portable form, which Rust's
+// regex and ECMAScript read the same way, and as the schema writes it, for errors.
+type pattern struct {
+	regex  *regexp.Regexp
+	source string
+}
+
+// check checks that text matches the pattern. As JSON Schema says, a pattern matches anywhere
+// in the string unless it anchors itself with ^ or $.
+func (p pattern) check(text string) *DecodeError {
+	if p.regex.MatchString(text) {
+		return nil
+	}
+	return fail(CodePatternMismatch, "matching "+p.source, quote(text))
+}
+
+// patterns holds the patterns schemas check: each compiled once from its portable form, which
+// Rust's regex and ECMAScript read the same way, and as the schema writes it, for errors.
+var patterns = [...]pattern{
+	{regexp.MustCompile("^20"), "^20"},
+	{regexp.MustCompile("^[A-Z]{2}[0-9]{9}[A-Z]{2}$"), "^[A-Z]{2}\\d{9}[A-Z]{2}$"},
+	{regexp.MustCompile("^[A-Z]{3}$"), "^[A-Z]{3}$"},
+	{regexp.MustCompile("^[^a-z]{2}$"), "^[^a-z]{2}$"},
+	{regexp.MustCompile("^[a-z]+$"), "^[a-z]+$"},
+	{regexp.MustCompile("^[^\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]{1,1000}(?:[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff][^\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]{1,250})?$"), "^\\S{1,1000}(?:\\s\\S{1,250})?$"},
+	{regexp.MustCompile("^[0-9]+$"), "^\\d+$"},
+	{regexp.MustCompile("^[\u0009-\u000d \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]$"), "^\\s$"},
+	{regexp.MustCompile("^[0-9A-Z_a-z]+$"), "^\\w+$"},
+	{regexp.MustCompile("^a$"), "^a$"},
+	{regexp.MustCompile("^a[^\u000a\u000d\u2028\u2029]c$"), "^a.c$"},
+	{regexp.MustCompile("x"), "x"},
 }
