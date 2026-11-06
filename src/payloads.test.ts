@@ -453,6 +453,18 @@ describe("payload generator fails closed", () => {
     expect(() => new PayloadGenerator(model).valid("Odd")).toThrow("no multiple of 10 is within its bounds");
   });
 
+  it("fails for an impossible optional key with every seed, not only the seeds that include it", () => {
+    const model = lib({
+      order: closed({ id: { type: "string" }, ref: { type: "string", format: "uuid", pattern: "^[a-z]{1,3}$" } }, ["id"]),
+    });
+    for (let seed = 0; seed < 20; seed++) {
+      const g = new PayloadGenerator(model, { seed });
+      expect(() => g.valid("Order")).toThrow("can't generate a payload for Order at /ref: no string found that is a uuid");
+      // A second try fails the same way: a failed check isn't remembered as passed.
+      expect(() => g.nearMisses("Order")).toThrow(GenerateError);
+    }
+  });
+
   it("names the path of the value it can't make", () => {
     const model = lib({ order: closed({ code: { type: "string", pattern: "a^b" } }, ["code"]) });
     expect(() => new PayloadGenerator(model).valid("Order")).toThrow("can't generate a payload for Order at /code:");

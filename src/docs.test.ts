@@ -24,6 +24,10 @@ const ODD = {
   nul: String.fromCodePoint(0),
   bidi: String.fromCodePoint(0x202e),
   astral: String.fromCodePoint(0x1f600),
+  zeroWidth: String.fromCodePoint(0x200b),
+  joiner: String.fromCodePoint(0x200d),
+  wordJoiner: String.fromCodePoint(0x2060),
+  softHyphen: String.fromCodePoint(0xad),
 };
 
 /** A description that tries every way of breaking out of Markdown and HTML. */
@@ -37,6 +41,7 @@ const HOSTILE = [
   "> not a quote",
   "===",
   `odd${ODD.lineSeparator}line${ODD.bom}bom${ODD.nul}nul${ODD.bidi}bidi ${ODD.astral}`,
+  `zw${ODD.zeroWidth}zj${ODD.joiner}wj${ODD.wordJoiner}sh${ODD.softHyphen}y`,
   "\"quotes\" and 'apostrophes' and </code></pre></td></table>",
 ].join("\n");
 
@@ -100,7 +105,10 @@ function files(format: "markdown" | "html"): Map<string, string> {
   return new Map(docsFiles(config(format), model(), format).map((f) => [f.path.replace(/^docs\/types\//, ""), f.contents]));
 }
 
-const RAW_HIDDEN = new RegExp(`[${ODD.lineSeparator}${ODD.bom}${ODD.nul}${ODD.bidi}]`, "u");
+const RAW_HIDDEN = new RegExp(
+  `[${ODD.lineSeparator}${ODD.bom}${ODD.nul}${ODD.bidi}${ODD.zeroWidth}${ODD.joiner}${ODD.wordJoiner}${ODD.softHyphen}]`,
+  "u",
+);
 
 describe("docs markdown pages", () => {
   const pages = files("markdown");
@@ -160,6 +168,7 @@ describe("docs markdown pages", () => {
     expect(order).toContain("a \\| b \\| c and \\`tick\\` and \\*em\\* and \\_em\\_ and \\[link\\](https://example.com) and \\!\\[img\\](x.png)");
     expect(order).toContain("\nindented like code\n1\\. not a list\n\\- not a list either\n\\> not a quote\n\\===\n");
     expect(order).toContain("odd\\\\u{2028}line\\\\u{feff}bom\\\\u{0}nul\\\\u{202e}bidi \u{1f600}");
+    expect(order).toContain("zw\\\\u{200b}zj\\\\u{200d}wj\\\\u{2060}sh\\\\u{ad}y");
   });
 
   it("keeps every table row to its columns, whatever the cells hold", () => {
@@ -231,6 +240,24 @@ describe("docs html page", () => {
     expect(html).toContain("<code>a|b`c&#60;/code&#62;</code>");
     expect(html).toContain("&#34;quotes&#34; and &#39;apostrophes&#39;");
     expect(htmlText("<a href='x'>&</a>")).toBe("&#60;a href=&#39;x&#39;&#62;&#38;&#60;/a&#62;");
+  });
+
+  it("keeps the example's line feeds, so it reads as indented JSON", () => {
+    expect(html).not.toContain("\\u{a}");
+    const example = /<section id="type-Order">[\s\S]*?<pre><code>([\s\S]*?)<\/code><\/pre>/.exec(html)?.[1] ?? "";
+    expect(example.startsWith("{\n  &#34;id&#34;: ")).toBe(true);
+    expect(example.split("\n").length).toBeGreaterThan(3);
+  });
+
+  it("shows a description of several lines the way the Markdown page does", () => {
+    const md = pages.get("Order.md") ?? "";
+    // Markdown keeps the line feeds as soft breaks, and HTML keeps them as white space: both one paragraph.
+    expect(md).toContain("\\# not a title\n\\<script\\>");
+    expect(html).toContain("<p># not a title\n&#60;script&#62;");
+    const mdLines = /# Order\n\n([\s\S]*?)\n\n/.exec(md)?.[1]?.split("\n") ?? [];
+    const htmlLines = /<h2>Order<\/h2>\n<p>([\s\S]*?)<\/p>/.exec(html)?.[1]?.split("\n") ?? [];
+    expect(htmlLines).toHaveLength(mdLines.length);
+    expect(mdLines.length).toBe(HOSTILE.split("\n").length);
   });
 
   it("holds the same content as the Markdown pages: every type and the same example", () => {

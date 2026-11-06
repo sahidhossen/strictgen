@@ -321,7 +321,15 @@ export function inFormat(format: Format, text: string): boolean {
  */
 export class PayloadGenerator {
   readonly #decls: ReadonlyMap<string, Decl>;
-  readonly #random: Random;
+  #random: Random;
+  /**
+   * One value for each string, integer and number type with constraints, found with a fixed
+   * seed before anything else, by the type's JSON. A type no value is found for fails for every
+   * seed, and one a later seed's tries miss falls back to it, so success never depends on the seed.
+   */
+  readonly #samples = new Map<string, Payload>();
+  /** The declarations whose types {@link #precheck} went through. */
+  readonly #checked = new Set<string>();
   readonly #depth: number;
   readonly #modes: readonly ReadMode[];
   /** The read mode structure is checked in, one of {@link #modes}. */
@@ -348,6 +356,7 @@ export class PayloadGenerator {
   valid(type: TypeExpr | string): Payload {
     const expr = this.#expr(type);
     this.#type = typeof type === "string" ? type : "the type";
+    this.#precheck(expr, []);
     return this.#value(expr, [], 0);
   }
 
@@ -358,6 +367,7 @@ export class PayloadGenerator {
   nearMisses(type: TypeExpr | string, base?: Payload): NearMiss[] {
     const expr = this.#expr(type);
     this.#type = typeof type === "string" ? type : "the type";
+    this.#precheck(expr, []);
     const root = base ?? this.#value(expr, [], 0);
     const found: Candidate[] = [];
     this.#walk(expr, root, root, [], [], found);
@@ -466,11 +476,11 @@ export class PayloadGenerator {
       case "ref":
         return this.#declValue(this.#decl(type.name), at, depth);
       case "string":
-        return this.#string(type, at);
+        return this.#leaf(type, () => this.#string(type, at));
       case "integer":
-        return this.#integer(type, at);
+        return this.#leaf(type, () => this.#integer(type, at));
       case "number":
-        return this.#number(type, at);
+        return this.#leaf(type, () => this.#number(type, at));
       case "boolean":
         return this.#random.chance(0.5);
       case "literal":
@@ -497,7 +507,7 @@ export class PayloadGenerator {
       case "enum":
         return this.#random.pick(decl.values);
       case "id":
-        return this.#string(decl.type, at);
+        return this.#leaf(decl.type, () => this.#string(decl.type, at));
       case "alias":
         return this.#value(decl.type, at, depth);
       case "tagged": {
@@ -514,6 +524,93 @@ export class PayloadGenerator {
       }
       case "untagged":
         return this.#untagged(decl, at, depth);
+    }
+  }
+
+  /**
+   * Finds, with a fixed seed, one value for every string, integer and number type that a value
+   * of `type` can hold, optional keys, every variant and every item included, and fails with
+   * the first one that has none. So whether a type can be generated doesn't depend on the seed,
+   * or on whether a seed happens to include an optional key.
+   */
+  #precheck(type: TypeExpr, at: readonly Segment[]): void {
+    const visiting = new Set<string>();
+    this.#prechecked(type, at, visiting);
+    // Only a whole check that passed is remembered, so a type that failed fails again.
+    for (const name of visiting) this.#checked.add(name);
+  }
+
+  #prechecked(type: TypeExpr, at: readonly Segment[], visiting: Set<string>): void {
+    const check = (t: TypeExpr, where: readonly Segment[]): void => {
+      this.#prechecked(t, where, visiting);
+    };
+    switch (type.kind) {
+      case "ref": {
+        if (this.#checked.has(type.name) || visiting.has(type.name)) return;
+        visiting.add(type.name);
+        const decl = this.#decl(type.name);
+        switch (decl.kind) {
+          case "struct":
+            for (const f of decl.fields) check(f.type, [...at, f.name]);
+            if (decl.rest !== undefined) check({ kind: "map", key: decl.rest.key, value: decl.rest.value }, at);
+            return;
+          case "tagged":
+            for (const v of decl.variants) check({ kind: "ref", name: v.type }, at);
+            return;
+          case "untagged":
+            for (const v of decl.variants) check(v.type, at);
+            return;
+          case "alias":
+            check(decl.type, at);
+            return;
+          case "id":
+            check(decl.type, at);
+            return;
+          case "enum":
+            return;
+        }
+        return;
+      }
+      case "string":
+      case "integer":
+      case "number": {
+        const key = JSON.stringify(type);
+        if (this.#samples.has(key)) return;
+        const saved = this.#random;
+        this.#random = new Random(0);
+        try {
+          const value =
+            type.kind === "string"
+              ? this.#string(type, at)
+              : type.kind === "integer"
+                ? this.#integer(type, at)
+                : this.#number(type, at);
+          this.#samples.set(key, value);
+        } finally {
+          this.#random = saved;
+        }
+        return;
+      }
+      case "array":
+        check(type.items, [...at, 0]);
+        return;
+      case "map":
+        check(type.key, at);
+        check(type.value, at);
+        return;
+      default:
+        return;
+    }
+  }
+
+  /** A value from `make`, or the type's sample from {@link #precheck} when this seed's tries miss. */
+  #leaf(type: TypeExpr, make: () => Payload): Payload {
+    try {
+      return make();
+    } catch (error) {
+      const sample = this.#samples.get(JSON.stringify(type));
+      if (!(error instanceof GenerateError) || sample === undefined) throw error;
+      return sample;
     }
   }
 

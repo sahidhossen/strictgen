@@ -13,7 +13,7 @@
 import { relative, sep } from "node:path";
 
 import { limitsOf } from "./checks.js";
-import { commentText, compare, declTypes, markupHeader, typeRefs } from "./common.js";
+import { compare, declTypes, markupHeader, typeRefs } from "./common.js";
 import type { Config, DocsFormat, ReadMode } from "./config.js";
 import { goFieldType, goType } from "./emit-go.js";
 import { rustFieldType, rustType } from "./emit-rust.js";
@@ -293,10 +293,33 @@ function fields(decl: StructDecl, langs: readonly Language[]): Piece[] {
   return out;
 }
 
-/** JSON text with the characters that are hard to see written as \u escapes, which JSON reads back as the same string. */
+/**
+ * Characters docs never show as themselves: control characters but tab and line feed, soft
+ * hyphens, zero-width characters and the word joiner, bidi controls, line and paragraph
+ * separators, the byte order mark and lone surrogates. A line feed is real text in docs, so it
+ * is kept; where it can't be, {@link visible} says so. The emitters' comment escaping
+ * (`commentText` in src/common.ts) has its own set, which also takes the line feed.
+ */
+const DOCS_HIDDEN =
+  /[\0-\x08\x0b-\x1f\x7f-\x9f\xad\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]|[\ud800-\udfff]/gu;
+
+/**
+ * Text with each {@link DOCS_HIDDEN} character as `\u{...}`. Keeps line feeds, unless `lines` is
+ * false, for text that must stay on one line, like a code span, where it is `\u{a}` too.
+ */
+export function visible(text: string, lines = true): string {
+  const shown = text.replace(DOCS_HIDDEN, (c) => `\\u{${(c.codePointAt(0) ?? 0).toString(16)}}`);
+  return lines ? shown : shown.replace(/\n/g, "\\u{a}");
+}
+
+/**
+ * JSON text with the characters that are hard to see written as \u escapes, which JSON reads
+ * back as the same string. They can only be inside strings, where JSON.stringify has already
+ * escaped line feeds, so the line feeds left are the indentation's and are kept.
+ */
 function visibleJson(value: unknown): string {
   return JSON.stringify(value, null, 2).replace(
-    /[\x7f-\x9f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069\ufeff]/gu,
+    /[\x7f-\x9f\xad\u061c\u200b-\u200f\u2028-\u202e\u2060\u2066-\u2069\ufeff]/gu,
     (c) => `\\u${(c.codePointAt(0) ?? 0).toString(16).padStart(4, "0")}`,
   );
 }
@@ -344,15 +367,14 @@ function document(config: Config, model: Model): { types: TypeDoc[]; index: Piec
 // Markdown.
 
 /**
- * Plain text for Markdown, within a line: every character that could start inline markup
- * escaped, and hard-to-see characters as \u{...}. Line feeds stay; {@link markdownLines} makes
- * the start of each line safe.
+ * Plain text for Markdown: every character that could start inline markup escaped, and
+ * hard-to-see characters as \u{...}. Keeps line feeds, which Markdown reads as soft breaks;
+ * {@link markdownLines} makes the start of each line safe. Bare URLs like www.example.com stay
+ * as they are, so GitHub's Markdown turns them into links; that only links text the schema
+ * wrote, and runs nothing.
  */
 export function markdownText(raw: string): string {
-  return raw
-    .split("\n")
-    .map((line) => commentText(line).replace(/[\\`*_[\]<>&|~!]/g, "\\$&"))
-    .join("\n");
+  return visible(raw).replace(/[\\`*_[\]<>&|~!]/g, "\\$&");
 }
 
 /**
@@ -366,9 +388,12 @@ function markdownLines(text: string): string {
     .join("\n");
 }
 
-/** A Markdown code span that holds `raw` as it is. In a table, `|` is escaped, which tables need even in code. */
+/**
+ * A Markdown code span that holds `raw` as it is. In a table, `|` is escaped, which tables need
+ * even in code. A code span is one line, so a line feed is `\u{a}`, like other hidden characters.
+ */
 export function markdownCode(raw: string, cell: boolean): string {
-  let body = commentText(raw);
+  let body = visible(raw, false);
   if (cell) body = body.replace(/\|/g, "\\|");
   const longest = Math.max(0, ...[...body.matchAll(/`+/g)].map((m) => m[0].length));
   const fence = "`".repeat(longest + 1);
@@ -433,9 +458,13 @@ function markdownFiles(config: Config, model: Model): { name: string; contents: 
 
 // HTML.
 
-/** Text for HTML, in an element or an attribute: `&`, `<`, `>`, `"` and `'` escaped, and hard-to-see characters as \u{...}. */
-export function htmlText(raw: string): string {
-  return commentText(raw).replace(/[&<>"']/g, (c) => `&#${String(c.codePointAt(0) ?? 0)};`);
+/**
+ * Text for HTML, in an element or an attribute: `&`, `<`, `>`, `"` and `'` escaped, and
+ * hard-to-see characters as \u{...}. Keeps line feeds, unless `lines` is false: in a `<pre>`
+ * they break lines, and in prose they are white space, as Markdown's soft breaks are.
+ */
+export function htmlText(raw: string, lines = true): string {
+  return visible(raw, lines).replace(/[&<>"']/g, (c) => `&#${String(c.codePointAt(0) ?? 0)};`);
 }
 
 const anchor = (name: string): string => `type-${htmlText(name)}`;
@@ -443,7 +472,7 @@ const anchor = (name: string): string => `type-${htmlText(name)}`;
 function htmlInline(parts: readonly Inline[]): string {
   return parts
     .map((p) => {
-      if ("code" in p) return `<code>${htmlText(p.code)}</code>`;
+      if ("code" in p) return `<code>${htmlText(p.code, false)}</code>`;
       if ("link" in p) return `<a href="#${anchor(p.link)}">${htmlText(p.link)}</a>`;
       return htmlText(p.text);
     })
