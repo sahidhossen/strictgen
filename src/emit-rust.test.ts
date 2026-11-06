@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { buildModel } from "./build.js";
-import { emitRust, emitRustFixtures, rustString } from "./emit-rust.js";
+import { emitRust, emitRustFixtures, rustString, serdeFallbacks } from "./emit-rust.js";
 import { ERROR_CODES, FOUND_MAX, MAX_DEPTH } from "./errors.js";
 import type { JsonObject } from "./schema.js";
 import { schemaSet } from "./schema.js";
@@ -590,6 +590,25 @@ describe("Rust serde bridge", () => {
     expect(text).toContain("pub type Names = Vec<String>;\n");
     expect(text).toContain("pub type ItemAlias = Item;\n");
     expect(text).not.toMatch(/Deserialize<'de> for (Names|ItemAlias) /);
+  });
+
+  it("list the plain aliases of standard types, which fall back to serde's own impl, sorted", () => {
+    expect(serdeFallbacks(model)).toEqual(["Names (Vec<String>)"]);
+    const more = buildModel(
+      schemaSet({
+        lib: schema("lib", {
+          $defs: {
+            tags: { type: "array", items: { type: "string" } },
+            alsoTags: { $ref: "#/$defs/tags" },
+            count: { type: "integer" },
+            item: closed({ name: { type: "string" } }),
+            items: { type: "array", items: { $ref: "#/$defs/item" } },
+            itemAlias: { $ref: "#/$defs/item" },
+          },
+        }),
+      }),
+    );
+    expect(serdeFallbacks(more)).toEqual(["AlsoTags (Vec<String>)", "Count (i64)", "Items (Vec<Item>)", "Tags (Vec<String>)"]);
   });
 
   it("add deserialize_strict to the helpers, which reads the raw value and reports the compact form", () => {

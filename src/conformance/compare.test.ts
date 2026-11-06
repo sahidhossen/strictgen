@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { Case, Mark, MarkKind } from "./cases.js";
 import { MARK_KINDS } from "./cases.js";
 import type { Disagreement, Run } from "./compare.js";
-import { around, cell, compareRun, firstDifference, table, TS_SAFE_RANGE, usedMarks } from "./compare.js";
+import { around, bridgeMessage, cell, compareRun, firstDifference, table, TS_SAFE_RANGE, usedMarks } from "./compare.js";
 import type { ErrorFields, Language, Result, Variant } from "./protocol.js";
 import { LANGUAGES, variantName } from "./protocol.js";
 import { compareAll, requestsFor, variants } from "./suite.js";
@@ -279,6 +279,21 @@ describe("marks that take a language out", () => {
       expect(fields(compareRun(run(c, accepting, SERDE), [m]))).toEqual(["mark serde-outer-parse"]);
       const deeper = rejected({ path: "/1", code: "serde_json.Error" });
       expect(fields(compareRun(run(c, { rust: deeper, go: shared, ts: shared }, SERDE), [m]))).toEqual(["mark serde-outer-parse"]);
+    });
+
+    it("doesn't hide a bridge error, a strict compact form, behind serde_json's code", () => {
+      for (const message of ["/1 invalid_json, found an invalid value at offset 3 at line 1 column 4", "missing_key", "/id missing_key"]) {
+        const bridge = rejected({ path: "", code: "serde_json.Error", message });
+        expect(fields(compareRun(run(c, { rust: bridge, go: shared, ts: shared }, SERDE), [m])), message).toEqual(["mark serde-outer-parse"]);
+      }
+    });
+
+    it("tells serde_json's own messages from the bridge's", () => {
+      expect(bridgeMessage("expected value at line 1 column 1")).toBe(false);
+      expect(bridgeMessage("invalid unicode code point at line 1 column 12")).toBe(false);
+      expect(bridgeMessage("trailing characters at line 1 column 9")).toBe(false);
+      expect(bridgeMessage("/quantity wrong_type, expected an integer, found 1.0 at line 1 column 93")).toBe(true);
+      expect(bridgeMessage("too_deep, expected at most 127 nested arrays and objects")).toBe(true);
     });
   });
 

@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use example_basic::{Decode, Event, User, UserId};
+use example_basic::{Decode, Event, Shipment, User, UserId};
 use serde::Deserialize;
 
 /// A hand-written envelope, which serde decodes, holding generated types.
@@ -115,6 +115,49 @@ fn fails_where_serde_buffers_the_input() {
         error
             .to_string()
             .starts_with("invalid type: newtype struct, expected any valid JSON value"),
+        "{error}"
+    );
+}
+
+/// Levels of a hand-written serde type around a shipment.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code, reason = "only decoded")]
+struct Nest {
+    next: Option<Box<Nest>>,
+    shipment: Option<Shipment>,
+}
+
+/// A valid shipment whose `extra` holds one value `depth` arrays deep.
+fn shipment(depth: usize) -> String {
+    format!(
+        r#"{{"id":"123e4567-e89b-12d3-a456-426614174000","tracking":"AB123456789US","shippedAt":"2024-02-29T23:59:60Z","extra":[{}{}]}}"#,
+        "[".repeat(depth),
+        "]".repeat(depth)
+    )
+}
+
+/// `levels` levels of `Nest`, the last holding `inner`.
+fn nest(levels: usize, inner: &str) -> String {
+    let mut text = format!(r#"{{"shipment":{inner}}}"#);
+    for _ in 1..levels {
+        text = format!(r#"{{"next":{text}}}"#);
+    }
+    text
+}
+
+#[test]
+fn counts_depth_from_the_bridged_value() {
+    // 70 levels of serde's own around a value 120 deep: the raw text serde_json collects isn't
+    // counted, and the strict limit counts from the shipment.
+    assert!(serde_json::from_str::<Nest>(&nest(70, &shipment(120))).is_ok());
+    // Past the strict limit inside the value, too_deep, with the path inside the shipment.
+    let error = serde_json::from_str::<Nest>(&nest(2, &shipment(130))).expect_err("too deep");
+    assert!(error.to_string().starts_with("/extra/0/0/"), "{error}");
+    assert!(error.to_string().contains(" too_deep, "), "{error}");
+    // Past serde_json's own limit in the hand-written levels.
+    let error = serde_json::from_str::<Nest>(&nest(140, &shipment(0))).expect_err("too deep");
+    assert!(
+        error.to_string().starts_with("recursion limit exceeded"),
         "{error}"
     );
 }

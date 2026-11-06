@@ -207,7 +207,8 @@ export function loadCases(root: string, types: ReadonlySet<string>): Case[] {
  * - `serde-outer-parse`: `serde_json::from_slice` reads the text around a bridged value itself,
  *   and checks its syntax and UTF-8 before the serde bridge gets the value's raw text, so for
  *   text that isn't JSON it returns its own error. Rust must do that, `serde_json.Error` at the
- *   root, through the `serde` entry; its other entries are compared as usual.
+ *   root with a message that isn't a strict compact form, through the `serde` entry; its other
+ *   entries are compared as usual.
  *
  * Marks that allow the bytes each language writes to differ in one way only, once the canonical
  * bytes are equal. Without a mark, the bytes as written must be equal too:

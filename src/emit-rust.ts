@@ -350,7 +350,7 @@ function checkParts(modules: readonly string[]): string[] {
  * The type a type expression stands for, through aliases that stay aliases. It stops at any
  * other declaration, a constrained alias generated as a type of its own included.
  */
-function plainTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
+function plainTarget(ctx: Pick<Ctx, "decls" | "checks">, type: TypeExpr): TypeExpr {
   let current = type;
   for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
     const decl = ctx.decls.get(current.name);
@@ -358,6 +358,23 @@ function plainTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
     current = decl.type;
   }
   return current;
+}
+
+/**
+ * The plain type aliases that, with `serdeBridge`, have no bridge to stand for: those that don't
+ * stand for a generated type, like `pub type Names = Vec<String>`. Rust allows no impl on an
+ * alias, so serde's own `Deserialize` for the standard type reads them, which is not strict. Each
+ * as `Names (Vec<String>)`, sorted by name.
+ */
+export function serdeFallbacks(model: Model): string[] {
+  const ctx = { decls: new Map(model.decls.map((d) => [d.name, d])), checks: new Checks(model.decls) };
+  return model.decls
+    .flatMap((d) => {
+      if (d.kind !== "alias" || ctx.checks.ownType(d)) return [];
+      const target = plainTarget(ctx, d.type);
+      return target.kind === "ref" ? [] : [`${d.name} (${typeText(target)})`];
+    })
+    .sort(compare);
 }
 
 function moduleNames(modules: readonly { schema: string; name: string }[]): Map<string, string> {

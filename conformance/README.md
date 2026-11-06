@@ -104,7 +104,7 @@ Marks that hold one language to a stated result instead of comparing it:
 | `ts-unsafe-integer` | TypeScript integers stop at 2^53 - 1, where Rust and Go hold 64 bits. TypeScript must reject the case with `out_of_range_integer` at the mark's `path`, naming its own range |
 | `ts-no-bytes-api` | The TypeScript decoders take a string, so bytes that aren't UTF-8 never reach them. TypeScript must reject the case with `invalid_json` at the root; Rust and Go are compared on every field |
 | `go-unmarshal-syntax` | `json.Unmarshal` checks the syntax itself before the generated decoder runs. Through Go's public entry point in strict mode, Go must reject text that isn't JSON with its own `*json.SyntaxError`; its other variants are compared as usual |
-| `serde-outer-parse` | `serde_json::from_slice` checks the syntax and UTF-8 of the text itself before the serde bridge gets the value's raw text. Through the serde entry, in both modes, Rust must reject such text with `serde_json.Error` at the root; its other entries are compared as usual |
+| `serde-outer-parse` | `serde_json::from_slice` checks the syntax and UTF-8 of the text itself before the serde bridge gets the value's raw text. Through the serde entry, in both modes, Rust must reject such text with `serde_json.Error` at the root, with a message that isn't a strict compact form, so a bridge error can't hide behind the mark; its other entries are compared as usual |
 
 Marks that let the bytes as written differ in one way only, once the canonical bytes are equal:
 

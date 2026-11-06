@@ -42,7 +42,7 @@ impl<'de> serde::Deserialize<'de> for UserId {
 A plain type alias, like `pub type Names = Vec<String>`, is not a type of its own, so Rust allows no impl on it. It deserializes the way its target does:
 
 - An alias of a generated type, like `pub type ItemAlias = Item`, uses that type's bridge.
-- An alias of a standard type, like `Vec<String>` or `BTreeMap<String, Order>`, uses serde's own impl for it, which is not strict. Generated types inside it still use their bridge. Decode such an alias with `from_json` (`<Names as Decode>::from_json(text)`) to keep it strict.
+- An alias of a standard type, like `Vec<String>` or `BTreeMap<String, Order>`, uses serde's own impl for it, which is not strict. Generated types inside it still use their bridge. Decode such an alias with `from_json` (`<Names as Decode>::from_json(text)`) to keep it strict. `strictgen generate` lists these aliases in a notice, like `Count (i64), Tags (Vec<String>)`, whenever `serdeBridge` is on.
 
 ## Errors
 
@@ -79,6 +79,7 @@ The bridge makes the generated value strict, not the document around it. serde p
 - Your structs ignore unknown keys unless you add `#[serde(deny_unknown_fields)]`.
 - A serde map, like `BTreeMap<String, Order>`, keeps the last of two equal keys without an error.
 - serde_json checks the syntax and UTF-8 of the whole document before the bridge sees the value. A byte order mark, a byte that isn't UTF-8 or a syntax error anywhere fails with serde_json's own error, like `expected value at line 1 column 1`, not with `invalid_json`. It is still rejected, just with another message.
+- Depth is counted in two parts. serde_json's recursion limit of 128 counts the levels serde decodes itself, your own types. It doesn't count while it collects the bridged value's raw text, and the strict decoder's limit (more than 127 nested arrays and objects fail with `too_deep`) counts from the start of the bridged value. So a value 120 levels deep inside 70 levels of your own types decodes, 190 levels in all, and more than 128 levels of your own types fail with serde_json's `recursion limit exceeded`.
 
 The bridge needs the raw text of the value, which only serde_json gives:
 
@@ -94,4 +95,4 @@ Use the bridge when a generated type is one part of a document your own serde ty
 
 ## Proof
 
-The conformance suite runs every case through the bridge too, as the `serde` entry (`serde_json::from_slice` into the type) in both read modes. It must accept and reject exactly what `from_json` does, with the same error fields and message, and report the same unknown keys. The four cases where serde_json refuses the text before the bridge runs (a byte order mark, bytes that aren't UTF-8 at the root and in a string, and invalid JSON in an unknown key's value) carry a `serde-outer-parse` mark in `conformance/marks.json`, which holds Rust to serde_json's own error at the root there.
+The conformance suite runs every case through the bridge too, as the `serde` entry (`serde_json::from_slice` into the type) in both read modes. It must accept and reject exactly what `from_json` does, with the same error fields and message, and report the same unknown keys. The four cases where serde_json refuses the text before the bridge runs (a byte order mark, bytes that aren't UTF-8 at the root and in a string, and invalid JSON in an unknown key's value) carry a `serde-outer-parse` mark in `conformance/marks.json`, which holds Rust to serde_json's own error at the root there, with a message that isn't a strict compact form.

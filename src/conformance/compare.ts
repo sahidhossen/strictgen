@@ -11,7 +11,7 @@ import type { Case, Mark, MarkKind, Outcome } from "./cases.js";
 import { expected } from "./cases.js";
 import type { ErrorFields, Language, Result, Variant } from "./protocol.js";
 import { CRASH, GO_SYNTAX_ERROR, LANGUAGES, SERDE_ERROR, variantName } from "./protocol.js";
-import { compactOf } from "./vectors.js";
+import { compactOf, parseCompact } from "./vectors.js";
 
 /** What every language that ran did with one case, in one variant. */
 export interface Run {
@@ -67,9 +67,19 @@ const EXCLUSIONS: Readonly<
   "serde-outer-parse": {
     language: "rust",
     applies: (v) => v.entry === "serde",
-    stated: () => `rejected ${SERDE_ERROR} at the root`,
+    stated: () => `rejected ${SERDE_ERROR} at the root, with serde_json's own message`,
   },
 };
+
+/**
+ * True when a serde error's message is a strict decoder's compact form, with or without the
+ * position serde_json adds, like `/id missing_key at line 1 column 9`. The bridge writes those, so
+ * on a case where serde_json refuses the text itself, such a message is a bridge bug the mark must
+ * not hide.
+ */
+export function bridgeMessage(message: string): boolean {
+  return parseCompact(message.replace(/ at line \d+ column \d+$/, "")) !== undefined;
+}
 
 /** The code a marked language must reject with at the root, for the marks that state one. */
 const ROOT_CODES: Readonly<Partial<Record<MarkKind, string>>> = {
@@ -135,6 +145,7 @@ function statedFailure(mark: Mark, result: Result): string | undefined {
   if (stated === undefined) return undefined;
   if (mark.kind === "ts-unsafe-integer") return describe(result) === stated ? undefined : stated;
   const ok = !result.accepted && result.error?.path === "" && result.error.code === ROOT_CODES[mark.kind];
+  if (ok && mark.kind === "serde-outer-parse" && bridgeMessage(result.error?.message ?? "")) return stated;
   return ok ? undefined : stated;
 }
 
