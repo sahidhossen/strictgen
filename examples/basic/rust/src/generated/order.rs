@@ -10,37 +10,35 @@ use std::collections::BTreeMap;
 /// A code of exactly 3 characters.
 ///
 /// Schema: `order.json#/$defs/code`.
-pub type Code = String;
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
+#[serde(transparent)]
+pub struct Code(pub String);
 
-/// Decodes JSON text strictly as [Code], then checks its constraints. An alias is not a
-/// type of its own, so `Code::from_json` checks only those of the type it stands for.
-///
-/// # Errors
-///
-/// A [helpers::DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.
-pub fn decode_code(json: impl AsRef<[u8]>) -> Result<Code, helpers::DecodeError> {
-    let value = <Code as helpers::Decode>::from_json(json)?;
-    helpers::check_length(&value, Some(3), Some(3))?;
-    Ok(value)
+impl helpers::Decode for Code {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <String as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_length(&self.0, Some(3), Some(3))
+    }
 }
 
 /// At most two codes.
 ///
 /// Schema: `order.json#/$defs/codes`.
-pub type Codes = Vec<Code>;
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Codes(pub Vec<Code>);
 
-/// Decodes JSON text strictly as [Codes], then checks its constraints. An alias is not a
-/// type of its own, so `Codes::from_json` checks only those of the type it stands for.
-///
-/// # Errors
-///
-/// A [helpers::DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.
-pub fn decode_codes(json: impl AsRef<[u8]>) -> Result<Codes, helpers::DecodeError> {
-    let value = <Codes as helpers::Decode>::from_json(json)?;
-    helpers::check_items(&value, None, Some(2), |item| {
-        helpers::check_length(item, Some(3), Some(3))
-    })?;
-    Ok(value)
+impl helpers::Decode for Codes {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <Vec<Code> as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_items(&self.0, None, Some(2), helpers::Decode::check)
+    }
 }
 
 /// One line of an order.
@@ -67,7 +65,7 @@ impl helpers::Decode for Line {
     }
 
     fn check(&self) -> Result<(), helpers::DecodeError> {
-        helpers::within("sku", helpers::check_length(&self.sku, Some(3), Some(3)))?;
+        helpers::within("sku", helpers::Decode::check(&self.sku))?;
         helpers::within(
             "count",
             helpers::check_integer(self.count, &[(">=", 1, "1")]),
@@ -170,12 +168,12 @@ impl helpers::Decode for Order {
                     Some(2),
                     |key| key.as_str(),
                     |item| helpers::check_length(item, None, Some(4)),
-                    |item| helpers::check_length(item, Some(3), Some(3)),
+                    helpers::Decode::check,
                 ),
             )?;
         }
         if let Some(value) = &self.coupon {
-            helpers::within("coupon", helpers::check_length(value, Some(3), Some(3)))?;
+            helpers::within("coupon", helpers::Decode::check(value))?;
         }
         if let Some(value) = &self.lines {
             helpers::within(

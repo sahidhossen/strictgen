@@ -34,6 +34,7 @@ pub fn round_trip(
         ("order", Some("note")) => run::<example_report::Note>(json),
         ("order", Some("payment")) => run::<example_report::Payment>(json),
         ("order", Some("pickup")) => run::<example_report::Pickup>(json),
+        ("order", Some("tags")) => run::<example_report::Tags>(json),
         _ => return None,
     };
     Some(result)

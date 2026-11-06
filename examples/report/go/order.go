@@ -448,3 +448,25 @@ func (v Pickup) check() *DecodeError {
 	}
 	return nil
 }
+
+// Tags is generated from order.json#/$defs/tags.
+//
+// At most three tags of at most 10 characters each.
+type Tags []string
+
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Tags) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Tags) decode(n *node) *DecodeError {
+	x, err := decodeSlice(decodeString)(n)
+	if err != nil {
+		return err
+	}
+	*v = Tags(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Tags.
+func (v Tags) check() *DecodeError {
+	return checkItems([]string(v), -1, 3, func(item string) *DecodeError { return checkLength(item, -1, 10) })
+}

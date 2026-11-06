@@ -99,12 +99,12 @@ function goHead(options: GoOptions, doc: string): string {
  */
 export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
   const ctx = context(model, options.read === "report");
-  checkNames(ctx, model);
+  checkNames(model);
   const files = [...bySchema(model)].map(([schema, decls]) => ({
     name: fileName(schema, decls[0]?.path ?? schema),
     contents: goFile(
       goHead(options, `Types for ${schema}.json.`),
-      decls.some(usesJSON) ? ["encoding/json"] : [],
+      decls.some((d) => usesJSON(d) || marshalsKeys(ctx, d)) ? ["encoding/json"] : [],
       decls.map((d) => declaration(ctx, d)),
     ),
   }));
@@ -119,6 +119,11 @@ export function emitGo(model: Model, options: GoOptions = {}): EmittedFile[] {
     },
     ...files,
   ];
+}
+
+/** True for a constrained alias of a map with enum keys, whose MarshalJSON calls json.Marshal. */
+function marshalsKeys(ctx: Ctx, decl: Decl): boolean {
+  return decl.kind === "alias" && ctx.checks.ownType(decl) && keyCheck(ctx, decl.type) !== undefined;
 }
 
 /** True when a declaration spells a type from encoding/json: `json.Number` or `json.RawMessage`. */
@@ -181,7 +186,7 @@ function goFile(head: string, packages: readonly string[], parts: readonly strin
 }
 
 /** Every package-level name must be unique, since all schemas share one package. */
-function checkNames(ctx: Ctx, model: Model): void {
+function checkNames(model: Model): void {
   // An enum constant like CodeTooDeep, from an enum named code, would clash with the helpers.
   const owners = new Map<string, string>(CODES.map((name) => [name, GO_HELPERS]));
   const claim = (name: string, path: string): void => {
@@ -212,7 +217,6 @@ function checkNames(ctx: Ctx, model: Model): void {
       claim(`Report${decl.name}`, decl.path);
       claim(`union${decl.name}`, decl.path);
     }
-    if (hasDecoder(ctx, decl)) claim(`Decode${decl.name}`, decl.path);
     if (decl.kind === "struct") fieldNames(decl);
   }
 }
@@ -267,7 +271,9 @@ function declaration(ctx: Ctx, decl: Decl): string {
     case "untagged":
       return head + untagged(ctx, decl);
     case "alias":
-      return `${head}type ${decl.name} = ${goType(decl.type)}\n${aliasDecoder(ctx, decl)}`;
+      return ctx.checks.ownType(decl)
+        ? head + definedType(ctx, decl)
+        : `${head}type ${decl.name} = ${goType(decl.type)}\n`;
     case "id":
       return (
         `${head}type ${decl.name} string\n\n` +
@@ -394,31 +400,37 @@ function structCheck(ctx: Ctx, decl: StructDecl, names: readonly string[]): stri
 }
 
 /**
- * For an alias with constraints, `DecodeX`, which decodes strictly and checks them. An alias
- * has no methods, so json.Unmarshal into it checks neither.
+ * A constrained alias of a type that can't check it, like a list of codes, as a defined type
+ * with the methods of a generated type, so json.Unmarshal into it, Report and every type that
+ * holds it check its constraints. It encodes as the value it holds: a number through
+ * json.Number, which encoding/json would otherwise write as a string, and a map with enum keys
+ * after checking them.
  */
-function aliasDecoder(ctx: Ctx, decl: AliasDecl): string {
-  if (!hasDecoder(ctx, decl)) return "";
+function definedType(ctx: Ctx, decl: AliasDecl): string {
+  const name = decl.name;
+  const inner = goType(decl.type);
+  const keys = keyCheck(ctx, decl.type);
+  const marshal =
+    decl.type.kind === "number"
+      ? `\n// MarshalJSON encodes the number as it was decoded.\n` +
+        `func (v ${name}) MarshalJSON() ([]byte, error) { return json.Marshal(json.Number(v)) }\n`
+      : keys !== undefined
+        ? `\n// MarshalJSON fails on a map key its enum doesn't list, which encoding/json would write.\n` +
+          `func (v ${name}) MarshalJSON() ([]byte, error) {\n` +
+          `\tif err := ${keys}(${inner}(v)); err != nil {\n\t\treturn nil, err\n\t}\n` +
+          `\treturn json.Marshal(${inner}(v))\n}\n`
+        : "";
   return (
-    `\n// Decode${decl.name} decodes JSON strictly as ${decl.name} and checks its constraints.\n` +
-    `// json.Unmarshal into ${decl.name} checks neither, since an alias has no methods.\n` +
-    `func Decode${decl.name}(data []byte) (${decl.name}, error) {\n` +
-    `\treturn decodeRoot(data, ${checkedDecoder(ctx, decl)})\n}\n`
+    `type ${name} ${inner}\n\n` +
+    `// UnmarshalJSON decodes strictly, then checks the constraints.\n` +
+    unmarshalMethod(name) +
+    `func (v *${name}) decode(n *node) *DecodeError {\n` +
+    `\tx, err := ${decoder(ctx, decl.type)}(n)\n` +
+    `\tif err != nil {\n\t\treturn err\n\t}\n` +
+    `\t*v = ${name}(x)\n\treturn nil\n}\n` +
+    checkMethod(name, [`\treturn ${goCheck(ctx, decl.type, `${inner}(v)`) ?? "nil"}\n`], true) +
+    marshal
   );
-}
-
-/**
- * True for an alias that gets a `DecodeX`: one with constraints that stands for a type without
- * methods, like a list of codes. An alias of a struct decodes and checks through the struct.
- */
-function hasDecoder(ctx: Ctx, decl: Decl): decl is AliasDecl {
-  return decl.kind === "alias" && ctx.checks.decl(decl.name) && resolve(ctx, decl.type).kind !== "ref";
-}
-
-/** The decoder of an alias with constraints, which checks them once the value decoded. */
-function checkedDecoder(ctx: Ctx, decl: AliasDecl): string {
-  const check = goCheck(ctx, decl.type, "v") ?? "nil";
-  return `withCheck(${decoder(ctx, decl.type)}, func(v ${decl.name}) *DecodeError { return ${check} })`;
 }
 
 /**
@@ -431,7 +443,7 @@ function goCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
   switch (type.kind) {
     case "ref": {
       const decl = ctx.decls.get(type.name);
-      if (decl?.kind === "alias") return goCheck(ctx, decl.type, v);
+      if (decl?.kind === "alias" && !ctx.checks.ownType(decl)) return goCheck(ctx, decl.type, v);
       if (decl?.kind === "tagged") return `checkValue(${v})`;
       return v.startsWith("*") ? `(${v}).check()` : `${v}.check()`;
     }
@@ -537,7 +549,8 @@ function marshal(ctx: Ctx, decl: StructDecl, names: readonly string[]): string {
  * which check their own fields.
  */
 function keyCheck(ctx: Ctx, type: TypeExpr): string | undefined {
-  const resolved = resolve(ctx, type);
+  // A constrained alias is a defined type, whose MarshalJSON checks its own keys.
+  const resolved = resolve(ctx, type, true);
   if (resolved.kind === "array") {
     const inner = keyCheck(ctx, resolved.items);
     return inner === undefined ? undefined : `sliceKeys[${goType(resolved.items)}](${inner})`;
@@ -576,12 +589,15 @@ function isValue(ctx: Ctx, type: TypeExpr): boolean {
   return resolved.kind === "ref" && ctx.decls.get(resolved.name)?.kind === "tagged";
 }
 
-/** Follows aliases to the type they stand for. */
-function resolve(ctx: Ctx, type: TypeExpr): TypeExpr {
+/**
+ * Follows aliases to the type they stand for. With `plain`, it stops at a constrained alias,
+ * which is a defined type of its own.
+ */
+function resolve(ctx: Ctx, type: TypeExpr, plain = false): TypeExpr {
   let current = type;
   for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
     const decl = ctx.decls.get(current.name);
-    if (decl?.kind !== "alias") return current;
+    if (decl?.kind !== "alias" || (plain && ctx.checks.ownType(decl))) return current;
     current = decl.type;
   }
   return current;
@@ -749,7 +765,7 @@ function decoder(ctx: Ctx, type: TypeExpr): string {
   switch (type.kind) {
     case "ref": {
       const decl = ctx.decls.get(type.name);
-      if (decl?.kind === "alias") return decoder(ctx, decl.type);
+      if (decl?.kind === "alias" && !ctx.checks.ownType(decl)) return decoder(ctx, decl.type);
       if (decl?.kind === "tagged") return `union${type.name}`;
       return `decodeType[${type.name}]`;
     }
@@ -793,15 +809,14 @@ export function emitGoFixtures(model: Model, options: GoOptions = {}): string {
         d.source?.def === undefined
           ? (d.source?.schema ?? "")
           : `${d.source.schema}/${d.source.def}`,
-      decode:
-        d.kind === "alias" && hasDecoder(ctx, d)
-          ? `asAny(${checkedDecoder(ctx, d)})`
-          : `asAny(${decoder(ctx, { kind: "ref", name: d.name })})`,
+      decode: `asAny(${decoder(ctx, { kind: "ref", name: d.name })})`,
     }))
     .sort((a, b) => compare(a.key, b.key))
     .map((e) => `\t\t${JSON.stringify(e.key)}: ${e.decode},\n`);
   const types = [
-    ...model.decls.filter((d) => d.kind !== "alias" && d.kind !== "tagged").map((d) => d.name),
+    ...model.decls
+      .filter((d) => (d.kind !== "alias" || ctx.checks.ownType(d)) && d.kind !== "tagged")
+      .map((d) => d.name),
     ...literalsOf(model).map(literalName),
     GO_NON_NULL,
   ]

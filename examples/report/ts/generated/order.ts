@@ -1165,3 +1165,65 @@ export function encodePickup(value: Pickup): unknown {
 export function encodePickupToJson(value: Pickup): string {
   return h.toJson(encodePickup(value));
 }
+
+/** At most three tags of at most 10 characters each. */
+export type Tags = string[];
+
+/**
+ * Decodes parsed JSON as Tags, then checks its constraints. Unknown keys are accepted and their paths go
+ * to the hook set with setUnknownKeyHook. Anything else that doesn't fit throws a DecodeError at
+ * the JSON Pointer of the first problem, under `path` when given.
+ */
+export function decodeTags(json: unknown, path = ""): Tags {
+  return h.report(json, path, (json, path) => h.checked(json, path, readTags));
+}
+
+/** Like decodeTags, but returns the value with the paths of its unknown keys, in input order. */
+export function reportTags(json: unknown, path = ""): h.Reported<Tags> {
+  return h.reported(json, path, (json, path) => h.checked(json, path, readTags));
+}
+
+/** Decodes Tags, the unknown keys going to the decode that runs, constraints checked while h.checked asks for it. */
+function readTags(json: unknown, path: string): Tags {
+  return h.array(h.length(h.decodeString, undefined, 10), undefined, 3)(json, path);
+}
+
+/** Like decodeTags, but returns the DecodeError instead of throwing it. */
+export function tryDecodeTags(json: unknown): h.DecodeResult<Tags> {
+  return h.attempt(decodeTags, json);
+}
+
+/**
+ * Reads JSON text as Tags, strictly. Throws a DecodeError for text that is not JSON, or
+ * not JSON Rust and Go read, like a key given twice or 12.0 for an integer, and for a value
+ * that doesn't fit, at the JSON Pointer of the first problem.
+ */
+export function decodeTagsFromJson(text: string): Tags {
+  return h.fromJson(text, decodeTags);
+}
+
+/** Like decodeTagsFromJson, but returns the DecodeError instead of throwing it. */
+export function tryDecodeTagsFromJson(text: string): h.DecodeResult<Tags> {
+  return h.attemptJson(decodeTags, text);
+}
+
+/** Like decodeTagsFromJson, but returns the value with the paths of its unknown keys, in input order. */
+export function reportTagsFromJson(text: string): h.Reported<Tags> {
+  return h.reportFromJson(text, (json, path) => h.checked(json, path, readTags));
+}
+
+/**
+ * Encodes Tags as a JSON value, ready for JSON.stringify.
+ * Throws an EncodeError for a value Rust and Go could not hold, like an unknown key.
+ */
+export function encodeTags(value: Tags): unknown {
+  return h.encodeArray(h.encodeString)(value);
+}
+
+/**
+ * Encodes Tags as JSON text, keys in the order Rust and Go write them.
+ * Throws an EncodeError like encodeTags.
+ */
+export function encodeTagsToJson(value: Tags): string {
+  return h.toJson(encodeTags(value));
+}

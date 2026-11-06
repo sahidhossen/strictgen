@@ -9,25 +9,45 @@ import "encoding/json"
 // Code is generated from order.json#/$defs/code.
 //
 // A code of exactly 3 characters.
-type Code = string
+type Code string
 
-// DecodeCode decodes JSON strictly as Code and checks its constraints.
-// json.Unmarshal into Code checks neither, since an alias has no methods.
-func DecodeCode(data []byte) (Code, error) {
-	return decodeRoot(data, withCheck(decodeString, func(v Code) *DecodeError { return checkLength(v, 3, 3) }))
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Code) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Code) decode(n *node) *DecodeError {
+	x, err := decodeString(n)
+	if err != nil {
+		return err
+	}
+	*v = Code(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Code.
+func (v Code) check() *DecodeError {
+	return checkLength(string(v), 3, 3)
 }
 
 // Codes is generated from order.json#/$defs/codes.
 //
 // At most two codes.
-type Codes = []Code
+type Codes []Code
 
-// DecodeCodes decodes JSON strictly as Codes and checks its constraints.
-// json.Unmarshal into Codes checks neither, since an alias has no methods.
-func DecodeCodes(data []byte) (Codes, error) {
-	return decodeRoot(data, withCheck(decodeSlice(decodeString), func(v Codes) *DecodeError {
-		return checkItems(v, -1, 2, func(item Code) *DecodeError { return checkLength(item, 3, 3) })
-	}))
+// UnmarshalJSON decodes strictly, then checks the constraints.
+func (v *Codes) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
+
+func (v *Codes) decode(n *node) *DecodeError {
+	x, err := decodeSlice(decodeType[Code])(n)
+	if err != nil {
+		return err
+	}
+	*v = Codes(x)
+	return nil
+}
+
+// check checks the constraints of a decoded Codes.
+func (v Codes) check() *DecodeError {
+	return checkItems([]Code(v), -1, 2, func(item Code) *DecodeError { return item.check() })
 }
 
 // Line is generated from order.json#/$defs/line.
@@ -46,14 +66,14 @@ func (v *Line) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }
 func (v *Line) decode(n *node) *DecodeError {
 	var out Line
 	return decodeObject(n, func(d *objectDecoder) {
-		required(d, "sku", &out.Sku, decodeString)
+		required(d, "sku", &out.Sku, decodeType[Code])
 		required(d, "count", &out.Count, decodeInt)
 	}, func() { *v = out })
 }
 
 // check checks the constraints of a decoded Line.
 func (v Line) check() *DecodeError {
-	if err := checkLength(v.Sku, 3, 3); err != nil {
+	if err := v.Sku.check(); err != nil {
 		return err.at("sku")
 	}
 	if err := checkInt(v.Count, limit[int64]{">=", 1, "1"}); err != nil {
@@ -103,8 +123,8 @@ func (v *Order) decode(n *node) *DecodeError {
 		required(d, "price", &out.Price, decodeNumber)
 		optional(d, "discount", &out.Discount, decodeNumber)
 		required(d, "tags", &out.Tags, decodeSlice(decodeString))
-		optional(d, "attributes", &out.Attributes, decodeMap(decodeString, decodeString))
-		optional(d, "coupon", &out.Coupon, decodeString)
+		optional(d, "attributes", &out.Attributes, decodeMap(decodeString, decodeType[Code]))
+		optional(d, "coupon", &out.Coupon, decodeType[Code])
 		optional(d, "lines", &out.Lines, decodeSlice(decodeType[Line]))
 		optional(d, "size", &out.Size, decodeType[OrderSize])
 	}, func() { *v = out })
@@ -138,12 +158,12 @@ func (v Order) check() *DecodeError {
 		return err.at("tags")
 	}
 	if v.Attributes != nil {
-		if err := checkEntries(*v.Attributes, 1, 2, func(item string) *DecodeError { return checkLength(item, -1, 4) }, func(item Code) *DecodeError { return checkLength(item, 3, 3) }); err != nil {
+		if err := checkEntries(*v.Attributes, 1, 2, func(item string) *DecodeError { return checkLength(item, -1, 4) }, func(item Code) *DecodeError { return item.check() }); err != nil {
 			return err.at("attributes")
 		}
 	}
 	if v.Coupon != nil {
-		if err := checkLength(*v.Coupon, 3, 3); err != nil {
+		if err := (*v.Coupon).check(); err != nil {
 			return err.at("coupon")
 		}
 	}

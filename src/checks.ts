@@ -104,6 +104,17 @@ export class Checks {
     }
   }
 
+  /**
+   * True for an alias that Rust and Go generate as a type of its own: one with constraints to
+   * check that stands for a type that can't check them, like a list of codes or a string with
+   * a length range. The type of its own carries the check, so the standard entry points, Rust's
+   * `from_json` and Go's `json.Unmarshal`, run it. An alias of another declaration stays an
+   * alias, since that declaration checks itself.
+   */
+  ownType(decl: Decl): boolean {
+    return decl.kind === "alias" && decl.type.kind !== "ref" && this.#checked.has(decl.name);
+  }
+
   /** True when any declaration has a constraint to check. */
   any(): boolean {
     return this.#checked.size > 0;

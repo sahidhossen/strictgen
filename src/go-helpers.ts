@@ -1284,18 +1284,6 @@ func checkValue(v any) *DecodeError {
 	return nil
 }
 
-// withCheck returns a decoder that decodes with decode, then checks the whole value with check,
-// for an alias, which has no methods.
-func withCheck[T any](decode func(*node) (T, *DecodeError), check func(T) *DecodeError) func(*node) (T, *DecodeError) {
-	return func(n *node) (T, *DecodeError) {
-		v, err := decode(n)
-		if err == nil {
-			err = check(v)
-		}
-		return v, err
-	}
-}
-
 // count shows n things, like "1 character" or "3 items".
 func count(n int, one, many string) string {
 	if n == 1 {

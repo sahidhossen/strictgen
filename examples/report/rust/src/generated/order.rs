@@ -495,3 +495,22 @@ impl helpers::Decode for Pickup {
         Ok(())
     }
 }
+
+/// At most three tags of at most 10 characters each.
+///
+/// Schema: `order.json#/$defs/tags`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(transparent)]
+pub struct Tags(pub Vec<String>);
+
+impl helpers::Decode for Tags {
+    fn decode_node(node: &helpers::Node<'_>) -> Result<Self, helpers::DecodeError> {
+        <Vec<String> as helpers::Decode>::decode_node(node).map(Self)
+    }
+
+    fn check(&self) -> Result<(), helpers::DecodeError> {
+        helpers::check_items(&self.0, None, Some(3), |item| {
+            helpers::check_length(item, None, Some(10))
+        })
+    }
+}

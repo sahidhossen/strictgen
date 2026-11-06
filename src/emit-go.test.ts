@@ -660,20 +660,100 @@ describe("Go constraints", () => {
     expect(out).toContain("func (v ItemSize) check() *DecodeError {\n\tif v.String != nil {\n\t\treturn checkLength(*v.String, -1, 2)\n\t}\n");
   });
 
-  it("check an id's string, and give an alias with constraints a DecodeX", () => {
+  it("check an id's string", () => {
     expect(out).toContain("func (v OrderId) check() *DecodeError {\n\treturn checkLength(string(v), 4, -1)\n}\n");
-    expect(out).toContain(
-      "func DecodeCodes(data []byte) (Codes, error) {\n" +
-        "\treturn decodeRoot(data, withCheck(decodeSlice(decodeString), func(v Codes) *DecodeError { " +
-        "return checkItems(v, -1, 2, func(item string) *DecodeError { return checkLength(item, 3, -1) }) }))\n}\n",
-    );
-    expect(emitGoFixtures(model)).toContain('\t\t"lib/codes": asAny(withCheck(decodeSlice(decodeString), ');
     expect(emitGoFixtures(model)).toContain('\t\t"lib/item": asAny(decodeType[Item]),\n');
   });
 
   it("write no check for a type without constraints", () => {
     expect(out).not.toContain("func (v Plain) check()");
-    expect(emitGoFixtures(lib({ plain: closed({ a: { type: "string" } }) }))).not.toContain("withCheck");
+  });
+});
+
+describe("Go constrained aliases", () => {
+  const model = build({
+    lib: schema("lib", {
+      $defs: {
+        codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 2 },
+        code: { type: "string", minLength: 3, maxLength: 3 },
+        ratio: { type: "number", maximum: 1 },
+        role: { enum: ["a", "b"] },
+        byRole: {
+          type: "object",
+          propertyNames: { $ref: "#/$defs/role" },
+          additionalProperties: { type: "integer" },
+          maxProperties: 1,
+        },
+        byCode: {
+          type: "object",
+          propertyNames: { $ref: "#/$defs/code" },
+          additionalProperties: { type: "integer" },
+        },
+        moreCodes: { $ref: "#/$defs/codes" },
+        item: closed({ name: { type: "string", maxLength: 2 } }),
+        itemAlias: { $ref: "#/$defs/item" },
+        names: { type: "array", items: { type: "string" } },
+        holder: closed({ codes: { $ref: "#/$defs/codes" }, more: { $ref: "#/$defs/moreCodes" } }, ["codes"]),
+      },
+    }),
+  });
+  const out = go(model);
+  const registry = emitGoFixtures(model);
+
+  it("make an alias with constraints a defined type, which json.Unmarshal decodes and checks", () => {
+    expect(out).toContain(
+      "type Codes []string\n\n" +
+        "// UnmarshalJSON decodes strictly, then checks the constraints.\n" +
+        "func (v *Codes) UnmarshalJSON(data []byte) error { return unmarshal(data, v) }\n\n" +
+        "func (v *Codes) decode(n *node) *DecodeError {\n" +
+        "\tx, err := decodeSlice(decodeString)(n)\n\tif err != nil {\n\t\treturn err\n\t}\n\t*v = Codes(x)\n\treturn nil\n}\n\n" +
+        "// check checks the constraints of a decoded Codes.\n" +
+        "func (v Codes) check() *DecodeError {\n" +
+        "\treturn checkItems([]string(v), -1, 2, func(item string) *DecodeError { return checkLength(item, 3, -1) })\n}\n",
+    );
+    expect(out).toContain("type Code string\n");
+    expect(out).toContain("\treturn checkLength(string(v), 3, 3)\n");
+    expect(out).not.toMatch(/func Decode(Codes|Code|Ratio)\(/);
+    expect(file(model, "helpers.go")).not.toContain("withCheck");
+  });
+
+  it("encode a number through json.Number, and a map with enum keys after checking them", () => {
+    expect(out).toContain("type Ratio json.Number\n");
+    expect(out).toContain("func (v Ratio) MarshalJSON() ([]byte, error) { return json.Marshal(json.Number(v)) }\n");
+    expect(out).toContain("\treturn checkNumber(json.Number(v), limit[float64]{\"<=\", 1, \"1\"})\n");
+    expect(out).toContain(
+      "func (v ByRole) MarshalJSON() ([]byte, error) {\n" +
+        "\tif err := mapKeys[Role, int64](nil)(map[Role]int64(v)); err != nil {\n\t\treturn nil, err\n\t}\n" +
+        "\treturn json.Marshal(map[Role]int64(v))\n}\n",
+    );
+  });
+
+  it("key a map by a constrained string alias, checking each key", () => {
+    expect(out).toContain("type ByCode map[Code]int64\n");
+    expect(out).toContain("\tx, err := decodeMap(decodeType[Code], decodeInt)(n)\n");
+    expect(out).toContain(
+      "\treturn checkEntries(map[Code]int64(v), -1, -1, func(item Code) *DecodeError { return item.check() }, nil)\n",
+    );
+  });
+
+  it("keep an alias of another declaration and an alias without constraints plain", () => {
+    expect(out).toContain("type MoreCodes = Codes\n");
+    expect(out).toContain("type ItemAlias = Item\n");
+    expect(out).toContain("type Names = []string\n");
+  });
+
+  it("check and decode a field of a constrained alias through its type", () => {
+    expect(out).toContain('\t\trequired(d, "codes", &out.Codes, decodeType[Codes])\n');
+    expect(out).toContain('\t\toptional(d, "more", &out.More, decodeType[Codes])\n');
+    expect(out).toContain("\tif err := v.Codes.check(); err != nil {\n");
+    expect(out).toContain("\t\tif err := (*v.More).check(); err != nil {\n");
+  });
+
+  it("decode every root and def through the type in the fixture registry", () => {
+    expect(registry).toContain('\t\t"lib/codes": asAny(decodeType[Codes]),\n');
+    expect(registry).toContain('\t\t"lib/moreCodes": asAny(decodeType[Codes]),\n');
+    expect(registry).toContain("\t\tnew(Codes),\n");
+    expect(registry).not.toContain("new(MoreCodes)");
   });
 });
 

@@ -8,17 +8,15 @@ import "encoding/json"
 // to a function that decodes JSON as the type generated for it.
 func fixtureDecoders() map[string]func([]byte) (any, error) {
 	return map[string]func([]byte) (any, error){
-		"common/eventId":   asAny(decodeType[EventId]),
-		"common/orderId":   asAny(decodeType[OrderId]),
-		"common/timestamp": asAny(decodeString),
-		"common/userId":    asAny(decodeType[UserId]),
-		"event":            asAny(decodeType[Event]),
-		"event/eventType":  asAny(decodeType[EventType]),
-		"order":            asAny(decodeType[Order]),
-		"order/code":       asAny(withCheck(decodeString, func(v Code) *DecodeError { return checkLength(v, 3, 3) })),
-		"order/codes": asAny(withCheck(decodeSlice(decodeString), func(v Codes) *DecodeError {
-			return checkItems(v, -1, 2, func(item Code) *DecodeError { return checkLength(item, 3, 3) })
-		})),
+		"common/eventId":             asAny(decodeType[EventId]),
+		"common/orderId":             asAny(decodeType[OrderId]),
+		"common/timestamp":           asAny(decodeString),
+		"common/userId":              asAny(decodeType[UserId]),
+		"event":                      asAny(decodeType[Event]),
+		"event/eventType":            asAny(decodeType[EventType]),
+		"order":                      asAny(decodeType[Order]),
+		"order/code":                 asAny(decodeType[Code]),
+		"order/codes":                asAny(decodeType[Codes]),
 		"order/line":                 asAny(decodeType[Line]),
 		"payment-method":             asAny(unionPaymentMethod),
 		"payment-method/bankAccount": asAny(decodeType[BankAccount]),
@@ -47,6 +45,8 @@ func unmarshalers() []json.Unmarshaler {
 		new(Card),
 		new(CardBrand),
 		new(CardType),
+		new(Code),
+		new(Codes),
 		new(Contact),
 		new(ContactEmail),
 		new(ContactPhone),

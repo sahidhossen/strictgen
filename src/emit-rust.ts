@@ -195,7 +195,6 @@ export function emitRust(model: Model, options: RustOptions = {}): EmittedFile[]
     report,
     checks: new Checks(model.decls),
   };
-  checkDecoderNames(ctx, model);
   const contents = modules.map((m) => ({
     name: `${m.name}.rs`,
     contents: rustModule(ctx, model, m.schema, m.decls, moduleNames(modules), header),
@@ -271,49 +270,17 @@ function checkParts(modules: readonly string[]): string[] {
 }
 
 /**
- * The type an alias stands for, through other aliases. An alias of a non-ref type, like a list
- * of strings, has no type of its own to check its constraints, so it gets a decode function.
+ * The type a type expression stands for, through aliases that stay aliases. It stops at any
+ * other declaration, a constrained alias generated as a type of its own included.
  */
-function aliasTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
+function plainTarget(ctx: Ctx, type: TypeExpr): TypeExpr {
   let current = type;
   for (let depth = 0; current.kind === "ref" && depth <= ctx.decls.size; depth++) {
     const decl = ctx.decls.get(current.name);
-    if (decl?.kind !== "alias") return current;
+    if (decl?.kind !== "alias" || ctx.checks.ownType(decl)) return current;
     current = decl.type;
   }
   return current;
-}
-
-/** True for an alias that gets a `decode_x` function, since `X::from_json` can't check it. */
-function hasDecoder(ctx: Ctx, decl: Decl): decl is AliasDecl {
-  return (
-    decl.kind === "alias" &&
-    ctx.checks.decl(decl.name) &&
-    aliasTarget(ctx, decl.type).kind !== "ref"
-  );
-}
-
-/** The decode function of an alias, like `decode_short_names` for `ShortNames`. */
-export function aliasDecoderName(name: string): string {
-  return `decode_${name.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toLowerCase()}`;
-}
-
-/** Two aliases whose decode functions would share a name fail. */
-function checkDecoderNames(ctx: Ctx, model: Model): void {
-  const owners = new Map<string, string>();
-  for (const decl of model.decls) {
-    if (!hasDecoder(ctx, decl)) continue;
-    const name = aliasDecoderName(decl.name);
-    const other = owners.get(name);
-    if (other !== undefined)
-      throw new CodegenError(
-        decl.path,
-        "name-clash",
-        `the Rust function ${name} is also used by ${other}`,
-        RENAME_TYPE,
-      );
-    owners.set(name, decl.path);
-  }
 }
 
 function moduleNames(modules: readonly { schema: string; name: string }[]): Map<string, string> {
@@ -360,21 +327,20 @@ function rustModule(
       if (kind === "boolean-literal") helpers.add("ConstBool");
     }
   }
-  // Every declaration but an alias implements Decode through the helpers module, and an alias
-  // with constraints has a decode function.
-  const decodes = decls.some((d) => d.kind !== "alias" || hasDecoder(ctx, d));
-  const serializes = decls.some((d) => d.kind !== "alias");
+  // Every declaration but an alias implements Decode through the helpers module and derives or
+  // implements Serialize. A constrained alias is a type of its own, so it does both.
+  const typed = decls.some((d) => d.kind !== "alias" || ctx.checks.ownType(d));
   const usesMap =
     types.some((t) => kindsOf(t).has("map")) ||
     decls.some((d) => d.kind === "struct" && d.rest !== undefined);
   const uses = [...imports(model, decls)].map(
     ([other, names]) => `use super::${modules.get(other) ?? other}::${importList(names)};\n`,
   );
-  const fromHelpers = [...(decodes ? ["self"] : []), ...[...helpers].sort(compare)];
+  const fromHelpers = [...(typed ? ["self"] : []), ...[...helpers].sort(compare)];
   if (fromHelpers.length === 1 && fromHelpers[0] === "self") uses.push(`use super::${HELPERS};\n`);
   else if (fromHelpers.length > 0)
     uses.push(`use super::${HELPERS}::${importList(fromHelpers)};\n`);
-  if (serializes) uses.push("use serde::Serialize;\n");
+  if (typed) uses.push("use serde::Serialize;\n");
   if (usesMap) uses.push("use std::collections::BTreeMap;\n");
   const parts = [
     `${header}\n\n//! Types for \`${schema}.json\`.\n\n${uses.join("")}`,
@@ -431,7 +397,9 @@ function declaration(ctx: Ctx, decl: Decl): string {
     case "untagged":
       return head + untagged(ctx, decl);
     case "alias":
-      return `${head}pub type ${decl.name} = ${typeText(decl.type)};\n${aliasDecoder(ctx, decl)}`;
+      return ctx.checks.ownType(decl)
+        ? head + newtype(ctx, decl)
+        : `${head}pub type ${decl.name} = ${typeText(decl.type)};\n`;
     case "id":
       return (
         `${head}${DERIVE_ID}\n#[serde(transparent)]\npub struct ${decl.name}(pub String);\n\n` +
@@ -665,7 +633,7 @@ function rustCheck(ctx: Ctx, type: TypeExpr, v: string): string | undefined {
   switch (type.kind) {
     case "ref": {
       const decl = ctx.decls.get(type.name);
-      if (decl?.kind === "alias") return rustCheck(ctx, decl.type, v);
+      if (decl?.kind === "alias" && !ctx.checks.ownType(decl)) return rustCheck(ctx, decl.type, v);
       return `${HELPERS}::Decode::check(${v})`;
     }
     case "string":
@@ -702,9 +670,10 @@ function rustCheckFn(ctx: Ctx, type: TypeExpr): string {
 
 /** A closure that gives the JSON text of a map key, for its path. */
 function keyText(ctx: Ctx, type: TypeExpr): string {
-  const target = aliasTarget(ctx, type);
+  const target = plainTarget(ctx, type);
   const decl = target.kind === "ref" ? ctx.decls.get(target.name) : undefined;
-  return decl?.kind === "id" ? "|key| key.0.as_str()" : "|key| key.as_str()";
+  const wrapped = decl !== undefined && (decl.kind === "id" || ctx.checks.ownType(decl));
+  return wrapped ? "|key| key.0.as_str()" : "|key| key.as_str()";
 }
 
 /** An f64 literal for a bound, like `0.5` or `3.0`. */
@@ -761,21 +730,22 @@ function idCheck(ctx: Ctx, decl: IdDecl): string | undefined {
 }
 
 /**
- * The decode function of an alias with constraints, like `decode_short_names`. An alias is not
- * a type of its own, so `X::from_json` decodes what it stands for without its constraints.
+ * A constrained alias of a type that can't check it, like a list of codes, as a newtype that
+ * serializes as the value it holds. Its `Decode` impl checks the constraints, so
+ * `X::from_json` and `X::report_from_json` do. A newtype of a string is ordered, so it can key
+ * a map, as an id can.
  */
-function aliasDecoder(ctx: Ctx, decl: AliasDecl): string {
-  if (!hasDecoder(ctx, decl)) return "";
-  const check = rustCheck(ctx, decl.type, "&value") ?? "Ok(())";
+function newtype(ctx: Ctx, decl: AliasDecl): string {
+  const inner = typeText(decl.type);
+  const derive = decl.type.kind === "string" ? DERIVE_ID : DERIVE_DATA;
+  const check = rustCheck(ctx, decl.type, "&self.0");
   return (
-    `\n/// Decodes JSON text strictly as [${decl.name}], then checks its constraints. An alias is not a\n` +
-    `/// type of its own, so \`${decl.name}::from_json\` checks only those of the type it stands for.\n` +
-    `///\n/// # Errors\n///\n` +
-    `/// A [${HELPERS}::DecodeError] when the text isn't JSON, doesn't fit the type or breaks a constraint.\n` +
-    `pub fn ${aliasDecoderName(decl.name)}(json: impl AsRef<[u8]>) -> Result<${decl.name}, ${HELPERS}::DecodeError> {\n` +
-    `    let value = <${decl.name} as ${HELPERS}::Decode>::from_json(json)?;\n` +
-    `    ${check}?;\n` +
-    `    Ok(value)\n}\n`
+    `${derive}\n#[serde(transparent)]\npub struct ${decl.name}(pub ${inner});\n\n` +
+    decodeImpl(
+      decl.name,
+      `        <${inner} as ${HELPERS}::Decode>::decode_node(node).map(Self)\n`,
+      check === undefined ? undefined : `        ${check}\n`,
+    )
   );
 }
 
@@ -864,21 +834,13 @@ export function emitRustFixtures(
   options: { readonly header?: string; readonly read?: ReadMode } = {},
 ): string {
   const report = options.read === "report";
-  const ctx: Ctx = {
-    decls: new Map(model.decls.map((d) => [d.name, d])),
-    report,
-    checks: new Checks(model.decls),
-  };
   const arms = model.decls
     .filter((d) => d.source !== undefined)
     .map((d) => ({ decl: d, schema: d.source?.schema ?? "", def: d.source?.def }))
     .sort((a, b) => compare(`${a.schema}#${a.def ?? ""}`, `${b.schema}#${b.def ?? ""}`))
     .map(({ decl, schema, def }) => {
       const pattern = `(${JSON.stringify(schema)}, ${def === undefined ? "None" : `Some(${JSON.stringify(def)})`})`;
-      const run = hasDecoder(ctx, decl)
-        ? `encode(${crate}::${aliasDecoderName(decl.name)}(json))`
-        : `run::<${crate}::${decl.name}>(json)`;
-      return `        ${pattern} => ${run},\n`;
+      return `        ${pattern} => run::<${crate}::${decl.name}>(json),\n`;
     });
   return `${commentHeader(options.header ?? DEFAULT_HEADER)}
 

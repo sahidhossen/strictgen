@@ -873,6 +873,7 @@ describe("TypeScript constraints", () => {
           ["name"],
         ),
         codes: { type: "array", items: { type: "string", minLength: 3 }, maxItems: 1 },
+        moreCodes: { $ref: "#/$defs/codes" },
       },
     }),
   });
@@ -979,6 +980,28 @@ describe("TypeScript constraints", () => {
     );
     expect(m.fn("tryDecodeCodesFromJson")('["abc"]')).toEqual({ ok: true, value: ["abc"] });
   });
+
+  it("check a constrained alias, and an alias of it, through every entry point in both read modes", async () => {
+    const report = await load(model, { read: "report" });
+    const bad = ["abc", "abd"];
+    const text = JSON.stringify(bad);
+    const message = "too long, expected at most 1 item, found 2 items";
+    const code = { path: "", code: "too_long" };
+    for (const [mode, loaded] of [["strict", m], ["report", report]] as const) {
+      for (const name of ["Codes", "MoreCodes"]) {
+        const at = `${mode} ${name}`;
+        expect(failure(loaded, name, bad), at).toBe(message);
+        expect(failureFromJson(loaded, name, text), at).toBe(message);
+        expect(loaded.fn(`tryDecode${name}`)(bad), at).toMatchObject({ ok: false, error: code });
+        expect(loaded.fn(`tryDecode${name}FromJson`)(text), at).toMatchObject({ ok: false, error: code });
+        if (mode === "report") {
+          expect(() => loaded.fn(`report${name}`)(bad), at).toThrow(message);
+          expect(() => loaded.fn(`report${name}FromJson`)(text), at).toThrow(message);
+          expect(loaded.fn(`report${name}FromJson`)('["abc"]'), at).toEqual({ value: ["abc"], unknown: [] });
+        }
+      }
+    }
+  }, COMPILE_TIMEOUT);
 
   it("leave constraints out with validation off", async () => {
     const off = await load(
