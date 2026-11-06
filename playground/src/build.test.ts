@@ -1,0 +1,143 @@
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
+
+import ts from "typescript";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import { builtinProfileFile } from "../../src/profile-files.js";
+import { transpiler } from "./decode.js";
+import { SAMPLE } from "./sample.js";
+import type { Request, Response } from "./session.js";
+import { respond, Session } from "./session.js";
+import { PROFILES } from "./state.js";
+
+const ROOT = join(import.meta.dirname, "..", "..");
+const SCRIPT = join(ROOT, "scripts", "playground-build.mjs");
+/** Bundling the TypeScript compiler takes a few seconds. */
+const TIMEOUT = 120_000;
+
+let out = "";
+
+beforeAll(() => {
+  out = mkdtempSync(join(tmpdir(), "strictgen-playground-"));
+  const run = spawnSync(process.execPath, [SCRIPT, "--out", out], { encoding: "utf8", timeout: TIMEOUT });
+  if (run.status !== 0) throw new Error(`the build failed: ${run.stderr}`);
+}, TIMEOUT);
+
+afterAll(() => {
+  if (out !== "") rmSync(out, { recursive: true, force: true });
+});
+
+/** Runs the built worker in a fresh context, as a browser would, and returns what it posts for each request. */
+function runWorker(requests: readonly Request[]): unknown[] {
+  const posted: unknown[] = [];
+  const self: { onmessage: ((e: { data: Request }) => void) | null; postMessage: (m: unknown) => void } = {
+    onmessage: null,
+    postMessage: (m) => posted.push(JSON.parse(JSON.stringify(m))),
+  };
+  runInNewContext(readFileSync(join(out, "worker.js"), "utf8"), { self, TextEncoder, TextDecoder, console });
+  for (const data of requests) self.onmessage?.({ data });
+  return posted;
+}
+
+const PROFILE_TEXTS = Object.fromEntries(PROFILES.map((p) => [p, readFileSync(builtinProfileFile(p), "utf8")]));
+
+function schemas(dir: string): Request["input"]["schemas"] {
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".json"))
+    .map((name) => ({ name, text: readFileSync(join(dir, name), "utf8") }));
+}
+
+describe("the playground build", () => {
+  it("writes the page, its style, the app and the worker, and nothing else", () => {
+    expect(readdirSync(out).sort()).toEqual(["app.js", "index.html", "style.css", "worker.js"]);
+  });
+
+  it("has a strict content security policy and loads nothing from elsewhere", () => {
+    const html = readFileSync(join(out, "index.html"), "utf8");
+    const csp = /<meta\s+http-equiv="Content-Security-Policy"\s+content="([^"]*)"/.exec(html)?.[1];
+    expect(csp?.split("; ")).toEqual([
+      "default-src 'none'",
+      "script-src 'self'",
+      "worker-src 'self'",
+      "style-src 'self'",
+      "img-src 'self'",
+      "connect-src 'none'",
+      "base-uri 'none'",
+      "form-action 'none'",
+    ]);
+    const refs = [...html.matchAll(/\s(?:src|href)="([^"]*)"/g)].map((m) => m[1]);
+    expect(refs).toEqual(["./style.css", "./app.js"]);
+    expect(html).not.toMatch(/<script(?![^>]*\ssrc=)/);
+    expect(html).not.toMatch(/\sstyle=|\son[a-z]+=/);
+    // The only URLs in the page's code are the example schema's $id values, never fetched.
+    expect(readFileSync(join(out, "style.css"), "utf8")).not.toMatch(/url\(|@import/);
+    for (const file of ["app.js", "worker.js"]) {
+      expect(readFileSync(join(out, file), "utf8"), file).not.toMatch(/\bfetch\(|XMLHttpRequest|WebSocket|sendBeacon|EventSource|importScripts/);
+    }
+  });
+
+  it("sets user text with textContent, never as markup", () => {
+    const source = readFileSync(join(import.meta.dirname, "app.ts"), "utf8");
+    expect(source).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|setAttribute\("style"/);
+  });
+
+  it(
+    "runs in a worker context and answers as the session does in Node, for the example and examples/basic",
+    () => {
+      const basic: Request = {
+        id: 2,
+        input: {
+          schemas: schemas(join(ROOT, "examples", "basic", "schemas")),
+          read: "report",
+          profiles: ["openai"],
+          cleanup: true,
+          ids: { file: "common", suffix: "Id" },
+        },
+        type: "Order",
+        decoder: "normal",
+        payload: '{"id": 5, "extra": true}',
+      };
+      const sample: Request = { id: 1, input: SAMPLE, type: SAMPLE.type, decoder: SAMPLE.decoder, payload: SAMPLE.payload };
+      const posted = runWorker([sample, basic]);
+      const node = new Session(transpiler(ts), PROFILE_TEXTS);
+      const want = [respond(node, sample), respond(node, basic)].map((r) => JSON.parse(JSON.stringify(r)) as Response);
+      expect(posted[0]).toEqual({ ready: true });
+      expect(posted.slice(1)).toEqual(want);
+      const first = want[0];
+      expect(first?.decoded).toMatchObject({ kind: "rejected", error: { path: "/lines/1/quantity", code: "too_small" } });
+      expect(first?.generated.ok === true ? first.generated.outputs.llm.length : 0).toBeGreaterThan(0);
+    },
+    TIMEOUT,
+  );
+
+  it("posts a failure instead of throwing on a broken request", () => {
+    const posted = runWorker([{ id: 3 } as unknown as Request]);
+    expect(posted[1]).toMatchObject({ id: 3, failure: expect.any(String) as unknown });
+  });
+
+  it(
+    "refuses generator code that imports a Node built in module, and takes the in-memory generator",
+    () => {
+      const check = (entry: string) =>
+        spawnSync(
+          process.execPath,
+          [
+            "--input-type=module",
+            "-e",
+            `import { bundle } from ${JSON.stringify(pathToFileURL(SCRIPT).href)};\n` +
+              `await bundle(${JSON.stringify(entry)}, "esm").then(() => console.log("ok"), (e) => console.log(e.errors?.map((x) => x.text).join("\\n") ?? String(e)));`,
+          ],
+          { encoding: "utf8", timeout: TIMEOUT },
+        ).stdout.trim();
+      expect(check("src/config.ts").split("\n")).toContain("src/config.ts imports node:fs, which the browser doesn't have");
+      expect(check("src/targets.ts").split("\n")).toContain("src/targets.ts imports node:path, which the browser doesn't have");
+      expect(check("src/memory.ts")).toBe("ok");
+    },
+    TIMEOUT,
+  );
+});

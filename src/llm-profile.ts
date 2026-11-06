@@ -3,13 +3,7 @@
  * built in ones ship as JSON files in `profiles/`, next to `profile.schema.json`, which describes
  * them. A profile file a config names by its path replaces the built in profile of its name.
  */
-import { existsSync, readFileSync } from "node:fs";
-import { basename } from "node:path";
-import { fileURLToPath } from "node:url";
-
-import type { Config, LlmProfileRef } from "./config.js";
-import { ConfigError } from "./config.js";
-import { fsReason, isFsError } from "./fs-error.js";
+import { ConfigError } from "./config-error.js";
 
 /** The optional keywords a profile can accept, in the order the profile schema lists them. */
 export const PROFILE_KEYWORDS = [
@@ -82,9 +76,6 @@ export interface Profile {
 
 /** The profiles strictgen ships, by name. */
 export const BUILTIN_PROFILES = ["anthropic", "gemini", "openai"] as const;
-
-/** The folder the built in profiles ship in, beside `src/` and `dist/`. */
-const PROFILES_DIR = new URL("../profiles/", import.meta.url);
 
 const NAME = /^[a-z][a-z0-9-]*$/;
 const DATE = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/;
@@ -246,16 +237,11 @@ function readLimits(r: Reader, value: unknown): ProfileLimits {
   };
 }
 
-/** Reads and validates the profile file at `path`, named `shown` in errors. */
-export function loadProfile(path: string, shown: string = path): Profile {
-  if (!existsSync(path)) throw new ConfigError(shown, "", "profile file not found");
-  let text: string;
-  try {
-    text = readFileSync(path, "utf8");
-  } catch (error) {
-    if (!isFsError(error)) throw error;
-    throw new ConfigError(shown, "", `can't read it: ${fsReason(error)}`);
-  }
+/**
+ * Parses and validates the text of a profile file, named `shown` in errors. Throws a
+ * {@link ConfigError}.
+ */
+export function profileFromText(text: string, shown: string): Profile {
   let value: unknown;
   try {
     value = JSON.parse(text);
@@ -270,13 +256,8 @@ export function isBuiltinProfile(name: string): boolean {
   return (BUILTIN_PROFILES as readonly string[]).includes(name);
 }
 
-/** The path of a built in profile's file. */
-export function builtinProfileFile(name: string): string {
-  return fileURLToPath(new URL(`${name}.json`, PROFILES_DIR));
-}
-
-/** A built in profile by name. Throws a {@link ConfigError} for a name strictgen doesn't ship. */
-export function builtinProfile(name: string, option = "llm.profiles"): Profile {
+/** Throws a {@link ConfigError}, for `option`, when strictgen ships no profile `name`. */
+export function checkBuiltinProfile(name: string, option = "llm.profiles"): void {
   if (!isBuiltinProfile(name)) {
     throw new ConfigError(
       option,
@@ -285,57 +266,15 @@ export function builtinProfile(name: string, option = "llm.profiles"): Profile {
         "or give the path of a profile file, ending in .json",
     );
   }
-  const profile = loadProfile(builtinProfileFile(name), `profiles/${name}.json`);
-  if (profile.name !== name) throw new ConfigError(`profiles/${name}.json`, "name", `must be ${name}`);
+}
+
+/**
+ * The built in profile `name` from the text of its file, `profiles/<name>.json`, checked like
+ * `builtinProfile` checks it: the file must name the profile it is the file of.
+ */
+export function builtinProfileFromText(name: string, text: string): Profile {
+  const shown = `profiles/${name}.json`;
+  const profile = profileFromText(text, shown);
+  if (profile.name !== name) throw new ConfigError(shown, "name", `must be ${name}`);
   return profile;
-}
-
-/**
- * The profiles `llm.profiles` lists, in config order: built in ones by name and profile files by
- * path. Two that end up with the same name fail.
- */
-export function configProfiles(refs: readonly LlmProfileRef[], configFile: string): Profile[] {
-  const profiles = refs.map((ref, i) =>
-    "name" in ref ? builtinProfile(ref.name, `${configFile}: llm.profiles[${String(i)}]`) : loadProfile(ref.file, ref.shown),
-  );
-  for (const [i, p] of profiles.entries()) {
-    const first = profiles.findIndex((q) => q.name === p.name);
-    if (first !== i) {
-      throw new ConfigError(
-        configFile,
-        `llm.profiles[${String(i)}]`,
-        `names the profile ${p.name}, which llm.profiles[${String(first)}] names too`,
-      );
-    }
-  }
-  return profiles;
-}
-
-/**
- * The profile `strictgen llm --profile` names: a path ending in .json, a profile file of that
- * name in `llm.profiles`, or a built in one.
- */
-export function namedProfile(config: Config, name: string, path: (p: string) => string): Profile {
-  if (name.endsWith(".json")) return loadProfile(path(name), name);
-  for (const ref of config.llm?.profiles ?? []) {
-    if ("file" in ref && couldName(ref.file, name)) return loadProfile(ref.file, ref.shown);
-  }
-  return builtinProfile(name, "--profile");
-}
-
-/**
- * True when the profile file at `path` could be the profile `name`: its `name` field says so, or,
- * when the file can't be read as a JSON object with a string name, its file name does. So a
- * broken file doesn't stop the printing of another profile, while generate still checks them all.
- */
-function couldName(path: string, name: string): boolean {
-  let value: unknown;
-  try {
-    value = JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    value = undefined;
-  }
-  const written =
-    typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Raw).name : undefined;
-  return typeof written === "string" ? written === name : basename(path) === `${name}.json`;
 }

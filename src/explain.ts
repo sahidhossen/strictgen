@@ -6,7 +6,8 @@ import { formatFiles } from "./format.js";
 import type { Target } from "./main.js";
 import type { Decl, Model, TypeExpr } from "./model.js";
 import type { Json, SchemaSet } from "./schema.js";
-import { CodegenError, defNames, isDefsOnly, isObject, loadSchemas } from "./schema.js";
+import { CodegenError, defNames, isDefsOnly, isObject } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 import { configTargets } from "./targets.js";
 
 /**

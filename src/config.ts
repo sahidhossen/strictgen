@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import type { IdRule } from "./build.js";
 import { DEFAULT_HEADER } from "./common.js";
+import { ConfigError } from "./config-error.js";
 import type { LintAllow } from "./emit-rust.js";
 import { DEFAULT_ALLOW } from "./emit-rust.js";
 import { GO_PACKAGE } from "./emit-go.js";
@@ -13,20 +14,7 @@ import { samePath, within } from "./paths.js";
 /** The config file strictgen reads from the project root unless another path is given. */
 export const CONFIG_FILE = "strictgen.json";
 
-/**
- * A config file that can't be read or breaks a rule of `strictgen.schema.json`. `option` is the
- * path of the offending option, like `targets.go.package`, or `""` for the whole file.
- */
-export class ConfigError extends Error {
-  constructor(
-    readonly file: string,
-    readonly option: string,
-    readonly problem: string,
-  ) {
-    super(`${file}: ${option === "" ? "" : `${option}: `}${problem}`);
-    this.name = "ConfigError";
-  }
-}
+export { ConfigError };
 
 /** How a decoder treats unknown keys: `strict` fails on them, `report` accepts and reports them. */
 export type ReadMode = "strict" | "report";

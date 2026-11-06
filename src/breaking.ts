@@ -23,7 +23,8 @@ import type {
   UntaggedDecl,
 } from "./model.js";
 import type { Json, JsonObject, SchemaSet } from "./schema.js";
-import { CodegenError, isObject, loadSchemas, schemaSet } from "./schema.js";
+import { CodegenError, isObject, schemaSet } from "./schema.js";
+import { loadSchemas } from "./schema-files.js";
 
 /** Who a change breaks. A change that breaks nobody is safe. */
 export type Impact = "all-consumers" | "strict-consumers" | "producers";

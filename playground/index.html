@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+    />
+    <meta name="referrer" content="no-referrer" />
+    <title>strictgen playground</title>
+    <link rel="stylesheet" href="./style.css" />
+    <script type="module" src="./app.js"></script>
+  </head>
+  <body>
+    <header class="top">
+      <div>
+        <h1>strictgen playground</h1>
+        <p class="lede">
+          One JSON Schema in, strict Rust, Go and TypeScript out. Everything runs in this page: the generator, and
+          the generated TypeScript decoders. Nothing you type is sent anywhere. The link holds the page's state in
+          its fragment, after the <code>#</code>, which browsers don't send to the server.
+        </p>
+      </div>
+      <div class="share">
+        <button type="button" id="share">Copy link</button>
+        <span id="share-status" role="status"></span>
+      </div>
+    </header>
+    <p id="banner" class="banner" role="alert" hidden></p>
+
+    <main>
+      <section class="input" aria-labelledby="schemas-title">
+        <div class="head">
+          <h2 id="schemas-title">Schemas</h2>
+          <button type="button" id="add-file">Add file</button>
+        </div>
+        <div id="file-tabs" class="tabs" role="tablist" aria-label="Schema files"></div>
+        <div class="row">
+          <label>File name <input id="file-name" spellcheck="false" autocomplete="off" /></label>
+          <button type="button" id="remove-file">Remove file</button>
+          <span id="file-error" class="error-text" role="status"></span>
+        </div>
+        <textarea id="schema" wrap="off" spellcheck="false" autocomplete="off" aria-label="Schema text"></textarea>
+
+        <fieldset class="settings">
+          <legend>Settings</legend>
+          <label
+            >Read mode
+            <select id="read">
+              <option value="strict">strict: unknown keys fail</option>
+              <option value="report">report: unknown keys are reported</option>
+            </select>
+          </label>
+          <span class="group" role="group" aria-label="LLM profiles">
+            LLM profiles
+            <label><input type="checkbox" id="profile-anthropic" /> anthropic</label>
+            <label><input type="checkbox" id="profile-gemini" /> gemini</label>
+            <label><input type="checkbox" id="profile-openai" /> openai</label>
+          </span>
+          <label><input type="checkbox" id="cleanup" /> LLM cleanup step</label>
+          <span class="group" role="group" aria-label="ID rule">
+            ID rule
+            <label>file <input id="ids-file" size="10" placeholder="common" spellcheck="false" /></label>
+            <label>suffix <input id="ids-suffix" size="6" placeholder="Id" spellcheck="false" /></label>
+          </span>
+        </fieldset>
+        <p id="gen-status" class="status" role="status"></p>
+      </section>
+
+      <section class="decode" aria-labelledby="decode-title">
+        <h2 id="decode-title">Decode a payload</h2>
+        <div class="row">
+          <label>Type <select id="type"></select></label>
+          <label
+            >Decoder
+            <select id="decoder">
+              <option value="normal">JSON</option>
+              <option value="llm">LLM output</option>
+            </select>
+          </label>
+          <span id="entry" class="entry"></span>
+        </div>
+        <textarea id="payload" wrap="off" spellcheck="false" autocomplete="off" aria-label="Payload"></textarea>
+        <div id="result" class="result" aria-live="polite"></div>
+        <p class="note">
+          The decoders are the generated TypeScript, compiled in this page. The conformance suite holds the Rust and Go
+          decoders to the same results: the same accept or reject, the same error and the same unknown keys.
+        </p>
+      </section>
+
+      <section class="outputs" aria-label="Generated code">
+        <p class="note">
+          Rust and Go are shown as generated, before formatting. <code>strictgen generate</code> runs rustfmt and
+          gofmt on them by default, which changes their layout. TypeScript and the LLM schemas are written as shown.
+        </p>
+        <div class="panels">
+          <article class="panel" id="panel-typescript">
+            <div class="head"><h2>TypeScript</h2><select aria-label="TypeScript file"></select></div>
+            <pre><code></code></pre>
+          </article>
+          <article class="panel" id="panel-rust">
+            <div class="head"><h2>Rust</h2><select aria-label="Rust file"></select></div>
+            <pre><code></code></pre>
+          </article>
+          <article class="panel" id="panel-go">
+            <div class="head"><h2>Go</h2><select aria-label="Go file"></select></div>
+            <pre><code></code></pre>
+          </article>
+          <article class="panel" id="panel-llm">
+            <div class="head"><h2>LLM schemas</h2><select aria-label="LLM schema file"></select></div>
+            <pre><code></code></pre>
+          </article>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,7 +1,3 @@
-import { readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-
-import { fsReason, isFsError } from "./fs-error.js";
 import type { RuleId } from "./rules.js";
 
 /** A parsed JSON value. */
@@ -80,33 +76,21 @@ export interface SchemaOptions {
   readonly idBase?: string;
 }
 
-/** Reads every `*.json` schema in `dir`, sorted by file name. */
-export function loadSchemas(dir: string, options: SchemaOptions = {}): SchemaSet {
-  const files: Record<string, JsonObject> = {};
-  let names: string[];
+/**
+ * Parses the text of the schema file `file`, like `order.json`, as `loadSchemas` reads it. Throws
+ * a {@link CodegenError} when it isn't JSON or isn't an object.
+ */
+export function parseSchemaFile(file: string, text: string): JsonObject {
+  let parsed: Json;
   try {
-    names = readdirSync(dir)
-      .filter((f) => f.endsWith(".json"))
-      .sort();
+    parsed = JSON.parse(text) as Json;
   } catch (error) {
-    if (!isFsError(error)) throw error;
-    throw new CodegenError(dir, "read-failed", `can't read the schemas folder: ${fsReason(error)}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new CodegenError(file, "invalid-json", `not valid JSON: ${reason}`);
   }
-  for (const file of names) {
-    let parsed: Json;
-    try {
-      parsed = JSON.parse(readFileSync(join(dir, file), "utf8")) as Json;
-    } catch (error) {
-      if (isFsError(error))
-        throw new CodegenError(file, "read-failed", `can't read it: ${fsReason(error)}`);
-      const reason = error instanceof Error ? error.message : String(error);
-      throw new CodegenError(file, "invalid-json", `not valid JSON: ${reason}`);
-    }
-    if (!isObject(parsed))
-      fail({ file: file.slice(0, -5), pointer: "" }, "invalid-schema", "schema is not an object");
-    files[file.slice(0, -5)] = parsed;
-  }
-  return schemaSet(files, options);
+  if (!isObject(parsed))
+    fail({ file: file.slice(0, -5), pointer: "" }, "invalid-schema", "schema is not an object");
+  return parsed;
 }
 
 /** Describes a `$id` value for an error message. */
