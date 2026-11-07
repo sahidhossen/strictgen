@@ -169,17 +169,16 @@ describe("the bytes as written", () => {
     // The mark allows number spelling only, not an escape too.
     const escaped = { ...spelled, go: accepted(`{"n":1.5E+2,"s":"${BS}u0061"}`) };
     expect(fields(compareRun(run(c, escaped), [mark("number-spelling")]))).toEqual(["raw"]);
-    expect(compareRun(run(c, escaped), [mark("number-spelling"), mark("string-escaping")])).toEqual([]);
   });
 
-  it("allow U+2028 and U+2029 escaped for line-separator-escaping, and nothing else", () => {
+  it("never allow a character escaped in one language and written in another", () => {
+    const rawMarks = MARK_KINDS.filter((k) => !k.startsWith("ts-") && !k.startsWith("go-")).map((k) => mark(k));
     const ls = validCase(`{"s":"${BS}u2028"}`);
     const results = { rust: accepted(`{"s":"${LS}"}`), go: accepted(`{"s":"${BS}u2028"}`), ts: accepted(`{"s":"${LS}"}`) };
-    expect(compareRun(run(ls, results), [mark("line-separator-escaping")])).toEqual([]);
+    expect(fields(compareRun(run(ls, results), rawMarks))).toEqual(["raw"]);
     const html = validCase('{"s":"<"}');
     const go = { ...every(accepted('{"s":"<"}')), go: accepted(`{"s":"${BS}u003c"}`) };
-    expect(fields(compareRun(run(html, go), [mark("line-separator-escaping")]))).toEqual(["raw"]);
-    expect(compareRun(run(html, go), [mark("html-escaping")])).toEqual([]);
+    expect(fields(compareRun(run(html, go), rawMarks))).toEqual(["raw"]);
   });
 
   it("allow another key order for key-order", () => {
@@ -309,7 +308,7 @@ describe("marks that aren't needed", () => {
   it("are found by removing each one", () => {
     const c = validCase('{"n":1.5E+2}');
     const spelled = { rust: accepted('{"n":150.0}'), go: accepted('{"n":1.5E+2}'), ts: accepted('{"n":150}') };
-    const marks = [mark("number-spelling"), mark("line-separator-escaping"), mark("key-order")];
+    const marks = [mark("number-spelling"), mark("key-order")];
     expect(usedMarks(run(c, spelled), marks).map((m) => m.kind)).toEqual(["number-spelling"]);
     expect(usedMarks(run(c, every(accepted('{"n":150}'))), marks)).toEqual([]);
   });
@@ -352,12 +351,9 @@ describe("marks that aren't needed", () => {
   it("covers every kind", () => {
     expect([...MARK_KINDS].sort()).toEqual([
       "go-unmarshal-syntax",
-      "html-escaping",
       "key-order",
-      "line-separator-escaping",
       "number-spelling",
       "serde-outer-parse",
-      "string-escaping",
       "ts-no-bytes-api",
       "ts-unsafe-integer",
     ]);

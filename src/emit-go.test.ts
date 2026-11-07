@@ -957,6 +957,9 @@ describe("reserved names", () => {
     expect(() => go(lib({ decodeError: { type: "string" } }))).toThrow(
       "lib.json#/$defs/decodeError: reserved-name: type name DecodeError is reserved in Go. Hint: rename the $defs entry",
     );
+    expect(() => go(lib({ encode: { type: "string" } }))).toThrow(
+      "lib.json#/$defs/encode: reserved-name: type name Encode is reserved in Go. Hint: rename the $defs entry",
+    );
   });
 
   it("fails on a key that maps to a method the generated type has", () => {

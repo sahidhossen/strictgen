@@ -68,8 +68,8 @@ describe("fuzz marks", () => {
 
   it("apply only where their difference can happen", () => {
     expect(kinds('{"a":"plain","n":12}')).toEqual([]);
-    expect(kinds('{"a":"<b>"}')).toEqual(["html-escaping"]);
-    expect(kinds(`{"a":"${String.fromCharCode(0x2028)}"}`)).toEqual(["line-separator-escaping"]);
+    expect(kinds('{"a":"<b>"}')).toEqual([]);
+    expect(kinds(`{"a":"${String.fromCharCode(0x2028)}"}`)).toEqual([]);
     expect(kinds('{"n":1e-7}')).toEqual(["number-spelling"]);
     expect(kinds('{"n":1.5}')).toEqual(["number-spelling"]);
     expect(kinds('{"n":[1,9007199254740992]}')).toEqual(["ts-unsafe-integer /n/1"]);
@@ -78,12 +78,12 @@ describe("fuzz marks", () => {
   });
 
   it("apply to invalid payloads too, which report mode may accept with an unknown key", () => {
-    expect(kinds('{"a":"&","x":1}', false)).toEqual(["html-escaping"]);
+    expect(kinds('{"n":1.5,"x":1}', false)).toEqual(["number-spelling"]);
   });
 
   it("never apply the kinds the generator's payloads can't need", () => {
-    const never = ["string-escaping", "key-order", "ts-no-bytes-api", "go-unmarshal-syntax", "serde-outer-parse"];
-    expect(MARK_KINDS.filter((k) => !never.includes(k)).sort()).toEqual(["html-escaping", "line-separator-escaping", "number-spelling", "ts-unsafe-integer"]);
+    const never = ["key-order", "ts-no-bytes-api", "go-unmarshal-syntax", "serde-outer-parse"];
+    expect(MARK_KINDS.filter((k) => !never.includes(k)).sort()).toEqual(["number-spelling", "ts-unsafe-integer"]);
   });
 });
 

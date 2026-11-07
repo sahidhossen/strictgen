@@ -91,9 +91,6 @@ const ROOT_CODES: Readonly<Partial<Record<MarkKind, string>>> = {
 /** The spellings each raw-bytes mark allows to differ. */
 const RESPELLINGS: Readonly<Partial<Record<MarkKind, RespellOptions>>> = {
   "number-spelling": { numbers: true },
-  "line-separator-escaping": { chars: (c) => c === 0x2028 || c === 0x2029 },
-  "html-escaping": { chars: (c) => c === 0x3c || c === 0x3e || c === 0x26 },
-  "string-escaping": { chars: () => true },
   "key-order": { keyOrder: true },
 };
 
@@ -103,7 +100,6 @@ function respelling(kinds: readonly MarkKind[]): RespellOptions {
   return {
     numbers: options.some((o) => o.numbers === true),
     keyOrder: options.some((o) => o.keyOrder === true),
-    chars: (c) => options.some((o) => o.chars?.(c) === true),
   };
 }
 

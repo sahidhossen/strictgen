@@ -1345,6 +1345,82 @@ func rest[K comparable, V any](
 	*dst = out
 }
 
+// Encode encodes v as JSON like json.Marshal, then writes every string again the way the
+// generated Rust and TypeScript encoders write it, so all three languages write the same bytes.
+// <, >, &, U+2028 and U+2029 stay as they are, where json.Marshal escapes them, and the strings
+// inside a value kept as raw JSON, like ${GO_NON_NULL}, get the same escapes as any other
+// string. Numbers are written as json.Marshal writes them.
+func Encode(v any) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return respell(data)
+}
+
+// respell writes each string of the JSON text data again with appendString's escapes. A string
+// without a backslash is kept as it is: json.Marshal writes only valid UTF-8 and escapes every
+// control character, so it has nothing to rewrite.
+func respell(data []byte) ([]byte, error) {
+	out := make([]byte, 0, len(data))
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			out = append(out, data[i])
+			continue
+		}
+		end, escaped := i+1, false
+		for data[end] != '"' {
+			if data[end] == '\\' {
+				escaped = true
+				end++
+			}
+			end++
+		}
+		if escaped {
+			var text string
+			if err := json.Unmarshal(data[i:end+1], &text); err != nil {
+				return nil, fmt.Errorf("encoding: %w", err)
+			}
+			out = appendString(out, text)
+		} else {
+			out = append(out, data[i:end+1]...)
+		}
+		i = end
+	}
+	return out, nil
+}
+
+// appendString appends text as a JSON string, the way Rust's serde_json and JavaScript's
+// JSON.stringify write it: " and \ after a backslash, \b, \f, \n, \r and \t, any other
+// character below U+0020 as \u00 and two lowercase hex digits, and every other character as it
+// is.
+func appendString(out []byte, text string) []byte {
+	out = append(out, '"')
+	for i := 0; i < len(text); i++ {
+		switch c := text[i]; c {
+		case '"', '\\':
+			out = append(out, '\\', c)
+		case '\b':
+			out = append(out, '\\', 'b')
+		case '\f':
+			out = append(out, '\\', 'f')
+		case '\n':
+			out = append(out, '\\', 'n')
+		case '\r':
+			out = append(out, '\\', 'r')
+		case '\t':
+			out = append(out, '\\', 't')
+		default:
+			if c < 0x20 {
+				out = append(out, '\\', 'u', '0', '0', "0123456789abcdef"[c>>4], "0123456789abcdef"[c&0xf])
+			} else {
+				out = append(out, c)
+			}
+		}
+	}
+	return append(out, '"')
+}
+
 // checkRequired fails when one of the named required fields is nil.
 func checkRequired(names []string, set []bool) error {
 	for i, ok := range set {

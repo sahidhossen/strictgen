@@ -20,7 +20,7 @@ A name must start with a letter (`unsupported-name`), and two items must not end
 
 ### Reserved names
 
-A field named like a keyword is escaped where the language allows it: `r#type` and `r#match` in Rust (`self_` and `crate_` for the keywords that can't be raw), the exported field name in Go (`Type`, `Func`, `Default`), and the key as it is in TypeScript, which allows keywords as property names. A type named like a keyword, or like a name the generated code uses itself (`Self`, `Option` or `DecodeError` in Rust, `DecodeError` in Go, `Record`, `Partial` or `DecodeError` in TypeScript), fails with `reserved-name` and a hint to rename it. Only the configured targets' names apply, so a type named `Record` is fine when TypeScript isn't a target.
+A field named like a keyword is escaped where the language allows it: `r#type` and `r#match` in Rust (`self_` and `crate_` for the keywords that can't be raw), the exported field name in Go (`Type`, `Func`, `Default`), and the key as it is in TypeScript, which allows keywords as property names. A type named like a keyword, or like a name the generated code uses itself (`Self`, `Option` or `DecodeError` in Rust, `DecodeError` or `Encode` in Go, `Record`, `Partial` or `DecodeError` in TypeScript), fails with `reserved-name` and a hint to rename it. Only the configured targets' names apply, so a type named `Record` is fine when TypeScript isn't a target.
 
 ## The header
 

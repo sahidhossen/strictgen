@@ -214,9 +214,6 @@ export function loadCases(root: string, types: ReadonlySet<string>): Case[] {
  * bytes are equal. Without a mark, the bytes as written must be equal too:
  *
  * - `number-spelling`: a number's spelling, like `150.0`, `1.50E+2` and `150`.
- * - `line-separator-escaping`: U+2028 and U+2029 escaped or written as they are.
- * - `html-escaping`: `<`, `>` and `&` escaped or written as they are.
- * - `string-escaping`: any character of a string or key escaped or written as it is.
  * - `key-order`: the order of an object's keys.
  *
  * Every mark must be needed: a mark whose removal changes nothing in any run fails.
@@ -227,9 +224,6 @@ export type MarkKind =
   | "go-unmarshal-syntax"
   | "serde-outer-parse"
   | "number-spelling"
-  | "line-separator-escaping"
-  | "html-escaping"
-  | "string-escaping"
   | "key-order";
 export const MARK_KINDS: readonly MarkKind[] = [
   "ts-unsafe-integer",
@@ -237,9 +231,6 @@ export const MARK_KINDS: readonly MarkKind[] = [
   "go-unmarshal-syntax",
   "serde-outer-parse",
   "number-spelling",
-  "line-separator-escaping",
-  "html-escaping",
-  "string-escaping",
   "key-order",
 ];
 

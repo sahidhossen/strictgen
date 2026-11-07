@@ -38,6 +38,32 @@ func TestEncodeRefusesUnlistedEnumKey(t *testing.T) {
 	}
 }
 
+// TestEncodeWritesTheBytesRustAndTypeScriptWrite checks that Encode writes <, >, &, U+2028 and
+// U+2029 as they are, gives the strings of a value kept as raw JSON the same escapes as any other
+// string, keeps an escaped backslash before "u2028" as text, and fails where json.Marshal fails.
+func TestEncodeWritesTheBytesRustAndTypeScriptWrite(t *testing.T) {
+	input := `{"id":"123e4567-e89b-12d3-a456-426614174000","tracking":"AB123456789US",` +
+		`"shippedAt":"2024-02-29T23:59:60Z","notes":{"gift":"<a> & b \u2028\u2029 \\u2028"},` +
+		`"extra":["\u0041\/\u00E9\ud83d\ude00\u001F\u003c",{"k":"\\\\"}]}`
+	var shipment Shipment
+	if err := json.Unmarshal([]byte(input), &shipment); err != nil {
+		t.Fatal(err)
+	}
+	data, err := Encode(shipment)
+	want := `{"id":"123e4567-e89b-12d3-a456-426614174000","tracking":"AB123456789US",` +
+		"\"shippedAt\":\"2024-02-29T23:59:60Z\",\"notes\":{\"gift\":\"<a> & b \u2028\u2029 \\\\u2028\"}," +
+		"\"extra\":[\"A/\u00e9\U0001f600\\u001f<\",{\"k\":\"\\\\\\\\\"}]}"
+	if err != nil || string(data) != want {
+		t.Fatalf("got %s, %v, expected %s", data, err, want)
+	}
+	if marshaled, err := json.Marshal(shipment); err != nil || !strings.Contains(string(marshaled), `\u003ca\u003e \u0026 b \u2028`) {
+		t.Fatalf("got %s, %v, expected json.Marshal to escape them", marshaled, err)
+	}
+	if _, err := Encode(Role("root")); err == nil || !strings.Contains(err.Error(), `unknown value "root"`) {
+		t.Fatalf("got %v, expected an unknown value error", err)
+	}
+}
+
 // TestDecodeErrorShape checks the shared error shape, its message and its compact form.
 func TestDecodeErrorShape(t *testing.T) {
 	var event Event

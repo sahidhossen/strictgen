@@ -498,7 +498,7 @@ function goPackages(packages: readonly Package[]): string {
   const sorted = packages.map((p) => p.name).sort();
   const imports = sorted.map((n) => `\t"conformance/${n}"\n`).join("");
   const rows = sorted
-    .map((n) => `\t${JSON.stringify(n)}: {${n}.ConformanceDecode, ${n}.ConformanceLlm, ${n}.ConformanceClean, ${n}.ConformanceFields},\n`)
+    .map((n) => `\t${JSON.stringify(n)}: {${n}.ConformanceDecode, ${n}.ConformanceLlm, ${n}.ConformanceClean, ${n}.ConformanceFields, ${n}.Encode},\n`)
     .join("");
   return `// Written by the conformance runner: the generated packages, by name.
 

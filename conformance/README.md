@@ -74,7 +74,7 @@ Each case runs in six variants of the code generated as most users generate it: 
 - The first error: `path` and `code` with the expectation, and all five fields, `path`, `code`, `expected`, `found` and the message, across the languages
 - The unknown key paths, in input order
 - The re-encoded value. Each language's output is canonicalised by RFC 8785 (keys sorted by UTF-16 code units, numbers written as ECMAScript writes a double, no whitespace) and compared, with each other and with the case itself, without its unknown keys. Integers past 2^53 - 1 keep their exact digits, so two different 64-bit values never compare equal by rounding to the same double
-- The bytes as written. Once the canonical bytes agree, the bytes each language wrote must be equal too, unless the case carries a mark that allows a difference. An integer written `5.0` by one language and `5` by another is such a difference
+- The bytes as written. Once the canonical bytes agree, the bytes each language wrote must be equal too, unless the case carries a mark that allows a difference. An integer written `5.0` by one language and `5` by another is such a difference. Go writes through the generated `Encode`, and `json.Marshal` must write the same JSON value, or the case fails with `crash`
 - A decoder that throws or panics instead of returning an error is always a failure
 
 A failure prints a table with a row per field that differs, a column per language and one for the expectation. Whole documents show the text around their first difference, with its offset, and characters that aren't printable ASCII show as `<U+2028>`, so a character and its escape look different.
@@ -91,7 +91,7 @@ Every case also runs through the LLM decoders (`decodeXFromLlm`, `DecodeXFromLlm
 
 The schema files whose types no provider-ready schema can describe, like a value of any JSON type or a recursive type, are left out of the code generated with `llm`, each listed in the `llm` section of `manifest.json` with the reason. Every other file must project under every profile, and every listed one must fail to.
 
-The shared vectors of [`examples/llm`](../examples/llm) run too, in report mode only, in code generated from its config. LLM decoders are strict in both modes, so strict mode would run the same checks again, and the example's own tests run the vectors in strict mode already: each LLM vector through the LLM decoder, compared with its error's compact form or with the normal JSON of its value, which the normal decoder must take too, and each cleanup vector through the cleanup step, whose output must be exactly the vector's. Go's encoder escapes `<`, `>`, `&`, U+2028 and U+2029, so a vector whose value holds one carries the mark for it, worked out from its text.
+The shared vectors of [`examples/llm`](../examples/llm) run too, in report mode only, in code generated from its config. LLM decoders are strict in both modes, so strict mode would run the same checks again, and the example's own tests run the vectors in strict mode already: each LLM vector through the LLM decoder, compared with its error's compact form or with the normal JSON of its value, which the normal decoder must take too, and each cleanup vector through the cleanup step, whose output must be exactly the vector's. A vector carries no marks: its bytes as written must match in every language.
 
 ## Known differences
 
@@ -111,9 +111,6 @@ Marks that let the bytes as written differ in one way only, once the canonical b
 | Kind | What may differ |
 | ---- | --------------- |
 | `number-spelling` | How a number is spelled, like `150.0`, `1.50E+2` and `150` |
-| `line-separator-escaping` | U+2028 and U+2029 escaped or written as they are. Go escapes them |
-| `html-escaping` | `<`, `>` and `&` escaped or written as they are. Go's `json.Marshal` escapes them |
-| `string-escaping` | Any character of a string or key escaped or written as it is |
 | `key-order` | The order of an object's keys |
 
 ## How it runs
@@ -139,7 +136,7 @@ Each run seeds the payload generator of `src/payloads.ts` from the seed and its 
 
 Nobody knows the right answer for a random payload, so the languages must agree with each other on every field compared above, and with the generator's labels: a valid payload is accepted with no unknown keys and encodes to its own canonical bytes, and a near miss fails with the generator's path and code, in Rust and Go as in TypeScript. In report mode the unknown key's payload is accepted with that one key reported. Near misses of `multipleOf` include values on both sides of zero, where a remainder changes sign.
 
-A fuzz payload has no entry in `marks.json`, so its marks come from the payload: `html-escaping` and `line-separator-escaping` when it holds `<`, `>`, `&`, U+2028 or U+2029, `number-spelling` when a number has a fraction or an exponent, and `ts-unsafe-integer` at the first integer past 2^53 - 1. The marked language must still do exactly what the kind states, but a fuzz mark need not be needed, since most payloads that could differ don't.
+A fuzz payload has no entry in `marks.json`, so its marks come from the payload: `number-spelling` when a number has a fraction or an exponent, and `ts-unsafe-integer` at the first integer past 2^53 - 1. The marked language must still do exactly what the kind states, but a fuzz mark need not be needed, since most payloads that could differ don't.
 
 A disagreement fails the run. It prints the seed, the run, what the generator changed, the payload as JSON and as hex, and the table, then shrinks the payload: it removes keys and items, shortens strings and keys and simplifies numbers, one step at a time, in a fixed order, keeping each step only while the languages still disagree on the same fields, split the same way (like `result: go | rust,ts`). A payload read through the LLM decoders is shrunk in its normal JSON and projected again. When the languages agree with each other but not with the generator's label, there is nothing to shrink, and the label is checked against [`docs/error-codes.md`](../docs/error-codes.md).
 

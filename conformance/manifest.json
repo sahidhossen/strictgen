@@ -3,7 +3,7 @@
     "Attributes": {"valid": 1, "invalid": 1},
     "BankAccount": {"valid": 1, "invalid": 0},
     "BankRefund": {"valid": 1, "invalid": 1},
-    "Bundle": {"valid": 8, "invalid": 13},
+    "Bundle": {"valid": 9, "invalid": 13},
     "Capped": {"valid": 1, "invalid": 1},
     "Card": {"valid": 1, "invalid": 1},
     "CardRefund": {"valid": 1, "invalid": 1},
