@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { closeSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
-import { devNull, tmpdir } from "node:os";
+import { closeSync, existsSync, mkdtempSync, openSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_HEADER } from "./common.js";
@@ -13,6 +13,11 @@ export interface Formatter {
   /** The command, looked up on `PATH`. */
   readonly command: string;
   readonly args: readonly string[];
+  /**
+   * The option that names a config file, when the formatter reads one. It is given an empty file
+   * in a temporary folder, so no project or user config changes the output.
+   */
+  readonly emptyConfig?: { readonly option: string; readonly file: string };
   /**
    * Arguments for a quick run that shows the formatter works, or `undefined` when finding the
    * command is enough. A rustup proxy named `rustfmt` exists even when the component isn't
@@ -27,12 +32,14 @@ export interface Formatter {
 
 /**
  * rustfmt always formats with its defaults and edition 2024: `--config-path` points at an empty
- * file, so no `rustfmt.toml`, of the project or of the user, changes the output. That keeps
- * `strictgen check` giving the same answer on every machine.
+ * `rustfmt.toml` in a temporary folder, so no `rustfmt.toml`, of the project or of the user,
+ * changes the output. That keeps `strictgen check` giving the same answer on every machine. A
+ * real file, not the null device: rustfmt on Windows can't open `\\.\nul` as a config.
  */
 const RUSTFMT: Formatter = {
   command: "rustfmt",
-  args: ["--edition", "2024", "--config-path", devNull],
+  args: ["--edition", "2024"],
+  emptyConfig: { option: "--config-path", file: "rustfmt.toml" },
   probe: ["--version"],
   language: "Rust",
   option: "format.rust",
@@ -131,6 +138,17 @@ function spawn(
   }
 }
 
+/**
+ * The arguments of one formatter run: its own, then its config option with an empty config file,
+ * written in the scratch folder the first time.
+ */
+export function formatterArgs(formatter: Formatter, scratch: () => string): string[] {
+  if (formatter.emptyConfig === undefined) return [...formatter.args];
+  const config = join(scratch(), formatter.emptyConfig.file);
+  if (!existsSync(config)) writeFileSync(config, "");
+  return [...formatter.args, formatter.emptyConfig.option, config];
+}
+
 /** True when the spawn error means the command isn't there, or can't be run. */
 function notFound(error: NodeJS.ErrnoException | undefined): boolean {
   return error?.code === "ENOENT" || error?.code === "EACCES";
@@ -178,7 +196,7 @@ export function formatFiles(
     return files.map((file) => {
       const formatter = formatterFor(file.path, format);
       if (formatter === undefined || !available(formatter)) return file;
-      const result = spawn(formatter, formatter.args, file.contents, scratch, options);
+      const result = spawn(formatter, formatterArgs(formatter, scratch), file.contents, scratch, options);
       const fail = (output: string): never => {
         throw new FormatterFailedError(formatter, file.path, output);
       };

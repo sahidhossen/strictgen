@@ -17,3 +17,26 @@ updates:
     labels: ["ci"]
     commit-message:
       prefix: ci
+  # The Rust conformance driver and example crates pin serde, serde_json and regex in Cargo.lock.
+  - package-ecosystem: cargo
+    directories:
+      - /conformance/driver/rust
+      - /examples/*/rust
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        patterns: ["*"]
+    labels: ["ci"]
+    commit-message:
+      prefix: chore
+  # The Go driver and examples use only the standard library today; this covers any module they add.
+  - package-ecosystem: gomod
+    directories:
+      - /conformance/driver/go
+      - /examples/*/go
+    schedule:
+      interval: weekly
+    labels: ["ci"]
+    commit-message:
+      prefix: chore

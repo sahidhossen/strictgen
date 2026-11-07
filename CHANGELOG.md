@@ -74,6 +74,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - User docs: a README with a 30 second example, and `docs/cli.md`, `docs/schemas.md` (the subset, and every generation rule with an example and its fix), `docs/mapping.md` (every construct per language), per-code examples in `docs/error-codes.md`, per-profile tables and a worked example in `docs/llm.md`, and `docs/comparison.md`
 - `examples/quickstart`: one schema, its generated code and a decoding program in Rust, Go and TypeScript, and `examples/fix`, a schema for `strictgen fix`
 - `pnpm docs` writes every snippet of the README and docs from real output, the error lines from running the Rust, Go and TypeScript decoders, and `pnpm docs:check` fails in CI when one is out of date
+- Single binaries for macOS (arm64, x64), Linux (x64, arm64) and Windows (x64), built as Node single executable applications with the built in profiles embedded, so Rust and Go projects don't need Node. CI builds each on its own platform and checks it against `node dist/cli.js`: the same `--version`, `--help` and `llm --profile openai` output, `check` on two examples, and byte-identical `generate` output on every example
+- The npm package: `bin`, `exports` (the API from `dist/index.js` with its types), `files` (only the CLI and API modules, `profiles/`, `strictgen.schema.json` so a config's `$schema` can point into `node_modules`, and the docs files; not the conformance runner or docs tools), `publishConfig.provenance` and a `prepublishOnly` guard that stops `npm publish` outside the release workflow's tag run. CI checks the exact file list and installs the tarball offline to run it
+- A release workflow: a `v<version>` tag publishes to npm with provenance and creates a GitHub release with the binaries, `SHA256SUMS` and the changelog section, only from a public repository with `NPM_TOKEN` set, after checking the tag, the changelog and all of CI. Run by hand with `dry_run`, it builds everything and publishes nothing. The versioning policy is in `CONTRIBUTING.md`
 
 ### Changed
 
@@ -111,6 +114,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- On Windows, `strictgen generate` and `check` failed on every Rust file: rustfmt was given the null device as its config path and refused it ("unable to find a config file for the given path"). It now gets an empty `rustfmt.toml` in a temporary folder, on every platform. This affected the npm package on Windows too, not only the binary
 - The test that runs the built command with its output closed compiled the command inside the test, which flaked once under load. It compiles once in a hook with its own timeout
 - The generated Go JSON parser declares its own error codes in `helpers.go`, `invalid_json`, `duplicate_key` and `too_deep`, so the Go output compiles
 - A pattern of many large repeats in a row, like eight `.{1000}`, passed generation and Go, but Rust's `regex` refused to compile it and every pattern check panicked. Generation now bounds the written-out size of a pattern, and the generated Rust sets the `regex` size limit itself
