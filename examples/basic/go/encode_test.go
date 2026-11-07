@@ -64,6 +64,26 @@ func TestEncodeWritesTheBytesRustAndTypeScriptWrite(t *testing.T) {
 	}
 }
 
+// TestEncodeRefusesRawValuesRustCouldNotWrite checks that a value kept as raw JSON, built by
+// hand, fails to encode with a string holding a lone surrogate or bytes that aren't UTF-8,
+// which json.Marshal would write as U+FFFD or as they are, and that a surrogate pair still
+// encodes.
+func TestEncodeRefusesRawValuesRustCouldNotWrite(t *testing.T) {
+	for _, raw := range []string{`"\ud800"`, `"a\udc00"`, `["\ud83dx"]`, `{"k":"\ud83dA"}`} {
+		if data, err := Encode(NonNullJson(raw)); err == nil || !strings.Contains(err.Error(), "lone surrogate") {
+			t.Fatalf("%s: got %s, %v, expected a lone surrogate error", raw, data, err)
+		}
+	}
+	for _, raw := range []string{"\"a\xffb\"", "{\"k\xc3\":1}"} {
+		if data, err := Encode(NonNullJson(raw)); err == nil || !strings.Contains(err.Error(), "isn't valid UTF-8") {
+			t.Fatalf("%q: got %s, %v, expected an invalid UTF-8 error", raw, data, err)
+		}
+	}
+	if data, err := Encode(NonNullJson(`"😀\\ud800"`)); err != nil || string(data) != "\"\U0001f600\\\\ud800\"" {
+		t.Fatalf("got %s, %v, expected the pair as one character and the escaped backslash kept", data, err)
+	}
+}
+
 // TestDecodeErrorShape checks the shared error shape, its message and its compact form.
 func TestDecodeErrorShape(t *testing.T) {
 	var event Event

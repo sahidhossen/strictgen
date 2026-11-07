@@ -928,8 +928,10 @@ func Encode(v any) ([]byte, error) {
 }
 
 // respell writes each string of the JSON text data again with appendString's escapes. A string
-// without a backslash is kept as it is: json.Marshal writes only valid UTF-8 and escapes every
-// control character, so it has nothing to rewrite.
+// without a backslash is kept as it is, since it has nothing to rewrite. json.Marshal writes
+// strings of Go values as valid UTF-8 with every control character escaped, but copies the
+// strings of a value kept as raw JSON as they are, so a string with invalid UTF-8 or a lone
+// surrogate fails, as it does in Rust, instead of being written as U+FFFD.
 func respell(data []byte) ([]byte, error) {
 	out := make([]byte, 0, len(data))
 	for i := 0; i < len(data); i++ {
@@ -945,18 +947,61 @@ func respell(data []byte) ([]byte, error) {
 			}
 			end++
 		}
+		token := data[i : end+1]
+		if !utf8.Valid(token) {
+			return nil, errors.New("encoding: a value kept as raw JSON has a string that isn't valid UTF-8")
+		}
 		if escaped {
+			if unit, ok := loneSurrogate(token); ok {
+				return nil, fmt.Errorf("encoding: a value kept as raw JSON has a string with the lone surrogate \\u%04x", unit)
+			}
 			var text string
-			if err := json.Unmarshal(data[i:end+1], &text); err != nil {
+			if err := json.Unmarshal(token, &text); err != nil {
 				return nil, fmt.Errorf("encoding: %w", err)
 			}
 			out = appendString(out, text)
 		} else {
-			out = append(out, data[i:end+1]...)
+			out = append(out, token...)
 		}
 		i = end
 	}
 	return out, nil
+}
+
+// loneSurrogate finds the first \u escape of a surrogate that isn't half of a pair in the JSON
+// string token, which encoding/json would read as U+FFFD.
+func loneSurrogate(token []byte) (int, bool) {
+	unit := func(at int) int {
+		v, err := strconv.ParseUint(string(token[at:at+4]), 16, 16)
+		if err != nil {
+			return -1
+		}
+		return int(v)
+	}
+	for i := 1; i < len(token)-1; i++ {
+		if token[i] != '\\' {
+			continue
+		}
+		i++
+		if token[i] != 'u' {
+			continue
+		}
+		u := unit(i + 1)
+		i += 4
+		switch {
+		case u >= 0xDC00 && u <= 0xDFFF:
+			return u, true
+		case u >= 0xD800 && u <= 0xDBFF:
+			if i+6 >= len(token) || token[i+1] != '\\' || token[i+2] != 'u' {
+				return u, true
+			}
+			if low := unit(i + 3); low < 0xDC00 || low > 0xDFFF {
+				return u, true
+			}
+			i += 6
+		}
+	}
+	return 0, false
 }
 
 // appendString appends text as a JSON string, the way Rust's serde_json and JavaScript's
