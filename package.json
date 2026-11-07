@@ -49,6 +49,7 @@
     "!dist/conformance/",
     "!dist/snippets*",
     "profiles/",
+    "strictgen.schema.json",
     "CHANGELOG.md"
   ],
   "publishConfig": {

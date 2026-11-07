@@ -126,6 +126,7 @@ jobs:
           pattern: binary-*
           path: release
           merge-multiple: true
+      # The tarball packed here, from this build, is the one the npm job publishes.
       - name: SHA-256 sums, release notes and the npm tarball
         run: |
           test "$(ls release | wc -l)" -eq 5
@@ -134,7 +135,9 @@ jobs:
           notes=()
           if [[ "$PUBLISH" != "true" ]]; then notes=(--dry-run); fi
           node scripts/release-notes.mjs "$VERSION" "${notes[@]}" > release/NOTES.md
+          printf '\nThe binaries are Node single executable applications built with Node %s.\n' "$(cat .github/binary-node-version)" >> release/NOTES.md
           npm pack --ignore-scripts --pack-destination release
+          test -f "release/strictgen-$VERSION.tgz"
         env:
           VERSION: ${{ needs.guard.outputs.version }}
           PUBLISH: ${{ needs.guard.outputs.publish }}
@@ -155,23 +158,33 @@ jobs:
       # The OIDC token npm signs the provenance statement with.
       id-token: write
     steps:
+      # The API's answer counts too: both must say public, or nothing is published.
+      - name: Check that the repository is public
+        run: |
+          visibility="$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)"
+          if [[ "$visibility" != "public" ]]; then
+            echo "::error::The repository is $visibility, so nothing is published."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 10
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
           registry-url: https://registry.npmjs.org
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build
-      # From the package folder, so prepublishOnly (scripts/publish-guard.mjs) runs. A version
-      # with a prerelease part, like 1.0.0-rc.1, goes to the next dist-tag instead of latest.
+      - uses: actions/download-artifact@v4
+        with:
+          name: release
+          path: release
+      # npm doesn't run prepublishOnly for a tarball, so the guard runs here first. The tarball is
+      # the one assemble packed, not a new build. A version with a prerelease part, like
+      # 1.0.0-rc.1, goes to the next dist-tag instead of latest.
       - name: npm publish
         run: |
+          node scripts/publish-guard.mjs
           if [[ "$VERSION" == *-* ]]; then tag=next; else tag=latest; fi
-          npm publish --provenance --access public --tag "$tag"
+          npm publish "release/strictgen-$VERSION.tgz" --provenance --access public --tag "$tag"
         env:
           VERSION: ${{ needs.guard.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -185,6 +198,15 @@ jobs:
       # Creating a release and uploading its files.
       contents: write
     steps:
+      - name: Check that the repository is public
+        run: |
+          visibility="$(gh api "repos/$GITHUB_REPOSITORY" --jq .visibility)"
+          if [[ "$visibility" != "public" ]]; then
+            echo "::error::The repository is $visibility, so no release is created."
+            exit 1
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: release

@@ -2,38 +2,55 @@ name: Binaries
 
 # Builds the strictgen binary on each platform's own runner (Node single executable
 # applications, see scripts/binary-build.mjs), checks it against `node dist/cli.js` with
-# scripts/binary-smoke.mjs, and keeps it as a workflow artifact for seven days. CI runs this on
-# every pull request; the release workflow runs it through CI and attaches the binaries to the
-# release. It never publishes anything itself.
+# scripts/binary-smoke.mjs, and keeps it as a workflow artifact for seven days. CI runs this; the
+# release workflow runs it through CI and attaches the binaries to the release. It never
+# publishes anything itself.
+#
+# With `full` false only linux-x64 is built, which CI asks for on pull requests that touch
+# nothing the binaries depend on, since macOS and Windows runners cost more.
 on:
   workflow_call:
+    inputs:
+      full:
+        description: Build every platform, not only linux-x64
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 jobs:
+  targets:
+    name: Pick the platforms
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.pick.outputs.matrix }}
+    steps:
+      - id: pick
+        run: |
+          all='[
+            {"target":"macos-arm64","runner":"macos-15","file":"strictgen-macos-arm64"},
+            {"target":"macos-x64","runner":"macos-15-intel","file":"strictgen-macos-x64"},
+            {"target":"linux-x64","runner":"ubuntu-24.04","file":"strictgen-linux-x64"},
+            {"target":"linux-arm64","runner":"ubuntu-24.04-arm","file":"strictgen-linux-arm64"},
+            {"target":"windows-x64","runner":"windows-2025","file":"strictgen-windows-x64.exe"}
+          ]'
+          if [[ "$FULL" == "true" ]]; then
+            echo "matrix=$(jq -c . <<<"$all")" >> "$GITHUB_OUTPUT"
+          else
+            echo "matrix=$(jq -c '[.[] | select(.target == "linux-x64")]' <<<"$all")" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          FULL: ${{ inputs.full }}
+
   binary:
     name: Binary (${{ matrix.target }})
+    needs: targets
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: macos-arm64
-            runner: macos-15
-            file: strictgen-macos-arm64
-          - target: macos-x64
-            runner: macos-15-intel
-            file: strictgen-macos-x64
-          - target: linux-x64
-            runner: ubuntu-24.04
-            file: strictgen-linux-x64
-          - target: linux-arm64
-            runner: ubuntu-24.04-arm
-            file: strictgen-linux-arm64
-          - target: windows-x64
-            runner: windows-2025
-            file: strictgen-windows-x64.exe
+        include: ${{ fromJSON(needs.targets.outputs.matrix) }}
     defaults:
       run:
         shell: bash
@@ -46,10 +63,11 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      # The binary embeds the Node that runs the build.
+      # The binary embeds the Node that runs the build: the exact version in this file, which the
+      # release notes name too.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .github/binary-node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The smoke test runs check, which formats with rustfmt and gofmt like the examples job.
@@ -62,7 +80,7 @@ jobs:
           cache: false
       - run: pnpm build
       - name: Build the binary
-        run: node scripts/binary-build.mjs --out dist-bin
+        run: node scripts/binary-build.mjs --out dist-bin --node "$(cat .github/binary-node-version)"
       # --version, --help, llm --profile openai, check on two examples, and generate on every
       # example, each compared with node dist/cli.js.
       - name: Smoke test the binary

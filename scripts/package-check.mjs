@@ -27,7 +27,7 @@ import ts from "typescript";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Always in the package. */
-const FIXED = ["CHANGELOG.md", "LICENSE", "README.md", "package.json"];
+const FIXED = ["CHANGELOG.md", "LICENSE", "README.md", "package.json", "strictgen.schema.json"];
 /** Folders of src/ and why none of their modules ship. */
 const SRC_FOLDERS = {
   __snapshots__: "test snapshots",

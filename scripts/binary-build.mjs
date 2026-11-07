@@ -5,7 +5,7 @@
  * running `node` binary. The binary needs no Node, npm or package folder; `rustfmt` and `gofmt`
  * stay external, found on the PATH as they are for the npm package.
  *
- *   pnpm build && node scripts/binary-build.mjs [--out <dir>]     (default dist-bin, which git ignores)
+ *   pnpm build && node scripts/binary-build.mjs [--out <dir>] [--node <version>]   (default dist-bin, which git ignores)
  *
  * It writes `strictgen-<os>-<arch>` (`.exe` on Windows), named after `process.platform` and
  * `process.arch`, and prints its path. `package.json` and the built in profiles are embedded as
@@ -43,14 +43,24 @@ function run(command, args) {
   if (result.status !== 0) fail(`${command} ${args.join(" ")} exited with ${String(result.status)}`);
 }
 
-function outDir(argv) {
-  if (argv.length === 0) return join(ROOT, "dist-bin");
-  if (argv.length === 2 && argv[0] === "--out" && argv[1] !== "") return resolve(argv[1]);
-  fail("usage: node scripts/binary-build.mjs [--out <dir>]");
+/** The options: `--out <dir>`, and `--node <version>`, the Node version the build must run on. */
+function options(argv) {
+  const usage = "usage: node scripts/binary-build.mjs [--out <dir>] [--node <version>]";
+  const found = { out: join(ROOT, "dist-bin"), node: undefined };
+  for (let i = 0; i < argv.length; i += 2) {
+    const value = argv[i + 1];
+    if (value === undefined || value === "") fail(usage);
+    if (argv[i] === "--out") found.out = resolve(value);
+    else if (argv[i] === "--node") found.node = value.trim();
+    else fail(usage);
+  }
+  return found;
 }
 
 async function main() {
-  const out = outDir(process.argv.slice(2));
+  const { out, node } = options(process.argv.slice(2));
+  // The binary embeds this Node, so CI pins it and the release notes name it.
+  if (node !== undefined && process.version !== `v${node}`) fail(`running on Node ${process.version}, not v${node}`);
   const name = TARGETS[`${process.platform}-${process.arch}`];
   if (name === undefined) fail(`no binary for ${process.platform}-${process.arch}`);
   // The asset list comes from the compiled code, so the embedded files are the ones it reads.

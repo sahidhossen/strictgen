@@ -306,7 +306,7 @@ describe("formatters", () => {
     expect(files["go/.gitattributes"]).not.toMatch(/formatted/);
     expect(files["ts/order.ts"]).not.toMatch(/formatted/);
     const calls = readFileSync(log, "utf8").trim().split("\n");
-    expect(calls.filter((c) => c.startsWith("args: --edition 2024 --config-path "))).toHaveLength(3);
+    expect(calls.filter((c) => c.startsWith("args: --edition 2024 --config-path ") && c.endsWith("rustfmt.toml"))).toHaveLength(3);
     expect(calls.filter((c) => c.trim() === "args:")).toHaveLength(2);
     expect(calls.filter((c) => c === "args: --version")).toHaveLength(1);
   });

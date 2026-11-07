@@ -16,7 +16,7 @@ A `strictgen.json` at the project root drives everything. Paths are relative to 
 }
 ```
 
-[`strictgen.schema.json`](../strictgen.schema.json) documents every option and its default. [`examples/basic`](../examples/basic) has a full example, [`examples/report`](../examples/report) one in report mode, and [`examples/llm`](../examples/llm) one with LLM provider schemas and the cleanup step.
+[`strictgen.schema.json`](../strictgen.schema.json) documents every option and its default. The npm package ships it, so with strictgen installed, `"$schema": "./node_modules/strictgen/strictgen.schema.json"` gives an editor the schema of the version you use, without a network request. [`examples/basic`](../examples/basic) has a full example, [`examples/report`](../examples/report) one in report mode, and [`examples/llm`](../examples/llm) one with LLM provider schemas and the cleanup step.
 
 ### Each language
 

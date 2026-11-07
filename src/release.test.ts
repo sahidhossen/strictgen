@@ -33,6 +33,26 @@ function script(name: string, args: readonly string[], env: NodeJS.ProcessEnv = 
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
+/** The scripts of a workflow's `run: |` blocks, without their indentation. */
+function runBlocks(workflow: string): string[] {
+  const lines = workflow.split("\n");
+  const blocks: string[] = [];
+  for (const [i, line] of lines.entries()) {
+    const m = /^(\s*)(?:- )?run: \|\s*$/.exec(line);
+    if (m === null) continue;
+    const body: string[] = [];
+    let indent: number | undefined;
+    for (const next of lines.slice(i + 1)) {
+      const width = next.length - next.trimStart().length;
+      if (next.trim() !== "" && width <= (m[1] ?? "").length) break;
+      indent ??= next.trim() === "" ? undefined : width;
+      body.push(next.slice(indent ?? 0));
+    }
+    blocks.push(body.join("\n").trimEnd());
+  }
+  return blocks;
+}
+
 describe("package files", () => {
   it("lists package.json and every built in profile, and each exists", () => {
     expect([...PACKAGE_FILES]).toEqual(["package.json", ...BUILTIN_PROFILES.map((n) => `profiles/${n}.json`)]);
@@ -93,6 +113,17 @@ describe("publish guard", () => {
       const { [key]: _, ...without } = release;
       expect(script("publish-guard.mjs", [], without).status, `${key} missing`).toBe(1);
       expect(script("publish-guard.mjs", [], { ...release, [key]: wrong[key] }).status, `${key} wrong`).toBe(1);
+    }
+  }, SPAWNS);
+
+  it("lets every CI step that runs it pass in an ordinary run and inside the release's tag run", () => {
+    const steps = runBlocks(read(".github/workflows/ci.yml")).filter((s) => s.includes("publish-guard.mjs"));
+    expect(steps.length).toBeGreaterThan(0);
+    for (const env of [{ CI: "true", GITHUB_ACTIONS: "true", GITHUB_REF: "refs/pull/1/merge", GITHUB_REPOSITORY: repository }, release]) {
+      for (const step of steps) {
+        const r = spawnSync("bash", ["-e", "-c", step], { cwd: ROOT, encoding: "utf8", env: { PATH: process.env.PATH ?? "", ...env } });
+        expect([r.status, r.stdout, env.GITHUB_REF], step).toEqual([0, "", env.GITHUB_REF]);
+      }
     }
   }, SPAWNS);
 
@@ -159,7 +190,7 @@ describe("release workflow", () => {
   });
 
   it("publishes only from jobs gated on the guard, a tag push and a public repository", () => {
-    for (const [name, step] of [["npm", "npm publish --provenance"], ["github-release", "gh release create"]] as const) {
+    for (const [name, step] of [["npm", "npm publish \"release/strictgen-$VERSION.tgz\" --provenance"], ["github-release", "gh release create"]] as const) {
       const text = job(name);
       expect(text).toContain(gate);
       expect(text).toContain(step);

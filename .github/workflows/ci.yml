@@ -58,17 +58,49 @@ jobs:
       # The exact file list of npm pack, then the tarball installed offline into an empty project,
       # where npx strictgen --version, a built in profile and import("strictgen") must work.
       - run: node scripts/package-check.mjs
-      # npm publish stops in its prepublishOnly guard outside the release workflow's tag run.
-      - name: The publish guard refuses this run
+      # npm publish stops in its prepublishOnly guard outside the release workflow's tag run. The
+      # release workflow runs this file too, and a called workflow sees the caller's GITHUB_REF and
+      # GITHUB_WORKFLOW_REF, so they are set to a branch here: the guard must refuse that even
+      # inside a real release run.
+      - name: The publish guard refuses a run that isn't a release
         run: |
-          if node scripts/publish-guard.mjs; then
+          if GITHUB_REF=refs/heads/not-a-release GITHUB_WORKFLOW_REF=not-a-release node scripts/publish-guard.mjs; then
             echo "The publish guard let a run that isn't a release through."
             exit 1
           fi
 
+  # Every platform's binary on pushes to main, tags and release dry runs, and on pull requests
+  # that change what the binaries depend on. Other pull requests build linux-x64 only.
+  binary-scope:
+    name: Pick the binaries to build
+    runs-on: ubuntu-latest
+    outputs:
+      full: ${{ steps.pick.outputs.full }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: pick
+        run: |
+          if [[ "$EVENT" != "pull_request" ]]; then
+            echo "full=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed="$(git diff --name-only "origin/$BASE...HEAD")"
+          if grep -qE "$BINARY_INPUTS" <<<"$changed"; then full=true; else full=false; fi
+          echo "Every platform: $full"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.base_ref }}
+          BINARY_INPUTS: '^(scripts/binary-[^/]*|src/package-files\.ts|src/format\.ts|package\.json|pnpm-lock\.yaml|\.github/workflows/binaries\.yml|\.github/binary-node-version)$'
+
   binaries:
     name: Binaries
+    needs: binary-scope
     uses: ./.github/workflows/binaries.yml
+    with:
+      full: ${{ needs.binary-scope.outputs.full == 'true' }}
 
   examples:
     name: Examples are up to date

@@ -4,12 +4,12 @@
 
 ## A bug with nothing pointing at it
 
-In August 2026, a [pull request to the dstack SDKs](https://github.com/Dstack-TEE/dstack/pull/1024) tracked down why apps failed attestation. Each SDK computes a compose hash, the hash that identifies an app, from a JSON document. For the same document, the Go SDK computed a different hash than the JavaScript and Python SDKs. The SDK registered one hash, the guest measured another, and nothing said why.
+In August 2026, a [pull request to the dstack SDKs](https://github.com/Dstack-TEE/dstack/pull/1024), still open, tracked down why apps failed attestation. Each SDK computes a compose hash, the hash that identifies an app, from a JSON document. For the same document, the Go SDK computed a different hash than the JavaScript and Python SDKs. The SDK registered one hash, the guest measured another, and nothing said why.
 
-There were two causes, both in how Go read and wrote the document:
+It names two causes. It covers only the Go side, so both are in how the Go SDK read and wrote the document:
 
 1. **Keys went missing.** Go decoded the document into a fixed struct and encoded the struct again. Keys the struct didn't declare were gone before hashing, without an error.
-2. **Characters were written differently.** Go's `encoding/json` escapes `<`, `>` and `&` as `<`, `>` and `&`. JavaScript and Python write them as they are. A [follow-up fix](https://github.com/Dstack-TEE/dstack/pull/1479), merged in October, covered U+2028 and U+2029, which Go escapes even with HTML escaping off.
+2. **Characters were written differently.** Go's `encoding/json` escapes `<`, `>` and `&` as `\u003c`, `\u003e` and `\u0026`. JavaScript and Python write them as they are. A [follow-up fix](https://github.com/Dstack-TEE/dstack/pull/1479) for U+2028 and U+2029, which Go escapes even with HTML escaping off, is the part that was merged, in October.
 
 Neither is a bug in Go, JavaScript or Python. Each language did what its JSON library does. The bug is that three programs read one document three ways, and nobody checked that they agreed.
 
@@ -82,7 +82,7 @@ The second cause is about writing, not reading. Take this conformance case, a pa
 ```
 <!-- /snippet -->
 
-All three languages accept it and hold the same string. But the generated Go writes it the way `encoding/json` does, as `"<a & b>"`, while Rust and TypeScript write the characters. U+2028 and U+2029 differ the same way. So a hash of the bytes each language writes would still differ between Go and the others.
+All three languages accept it and hold the same string. But the generated Go writes it the way `encoding/json` does, as `"\u003ca \u0026 b\u003e"`, while Rust and TypeScript write the characters. U+2028 and U+2029 differ the same way. So a hash of the bytes each language writes would still differ between Go and the others.
 
 strictgen doesn't hide this. The [conformance suite](../conformance/README.md) runs every case through all three languages and compares what each one writes, in canonical form (RFC 8785) and byte for byte. The canonical bytes must always match. Raw bytes may differ only where [`conformance/marks.json`](../conformance/marks.json) names the case, the kind of difference and its reason, like `html-escaping` for this case and `line-separator-escaping` for U+2028, and a mark no case needs fails the run.
 
