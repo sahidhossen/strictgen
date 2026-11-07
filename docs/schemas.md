@@ -1,6 +1,6 @@
 # Supported schemas
 
-strictgen reads a strict subset of [JSON Schema 2020-12](https://json-schema.org/draft/2020-12). Everything in the subset maps the same way in Rust, Go and TypeScript. Anything outside it fails generation with the file, the JSON Pointer, a stable rule id and, when there is an obvious fix, a hint. The aim is that nothing is ignored quietly, so a schema that generates means what every language does with it. Today [two object keywords](#not-checked-yet) are the exception: they are read, but not yet checked.
+strictgen reads a strict subset of [JSON Schema 2020-12](https://json-schema.org/draft/2020-12). Everything in the subset maps the same way in Rust, Go and TypeScript. Anything outside it fails generation with the file, the JSON Pointer, a stable rule id and, when there is an obvious fix, a hint. The aim is that nothing is ignored quietly, so a schema that generates means what every language does with it.
 
 Already have schemas that don't fit? [`strictgen fix`](#moving-an-existing-schema-in) rewrites most of them into the subset.
 
@@ -49,21 +49,19 @@ Shared types live in `$defs` at the root of a file. A `$ref` takes one of three 
 | `<base><file>.json` | The root type of another file, like `https://example.com/schemas/v1/user.json` |
 | `<base><file>.json#/$defs/<name>` | A def of another file |
 
-A def name is letters and digits only, so a `$ref` can name it. A `$ref` into anything else, like `#/properties/id`, fails with `ref-form`. Beside a `$ref`, only `description`, `$comment` and properties set to `false` (a key the target must not have) are allowed (`ref-siblings`): constraints go on the def itself. `$defs` is allowed only at the root of a file, and `definitions` not at all (`unsupported-keyword`); `strictgen fix` moves both.
+A def name is letters and digits only, so a `$ref` can name it. A `$ref` into anything else, like `#/properties/id`, fails with `ref-form`. Beside a `$ref`, only `description`, `$comment`, the def's own `type` (`type-mismatch` for another) and properties set to `false` are allowed (`ref-siblings`): constraints go on the def itself. A key set to `false` must be one the def already rejects, like a key a closed object doesn't list, since no decoder checks it beside the `$ref`. `$defs` is allowed only at the root of a file, and `definitions` not at all (`unsupported-keyword`); `strictgen fix` moves both.
 
 ## Closed objects
 
-Every object is closed: it lists its keys in `properties`, and has `"additionalProperties": false`, or `"unevaluatedProperties": false` when it has an `allOf`, `oneOf`, `anyOf` or `if` beside its properties (`open-object`, `closed-with-allof`). That is what lets every decoder reject or report an unknown key, rather than keep it in one language and drop it in another.
+Every object is closed: it lists its keys in `properties`, and has `"additionalProperties": false`, or `"unevaluatedProperties": false` when it has an `allOf` or `oneOf` beside its properties (`open-object`, `closed-with-allof`). That is what lets every decoder reject or report an unknown key, rather than keep it in one language and drop it in another.
 
-An object takes other keys only as data, with a schema for their values: `"additionalProperties": { "type": "integer" }` is a map, and beside `properties` it is a map of the keys that aren't named. `propertyNames` gives the keys a type: a string with constraints, or an enum. An object with no properties and no closing stays open only as an `allOf` base.
+An object takes other keys only as data, with a schema for their values: `"additionalProperties": { "type": "integer" }` is a map, and beside `properties` it is a map of the keys that aren't named. `propertyNames` gives the keys a type: a string with constraints, or an enum. JSON Schema applies it to the named keys too, so each named key must be one it allows (`invalid-constraint`): list it in the enum, or give `propertyNames` an `anyOf` of a `{ "const": "<key>" }` per named key and the schema of the other keys. An object with no properties and no closing stays open only as an `allOf` base.
 
 - `required` keys must be present. Other keys are optional: absent, or present with a value, never `null`
-- `allOf` merges objects: the base's properties and required keys join the object's. A property declared twice must have the same schema (`property-redeclared`)
+- `allOf` merges objects: the base's properties and required keys join the object's. A property declared twice must have the same schema (`property-redeclared`). An `allOf` part closes nothing, so `unevaluatedProperties` goes on the object that holds the `allOf` (`misplaced-keyword`)
+- A closed def, with `"unevaluatedProperties": false`, can also be an `allOf` base, and its keys join the object's like an open base's. This differs from JSON Schema on purpose: there, the base's `unevaluatedProperties` sees only the base's own keys, so it would reject every key the object adds
 - `oneOf` beside properties, with branches that only list `required` keys, is an exactly-one choice: one of the keys must be present, and the others must not
-
-### Not checked yet
-
-`anyOf` with branches that only list `required` keys ("at least one of these"), and `if` / `then` / `else` with branches that only give `properties` and `required`, are read for the type: the properties they name become optional fields. The decoders don't check the condition, so `{}` decodes for `"anyOf": [{ "required": ["email"] }, { "required": ["phone"] }]`. That breaks the rule that nothing is ignored, so a coming release makes both fail generation. Until then, don't rely on them for validation: use an exactly-one `oneOf`, or check the condition in your own code.
+- Conditions fail generation, since no decoder checks them. `anyOf` beside properties, like "at least one of `email` or `phone`", fails with `misplaced-keyword`: use a `oneOf` of the same branches for exactly one of the keys, or list them all in `required`. `if`, `then` and `else` fail with `unsupported-keyword` in every schema strictgen reads: defs, properties, items, map values, union branches, `allOf` parts and bases, `propertyNames` and the schema inside `not`. For a shape that depends on a value, use a [tagged union](mapping.md), a `oneOf` of closed objects that each have a required `const` tag
 
 ## IDs
 
@@ -75,7 +73,6 @@ With the `ids` config option, string defs of one file whose name ends in a suffi
 | ---- | -------- |
 | Any schema | `type` (one of `object`, `array`, `string`, `integer`, `number`, `boolean`), `$ref`, `const`, `enum`, `oneOf`, `not` (only as `{ "not": { "const": null } }`), `description`, `$comment`, `title`, `default`, `examples` |
 | Objects | `properties`, `required`, `additionalProperties`, `unevaluatedProperties`, `propertyNames`, `allOf`, `oneOf`, `minProperties` and `maxProperties` on a map |
-| Objects, not checked yet | `anyOf` whose branches only list `required` keys, and `if` / `then` / `else`. Read for the type, but the decoders don't check the condition. They [will fail generation](#not-checked-yet) |
 | Arrays | `items`, `minItems`, `maxItems`, `uniqueItems` |
 | Strings | `minLength`, `maxLength`, `pattern` (a [portable subset](error-codes.md#patterns)), `format` (`date-time`, `date`, `uuid`) |
 | Integers | `minimum`, `exclusiveMinimum`, `maximum`, `exclusiveMaximum`, `multipleOf` |

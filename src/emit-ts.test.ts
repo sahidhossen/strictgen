@@ -386,7 +386,7 @@ describe("TypeScript exactly-one choices and named keys beside a map", () => {
     currency: { enum: ["usd", "eur", "gbp"] },
     prices: {
       type: "object",
-      propertyNames: { anyOf: [{ const: "default" }, { $ref: "#/$defs/currency" }] },
+      propertyNames: { anyOf: [{ const: "default" }, { const: "note" }, { $ref: "#/$defs/currency" }] },
       properties: { default: { type: "integer" }, note: { type: "string" } },
       additionalProperties: { type: "integer" },
       required: ["default"],

@@ -217,7 +217,7 @@ function richModel(validation = true): Model {
         type: "object",
         properties: { default: { type: "number", minimum: 0 } },
         required: ["default"],
-        propertyNames: { type: "string", maxLength: 3 },
+        propertyNames: { anyOf: [{ const: "default" }, { type: "string", maxLength: 3 }] },
         additionalProperties: { type: "number", minimum: 0 },
       },
     },
