@@ -338,8 +338,6 @@ export interface RespellOptions {
   readonly numbers?: boolean;
   /** The order of object keys, sorted by UTF-16 code units. */
   readonly keyOrder?: boolean;
-  /** The characters, by code point, whose spelling inside strings and keys is made canonical. */
-  readonly chars?: (code: number) => boolean;
 }
 
 /**
@@ -350,7 +348,6 @@ export interface RespellOptions {
  */
 export function respell(text: string, options: RespellOptions): string | undefined {
   let at = 0;
-  const chars = options.chars ?? ((): boolean => false);
   class Bad extends Error {}
   const fail = (): never => {
     throw new Bad();
@@ -395,17 +392,7 @@ export function respell(text: string, options: RespellOptions): string | undefin
         at += ch.length;
       }
       value += ch;
-      const code = ch.codePointAt(0) ?? 0;
-      const spelled = text.slice(start, at);
-      if (!chars(code)) {
-        out += spelled;
-        continue;
-      }
-      try {
-        out += canonicalString(ch).slice(1, -1);
-      } catch {
-        out += spelled;
-      }
+      out += text.slice(start, at);
     }
   };
   const value = (depth: number): string => {

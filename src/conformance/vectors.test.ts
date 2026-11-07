@@ -9,7 +9,7 @@ import { LayoutError } from "./cases.js";
 import { compareRun } from "./compare.js";
 import { conformanceModel } from "./drivers.js";
 import type { Language, Result, Variant } from "./protocol.js";
-import { checkLlmExclusions, llmExclusions, vectorMarks } from "./suite.js";
+import { checkLlmExclusions, llmExclusions } from "./suite.js";
 import { compactOf, loadCleanupVectors, loadLlmVectors, parseCompact } from "./vectors.js";
 
 const ROOT = join(import.meta.dirname, "..", "..");
@@ -79,17 +79,6 @@ describe("the shared vectors of examples/llm", () => {
     expect(() => loadCleanupVectors(dir)).toThrow(/vector 0: needs exactly a name, an input and an output[\s\S]*vector 1/);
     writeFileSync(join(dir, "cleanup-vectors.json"), "[]");
     expect(() => loadCleanupVectors(dir)).toThrow("expected a list of vectors");
-  });
-
-  it("carry a mark for each character Go escapes, and only when they decode", () => {
-    const valid: Case = { id: "v", type: "T", valid: true, bytes: bytes("{}"), strict: { accepted: true, unknown: [] }, report: { accepted: true, unknown: [] } };
-    expect(vectorMarks({ ...valid, encodes: bytes('{"a":"<b>"}') }).map((m) => m.kind)).toEqual(["html-escaping"]);
-    expect(vectorMarks({ ...valid, encodes: bytes(`{"a":"${String.fromCharCode(0x2028)}&"}`) }).map((m) => m.kind)).toEqual([
-      "html-escaping",
-      "line-separator-escaping",
-    ]);
-    expect(vectorMarks({ ...valid, encodes: bytes('{"a":"b"}') })).toEqual([]);
-    expect(vectorMarks({ ...valid, valid: false, bytes: bytes('{"a":"<"}') })).toEqual([]);
   });
 });
 

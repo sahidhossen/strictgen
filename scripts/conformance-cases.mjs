@@ -62,6 +62,12 @@ const CASES = [
       meta: null,
     }),
   ],
+  // Escapes in a plain string and in values of any JSON type: every language writes the same
+  // characters, and an escaped backslash before "u2028" stays text.
+  [
+    "Bundle/valid/escapes-in-any-values.json",
+    String.raw`{"sku":"\\u2028 \\\u2028 \u003c\u0026\u003e \/\u0041", "version":2,"label":{"k\u0041":"\\u003c","text":"\u0041\/\u00E9\ud83d\ude00\u001F\b\u2028\u2029\u003c&>\"\\"}, "meta":["\\\\u2028","\u007f\u00e9", "<a> & b"]}` + "\n",
+  ],
   ["Bundle/valid/empty-parts-and-meta.json", pretty({ ...bundle, parts: [], label: [], meta: {} })],
   ["Bundle/valid/label-false.json", pretty({ ...bundle, label: false })],
   ["Bundle/valid/label-zero.json", pretty({ ...bundle, label: 0 })],

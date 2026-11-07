@@ -6,7 +6,8 @@
 // generated packages before it builds the command, and packages.go, which lists them by name.
 // Each has a conform.go, also written by the runner, that decodes by type name through the
 // package's public entry points (json.Unmarshal, DecodeX, Report[T], ReportX), its fixture
-// registry or its LLM decoders (DecodeXFromLlm), and runs its cleanup step (CleanLLMJSON).
+// registry or its LLM decoders (DecodeXFromLlm), and runs its cleanup step (CleanLLMJSON). Values
+// are encoded with the package's Encode, and json.Marshal must write the same JSON value.
 package main
 
 import (
@@ -18,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 )
 
 // crash is the error code of a decoder that panicked instead of returning an error.
@@ -28,12 +30,13 @@ const crash = "crash"
 const syntaxError = "json.SyntaxError"
 
 // generated is one generated package: a decoder and an LLM decoder by type name, its cleanup
-// step, and the fields of its DecodeError.
+// step, the fields of its DecodeError and its Encode.
 type generated struct {
 	decode func(typ, entry string, data []byte) (value any, unknown []string, ok bool, err error)
 	llm    func(typ string, data []byte) (value any, ok bool, err error)
 	clean  func(data []byte) (out []byte, ok bool)
 	fields func(err error) (path, code, expected, found string, ok bool)
+	encode func(v any) ([]byte, error)
 }
 
 type request struct {
@@ -123,7 +126,10 @@ func outcome(pkg generated, id int, decoder, typ, entry string, data []byte) (r 
 		}}, true
 	}
 	r = result{ID: id, Accepted: true, Unknown: unknown}
-	encoded, err := json.Marshal(value)
+	encoded, err := pkg.encode(value)
+	if disagree := sameAsMarshal(value, encoded, err); disagree != "" {
+		return result{ID: id, Error: &errorFields{Code: crash, Message: disagree}}, true
+	}
 	if err != nil {
 		why := err.Error()
 		r.EncodeError = &why
@@ -132,6 +138,33 @@ func outcome(pkg generated, id int, decoder, typ, entry string, data []byte) (r 
 		r.Encoded = &text
 	}
 	return r, true
+}
+
+// sameAsMarshal checks that json.Marshal agrees with Encode on value: both fail, or both write
+// the same JSON value, which they may spell differently. It returns what differs, or "".
+func sameAsMarshal(value any, encoded []byte, encodeErr error) string {
+	marshaled, err := json.Marshal(value)
+	if (err == nil) != (encodeErr == nil) {
+		return fmt.Sprintf("json.Marshal and Encode disagree: %v and %v", err, encodeErr)
+	}
+	if err != nil {
+		return ""
+	}
+	a, errA := parsed(marshaled)
+	b, errB := parsed(encoded)
+	if errA != nil || errB != nil || !reflect.DeepEqual(a, b) {
+		return fmt.Sprintf("json.Marshal wrote %s and Encode wrote %s", marshaled, encoded)
+	}
+	return ""
+}
+
+// parsed reads data as a JSON value, keeping numbers as they are spelled.
+func parsed(data []byte) (any, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var v any
+	err := decoder.Decode(&v)
+	return v, err
 }
 
 // answer reads one request line and returns its result.

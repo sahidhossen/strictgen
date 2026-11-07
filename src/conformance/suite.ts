@@ -176,26 +176,6 @@ export interface JobOptions {
   readonly skipped?: Map<string, Skipped>;
 }
 
-/**
- * The marks a shared vector carries, worked out from its text since the vectors are generated:
- * Go's encoder escapes `<`, `>` and `&`, and U+2028 and U+2029, where Rust and TypeScript write
- * them. An invalid vector, or one without such a character, carries none, and each one must
- * still be needed.
- */
-export function vectorMarks(c: Case): Mark[] {
-  // Only a value that decodes is written again.
-  if (!c.valid) return [];
-  const text = new TextDecoder().decode(c.encodes ?? c.bytes);
-  const out: Mark[] = [];
-  if (/[<>&]/.test(text)) {
-    out.push({ case: c.id, kind: "html-escaping", reason: "Go's json.Marshal escapes <, > and &, which Rust and TypeScript write as they are." });
-  }
-  if (/[\u2028\u2029]/.test(text)) {
-    out.push({ case: c.id, kind: "line-separator-escaping", reason: "Go's encoder escapes U+2028 and U+2029, which Rust and TypeScript write as they are." });
-  }
-  return out;
-}
-
 /** Every job of a run, in a fixed order. */
 export function suiteJobs(options: JobOptions): Job[] {
   const { cases, marks, packages, modes } = options;
@@ -231,8 +211,8 @@ export function suiteJobs(options: JobOptions): Job[] {
   }
   if (modes.includes("report") && options.vectors !== undefined) {
     const vectors = loadLlmVectors(options.vectors);
-    add({ mode: "report", decoder: "llm", entry: "public", vectors: true }, vectors.llm, vectorMarks);
-    add({ mode: "report", decoder: "normal", entry: "public", vectors: true }, vectors.normal, vectorMarks);
+    add({ mode: "report", decoder: "llm", entry: "public", vectors: true }, vectors.llm);
+    add({ mode: "report", decoder: "normal", entry: "public", vectors: true }, vectors.normal);
     add({ mode: "report", decoder: "cleanup", entry: "public", vectors: true }, loadCleanupVectors(options.vectors));
   }
   return jobs;

@@ -46,7 +46,7 @@ import { project } from "./llm-cases.js";
 import type { Language, Result, Variant } from "./protocol.js";
 import { DriverError, LANGUAGES, MODES, packageName, variantName } from "./protocol.js";
 import type { Job } from "./suite.js";
-import { jobRequests, loadSuite, suiteJobs, vectorMarks, withScratch } from "./suite.js";
+import { jobRequests, loadSuite, suiteJobs, withScratch } from "./suite.js";
 import { ModelWalk, segment, writeJson } from "./walk.js";
 
 /** How many near misses of each list a run takes, at most. */
@@ -244,19 +244,17 @@ function tree(c: Case): Json | undefined {
  * bytes to differ only matter once a value is accepted and encoded again, and an invalid payload
  * may be accepted too, in report mode, with its unknown key:
  *
- * - `html-escaping` and `line-separator-escaping`: a payload with `<`, `>` or `&`, or with
- *   U+2028 or U+2029, which Go's encoder escapes (as for the shared vectors, `vectorMarks`).
  * - `number-spelling`: a payload with a number spelled with a fraction or an exponent, like
  *   `1e-7`, which Go writes as it read it and Rust and TypeScript in their own spelling.
  * - `ts-unsafe-integer`: an integer beyond 2^53 - 1 either way, at the first such path, which
  *   TypeScript must reject with out_of_range_integer there.
  *
- * The other kinds (string-escaping, key-order, ts-no-bytes-api, go-unmarshal-syntax,
- * serde-outer-parse) never apply: the generator's payloads are UTF-8 JSON text, with no value of
- * `any` type spelled with escapes.
+ * The other kinds (key-order, ts-no-bytes-api, go-unmarshal-syntax, serde-outer-parse) never
+ * apply: the generator's payloads are UTF-8 JSON text, and an object it writes as a value of
+ * `any` type has a single key.
  */
 export function fuzzMarks(c: Case): Mark[] {
-  const out = vectorMarks({ ...c, valid: true });
+  const out: Mark[] = [];
   const value = tree(c);
   if (value === undefined) return out;
   if (spelledNumber(value)) {

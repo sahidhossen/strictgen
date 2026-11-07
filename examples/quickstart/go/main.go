@@ -23,7 +23,7 @@ func lines(order types.Order, err error) []string {
 	if err != nil {
 		return []string{"error " + err.Error()}
 	}
-	out, err := json.Marshal(order)
+	out, err := types.Encode(order)
 	if err != nil {
 		return []string{"encode error " + err.Error()}
 	}

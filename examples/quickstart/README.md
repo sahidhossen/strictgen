@@ -6,7 +6,7 @@ The example of the [README](../../README.md#30-seconds) and of the [LLM worked e
 | ---- | ---------- |
 | `strictgen.json` | The config: the three targets and the `openai` LLM profile |
 | `schemas/order.json` | An order with a bounded quantity, a status and an optional note |
-| `payloads/` | JSON the normal decoders read: a valid order, a quantity of 0, a misspelled key |
+| `payloads/` | JSON the normal decoders read: a valid order, a quantity of 0, a misspelled key, a note with `<`, `>` and `&` |
 | `answers/` | Answers a model could give for the provider-ready schema: a note that is too long, and a `null` note |
 | `llm/openai/` | The provider-ready schemas, generated |
 | `rust/` | A crate with the generated types in `src/generated` and the program in `src/main.rs`, written by hand |

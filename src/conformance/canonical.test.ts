@@ -205,12 +205,9 @@ describe("respelling only what a mark allows", () => {
     );
   });
 
-  it("writes only the chosen characters canonically, in strings and keys", () => {
-    const lineSeparators = (c: number): boolean => c === 0x2028 || c === 0x2029;
-    expect(respell(`{"${ls}":"a${ls}${esc("0041")}"}`, { chars: lineSeparators })).toBe(
-      `{"${ch(0x2028)}":"a${ch(0x2028)}${esc("0041")}"}`,
-    );
-    expect(respell(`"${esc("d83d")}${esc("de00")}\\n${esc("000a")}"`, { chars: () => true })).toBe(`"${ch(0x1f600)}\\n\\n"`);
+  it("keeps every string and key as written, escapes included", () => {
+    const text = `{"b":"${esc("d83d")}${esc("de00")}\\n${esc("000a")}","${ls}":"a${ls}${esc("0041")}"}`;
+    expect(respell(text, { numbers: true, keyOrder: true })).toBe(text);
   });
 
   it("sorts keys by UTF-16 code units when key order is allowed", () => {
@@ -219,7 +216,7 @@ describe("respelling only what a mark allows", () => {
 
   it("gives up on text that isn't compact JSON, so whitespace is never hidden", () => {
     for (const text of ['{"a": 1}', "[1,]", '"a', "01", "", '{"a":1}x']) {
-      expect(respell(text, { numbers: true, keyOrder: true, chars: () => true }), text).toBeUndefined();
+      expect(respell(text, { numbers: true, keyOrder: true }), text).toBeUndefined();
     }
   });
 });

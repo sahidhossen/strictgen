@@ -40,6 +40,7 @@ const CODES = GO_CODES;
 const RESERVED = new Set([
   GO_NON_NULL,
   "DecodeError",
+  "Encode",
   ...GO_CODES,
   "Report",
   "Reported",

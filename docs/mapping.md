@@ -93,6 +93,10 @@ Two variants that map to the same name, like two strings, fail generation with `
 
 Integer bounds and `multipleOf` must be safe integers, so every language holds them. `multipleOf` on a number fails generation (`unsupported-constraint`), since float division rounds differently from language to language. A number in an error message is written the way JavaScript writes a 64-bit float, in every language.
 
+## Strings written again
+
+Rust, TypeScript and Go's `Encode` write a string the same way. `"` and `\` get a backslash, and backspace, form feed, newline, carriage return and tab are written as `\b`, `\f`, `\n`, `\r` and `\t`. Any other character below U+0020 is written as `\u00` and two lowercase hex digits, and every other character as it is, `<`, `>`, `&`, U+2028 and U+2029 included. The strings inside a value of any JSON type are written this way too, whatever escapes the input used. Go's `json.Marshal` writes the same JSON value but escapes `<`, `>`, `&`, U+2028 and U+2029, so use `Encode` when the bytes matter, as for a hash.
+
 ## TypeScript limits
 
 JavaScript holds every JSON number as a 64-bit float and keeps neither its spelling nor every integer, so TypeScript is the one place the languages can't accept the same input. strictgen makes TypeScript fail rather than read a different number:

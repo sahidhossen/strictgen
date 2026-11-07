@@ -3,13 +3,20 @@
 # blocked words, internal files, likely secrets, attribution lines or stray files.
 #
 #   scripts/hygiene.sh            check the index and commit messages
-#   scripts/hygiene.sh --text     check text on stdin (a PR title and body, an issue)
+#   scripts/hygiene.sh --text [file]   check text in a file, or on stdin without one (a PR
+#                                      title and body, an issue). Empty text fails
 #
 # Blocked words come from $HYGIENE_DENYLIST (newline separated) or a local,
 # untracked .hygiene-denylist file. A missing denylist is an error; set
 # HYGIENE_ALLOW_NO_DENYLIST=1 to run the other checks without one (never in CI). Commit messages are checked from $HYGIENE_BASE to HEAD; unset means
 # origin/main, empty means every commit reachable from HEAD.
 set -euo pipefail
+
+# Arguments first, so a bad call fails the same way with or without a denylist.
+if [[ $# -gt 0 && "$1" != "--text" ]] || [[ $# -gt 2 ]]; then
+  echo "hygiene: unknown argument ${@: -1} (usage: hygiene.sh [--text [file]])" >&2
+  exit 2
+fi
 
 # Case-insensitive matching of non-ASCII words needs a UTF-8 locale.
 if locale -a 2>/dev/null | grep -qiE '^c\.utf-?8$'; then
@@ -53,7 +60,20 @@ if [[ ! -s "$denylist" ]]; then
 fi
 
 if [[ "${1:-}" == "--text" ]]; then
-  text="$(cat)"
+  if [[ $# -eq 2 ]]; then
+    if [[ ! -f "$2" || ! -r "$2" ]]; then
+      echo "hygiene: can't read $2" >&2
+      exit 2
+    fi
+    text="$(cat -- "$2")"
+  else
+    text="$(cat)"
+  fi
+  # Text that should be checked is never empty, so empty input means the text didn't arrive.
+  if [[ -z "${text//[[:space:]]/}" ]]; then
+    echo "hygiene: the text to check is empty" >&2
+    exit 1
+  fi
   if grep -iqE "$attribution" <<<"$text"; then
     report "attribution or assistant name in text"
   fi

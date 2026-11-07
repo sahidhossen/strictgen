@@ -14,7 +14,7 @@ Nothing crashed. Each language read the same JSON a little differently, and data
 
 - **One schema, three languages.** A strict subset of JSON Schema 2020-12 becomes types and decoders in Rust, Go and TypeScript. Use two of them or all three
 - **Never silent.** An unknown key fails the decode, or in `report` mode is reported with its path. No mode drops it
-- **Same answer everywhere.** The same accept or reject, the same JSON Pointer, error code and message, and the same canonical (RFC 8785) bytes when a value is written again
+- **Same answer everywhere.** The same accept or reject, the same JSON Pointer, error code and message, and the same bytes when a value is written again, through the generated `Encode` in Go. Only a number with a fraction or an exponent, and the key order inside a value of any JSON type, may be spelled differently, with the same canonical (RFC 8785) bytes
 - **Proven, not promised.** A conformance suite of hundreds of cases and a differential fuzzer run every language on every pull request and fail on any difference
 - **Change safety.** `strictgen breaking` lists who a schema change breaks before it merges
 - **LLM-ready.** The same schema becomes the subset each LLM provider accepts, with decoders that check what the provider couldn't

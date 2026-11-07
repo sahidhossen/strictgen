@@ -72,21 +72,32 @@ payloads/misspelled-key.json
 
 No language drops the key. If unknown keys must be accepted, `"read": "report"` decodes the document and lists every unknown key with its path, again the same in every language ([read modes](read-modes.md)). There is no mode that drops a key without saying so.
 
-## What strictgen doesn't change: the bytes
+## The same bytes, too
 
-The second cause is about writing, not reading. Take this conformance case, a parcel whose size has HTML characters:
+The second cause is about writing, not reading. Here is an order whose note has HTML characters:
 
-<!-- snippet: file conformance/cases/Parcel/valid/size-with-html-characters.json -->
+<!-- snippet: file examples/quickstart/payloads/html-characters.json -->
 ```json
-{"weight": 1.5, "size": "<a & b>"}
+{ "id": "ord_7d2k", "quantity": 1, "status": "paid", "note": "Glass <fragile> & heavy" }
 ```
 <!-- /snippet -->
 
-All three languages accept it and hold the same string. But the generated Go writes it the way `encoding/json` does, as `"\u003ca \u0026 b\u003e"`, while Rust and TypeScript write the characters. U+2028 and U+2029 differ the same way. So a hash of the bytes each language writes would still differ between Go and the others.
+Go's `json.Marshal` would write the note as `"Glass \u003cfragile\u003e \u0026 heavy"`. The generated Go package has an `Encode` function that writes strings the way Rust and TypeScript do, and the Go program uses it. Each program decodes the order and writes it again:
 
-strictgen doesn't hide this. The [conformance suite](../conformance/README.md) runs every case through all three languages and compares what each one writes, in canonical form (RFC 8785) and byte for byte. The canonical bytes must always match. Raw bytes may differ only where [`conformance/marks.json`](../conformance/marks.json) names the case, the kind of difference and its reason, like `html-escaping` for this case and `line-separator-escaping` for U+2028, and a mark no case needs fails the run.
+<!-- snippet: decode json message payloads/html-characters.json -->
+```text
+payloads/html-characters.json
+  Rust        ok {"id":"ord_7d2k","quantity":1,"status":"paid","note":"Glass <fragile> & heavy"}
+  Go          ok {"id":"ord_7d2k","quantity":1,"status":"paid","note":"Glass <fragile> & heavy"}
+  TypeScript  ok {"id":"ord_7d2k","quantity":1,"status":"paid","note":"Glass <fragile> & heavy"}
+```
+<!-- /snippet -->
 
-The rule for hashing stays the same with or without strictgen: hash the bytes you received, or a canonical form like RFC 8785, never a value a program decoded and wrote again.
+The same bytes in all three, so a hash of them is the same too. U+2028 and U+2029 are written as they are as well. A value of any JSON type, which Go keeps as the bytes it read, has its strings written the same way.
+
+The [conformance suite](../conformance/README.md) checks this for every case. It runs each one through all three languages and compares what each writes, in canonical form (RFC 8785) and byte for byte. Raw bytes may differ only where [`conformance/marks.json`](../conformance/marks.json) names the case, the kind of difference and its reason, and a mark no case needs fails the run. What is left is the spelling of a number with a fraction or an exponent, like `1.5E+2`, which each language writes its own way, and the key order inside a value of any JSON type. Hashing a canonical form like RFC 8785 covers those as well.
+
+The suite caught this in strictgen first. The generated Go used to write these characters the way `encoding/json` does, and the suite needed a mark for every case that had one. Now Go writes them as they are, and the marks are gone.
 
 ## Try it
 

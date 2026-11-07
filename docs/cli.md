@@ -21,7 +21,7 @@ A `strictgen.json` at the project root drives everything. Paths are relative to 
 ### Each language
 
 - **Rust.** Types implement a `Decode` trait, so `User::from_json(text)` decodes strictly. Generated Rust depends on `serde` and `serde_json`, and also on the `regex` crate when a schema uses `pattern` ([error-codes.md](error-codes.md#patterns)). `"serdeBridge": true` also gives the types serde's `Deserialize`, running the same strict decoder, so they can sit inside your own serde types. Plain aliases of standard types, like `Vec<String>`, can't get the impl and use serde's own, which is not strict; `generate` lists them in a notice ([serde-bridge.md](serde-bridge.md))
-- **Go.** `json.Unmarshal` into a generated type decodes strictly, and `DecodeX` decodes a tagged union. Only the standard library is used
+- **Go.** `json.Unmarshal` into a generated type decodes strictly, and `DecodeX` decodes a tagged union. `Encode(v)` writes a value with the same bytes as Rust and TypeScript. `json.Marshal` writes the same JSON value, but escapes `<`, `>`, `&`, U+2028 and U+2029. Only the standard library is used
 - **TypeScript.** Strict decoders sit next to the types, `decodeXFromJson`, `decodeX`, `encodeX` and their variants, unless `"decoders": false`. [typescript.md](typescript.md) explains them and their number limits
 - **Fixtures.** Neither Rust nor Go writes a fixture registry for tests unless asked: Go takes `"fixtures": true`, Rust takes `"fixtures": { "out": "...", "crate": "..." }`
 
