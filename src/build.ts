@@ -314,14 +314,7 @@ function schemaObject(value: Json | undefined, loc: Loc): JsonObject {
 
 function checkKeywords(schema: JsonObject, loc: Loc, root: boolean): void {
   for (const key of Object.keys(schema)) {
-    if (CONDITIONS.has(key)) {
-      fail(
-        at(loc, key),
-        "unsupported-keyword",
-        `unsupported keyword ${key}: no decoder checks if, then or else`,
-        CONDITION_HINT,
-      );
-    }
+    if (CONDITIONS.has(key)) noCondition(loc, key);
     const known =
       ANNOTATIONS.has(key) ||
       CONSTRAINTS.has(key) ||
@@ -351,14 +344,38 @@ function checkKeywords(schema: JsonObject, loc: Loc, root: boolean): void {
   }
 }
 
+function noCondition(loc: Loc, key: string): never {
+  return fail(
+    at(loc, key),
+    "unsupported-keyword",
+    `unsupported keyword ${key}: no decoder checks if, then or else`,
+    CONDITION_HINT,
+  );
+}
+
 function structural(schema: JsonObject): string[] {
   return Object.keys(schema).filter((k) => STRUCTURAL.has(k));
 }
 
-function only(schema: JsonObject, loc: Loc, allowed: readonly string[]): void {
+/** Hints for a supported keyword in a place it doesn't fit. */
+const MISPLACED_HINTS: Readonly<Record<string, string>> = {
+  anyOf: 'anyOf is only read inside "propertyNames"; for a choice between types, use "oneOf"',
+};
+
+/**
+ * Fails on a structural keyword outside `allowed`, and on any condition keyword, so every
+ * place that limits its keywords rejects if, then and else whether or not it checked keywords.
+ */
+function only(
+  schema: JsonObject,
+  loc: Loc,
+  allowed: readonly string[],
+  hint: (key: string) => string | undefined = (key) => MISPLACED_HINTS[key],
+): void {
+  for (const key of Object.keys(schema)) if (CONDITIONS.has(key)) noCondition(loc, key);
   for (const key of structural(schema)) {
     if (!allowed.includes(key))
-      fail(at(loc, key), "misplaced-keyword", `${key} is not supported here`);
+      fail(at(loc, key), "misplaced-keyword", `${key} is not supported here`, hint(key));
   }
 }
 
@@ -381,6 +398,7 @@ function typeOf(
     return { kind: "any" };
   }
   if (schema.not !== undefined && keys.length === 1) {
+    if (isObject(schema.not)) checkKeywords(schema.not, at(loc, "not"), false);
     if (isNullConst(schema.not)) {
       noConstraints(schema, loc, "without a type", 'add a "type", like "type": "string"');
       return { kind: "nonNull" };
@@ -407,6 +425,9 @@ function typeOf(
       loc: at(loc, "oneOf", i),
     }));
     return hoist(ctx, name, loc, () => unionDecl(ctx, name, branches, loc, docOf(schema), source));
+  }
+  if (schema.anyOf !== undefined && schema.type === undefined) {
+    fail(at(loc, "anyOf"), "misplaced-keyword", "anyOf is not supported here", MISPLACED_HINTS.anyOf);
   }
   switch (schema.type) {
     case "string":
@@ -449,7 +470,11 @@ function arrayAt(value: Json | undefined, loc: Loc): readonly Json[] {
 }
 
 function isNullConst(value: Json | undefined): boolean {
-  return isObject(value) && structural(value).length === 1 && value.const === null;
+  return (
+    isObject(value) &&
+    value.const === null &&
+    Object.keys(value).every((key) => key === "const" || ANNOTATIONS.has(key))
+  );
 }
 
 function refType(ctx: Ctx, schema: JsonObject, loc: Loc): TypeExpr {
@@ -491,7 +516,7 @@ function refType(ctx: Ctx, schema: JsonObject, loc: Loc): TypeExpr {
   }
   if (schema.type !== undefined) {
     // A type beside $ref only holds when it is the target's own, else no decoder checks it.
-    const target = jsonTypeOf(deref(ctx, schema, loc).schema);
+    const target = jsonTypeOf(ctx, schema, loc, new Set());
     if (target !== schema.type && !(schema.type === "number" && target === "integer"))
       fail(
         at(loc, "type"),
@@ -514,21 +539,37 @@ function holdsKey(ctx: Ctx, value: Json, loc: Loc, key: string, seen: Set<string
     return arrayAt(s.oneOf, at(target.loc, "oneOf")).some((branch, i) =>
       holdsKey(ctx, branch, at(target.loc, "oneOf", i), key, seen),
     );
-  if (s.type !== "object") return jsonTypeOf(s) === undefined;
+  if (s.type !== "object") return jsonTypeOf(ctx, s, target.loc, new Set()) === undefined;
   if (s.additionalProperties !== false && s.unevaluatedProperties !== false) return true;
   const props = new Map<string, Prop>();
   collect(ctx, s, target.loc, props, new Set());
   return props.has(key);
 }
 
-/** The JSON type every value of a schema has, when the schema says it, like "string" for an enum. */
-function jsonTypeOf(schema: JsonObject): string | undefined {
-  if (typeof schema.type === "string") return schema.type;
-  if (schema.enum !== undefined) return "string";
-  const value = schema.const;
-  if (typeof value === "string" || typeof value === "boolean") return typeof value;
-  if (typeof value === "number" && Number.isInteger(value)) return "integer";
-  return undefined;
+/**
+ * The JSON type every value of a schema has, when the schema says it: "string" for an enum,
+ * the branches' type for a union whose branches all have one.
+ */
+function jsonTypeOf(ctx: Ctx, value: Json, loc: Loc, path: ReadonlySet<string>): string | undefined {
+  const target = deref(ctx, value, loc);
+  const s = target.schema;
+  if (typeof s.type === "string") return s.type;
+  if (s.enum !== undefined) return "string";
+  const c = s.const;
+  if (typeof c === "string" || typeof c === "boolean") return typeof c;
+  if (typeof c === "number") return Number.isInteger(c) ? "integer" : "number";
+  if (s.oneOf === undefined) return undefined;
+  const place = where(target.loc);
+  if (path.has(place)) return undefined;
+  const inner = new Set([...path, place]);
+  const types = new Set(
+    arrayAt(s.oneOf, at(target.loc, "oneOf")).map((b, i) =>
+      jsonTypeOf(ctx, b, at(target.loc, "oneOf", i), inner),
+    ),
+  );
+  if (types.has(undefined)) return undefined;
+  if (types.size === 1) return [...types][0];
+  return types.size === 2 && types.has("integer") && types.has("number") ? "number" : undefined;
 }
 
 function constType(
@@ -1071,6 +1112,7 @@ function collect(
           fail(at(entryLoc, "$ref"), "invalid-schema", "$ref must be a string");
         const key = resolveRef(ctx.set, fragment.$ref, entryLoc);
         const target = schemaAt(ctx.set, key);
+        checkKeywords(target, keyLoc(key), key.def === undefined);
         if (target.type !== "object")
           fail(entryLoc, "type-mismatch", "an allOf base must be an object");
         checkFragment(target, keyLoc(key));
@@ -1134,7 +1176,11 @@ function collect(
 
 function checkFragment(fragment: JsonObject, loc: Loc): void {
   noAnyOf(fragment, loc);
-  only(fragment, loc, ["type", "properties", "required", "allOf", "unevaluatedProperties"]);
+  only(fragment, loc, ["type", "properties", "required", "allOf", "unevaluatedProperties"], (key) =>
+    key === "additionalProperties"
+      ? 'an allOf part or base stays open; close the object that holds the allOf with "unevaluatedProperties": false'
+      : MISPLACED_HINTS[key],
+  );
   noConstraints(fragment, loc, "to an allOf part of an object", (key) =>
     MAP_CONSTRAINTS.includes(key)
       ? 'list the keys the object needs in "required" instead'
@@ -1198,8 +1244,11 @@ function restOf(
   const namesLoc = at(loc, "propertyNames");
   const keySchema = schemaObject(names, namesLoc);
   checkKeywords(keySchema, namesLoc, false);
-  if (keySchema.anyOf === undefined)
-    return { key: keyType(ctx, keySchema, namesLoc, `${name}Key`), value };
+  if (keySchema.anyOf === undefined) {
+    const key = keyType(ctx, keySchema, namesLoc, `${name}Key`);
+    namedKeysAllowed(ctx, keySchema, namesLoc, props, false);
+    return { key, value };
+  }
   only(keySchema, namesLoc, ["type", "anyOf"]);
   // Named properties appear as consts, the remaining branch types the other keys.
   const others = arrayAt(keySchema.anyOf, at(namesLoc, "anyOf")).filter((branch, i) => {
@@ -1225,7 +1274,57 @@ function restOf(
       "propertyNames anyOf needs one non-const branch for the other keys",
     );
   }
-  return { key: keyType(ctx, other, namesLoc, `${name}Key`), value };
+  const key = keyType(ctx, other, namesLoc, `${name}Key`);
+  namedKeysAllowed(ctx, keySchema, namesLoc, props, true);
+  return { key, value };
+}
+
+/**
+ * JSON Schema applies propertyNames to every key, the named ones too, but the decoders read a
+ * named key by its property only. So each named key must be one the names schema allows.
+ */
+function namedKeysAllowed(
+  ctx: Ctx,
+  names: JsonObject,
+  loc: Loc,
+  props: ReadonlyMap<string, Prop>,
+  withAnyOf: boolean,
+): void {
+  for (const [key, prop] of props) {
+    if (keyAllowed(ctx, names, loc, key)) continue;
+    fail(
+      prop.loc,
+      "invalid-constraint",
+      `"propertyNames" doesn't allow the named key ${key}, and no decoder checks a named key against it`,
+      withAnyOf
+        ? `add { "const": "${key}" } to the "anyOf" of "propertyNames"`
+        : `make "propertyNames" an "anyOf" of { "const": "${key}" } and the schema of the other keys`,
+    );
+  }
+}
+
+/** True when a key schema (an enum, a const, an anyOf, or a string with a pattern and lengths) allows the key. */
+function keyAllowed(ctx: Ctx, value: Json, loc: Loc, key: string): boolean {
+  const { schema, loc: schemaLoc } = deref(ctx, value, loc);
+  if (schema.anyOf !== undefined)
+    return arrayAt(schema.anyOf, at(schemaLoc, "anyOf")).some((b, i) =>
+      keyAllowed(ctx, b, at(schemaLoc, "anyOf", i), key),
+    );
+  if (schema.enum !== undefined) return Array.isArray(schema.enum) && schema.enum.includes(key);
+  if (schema.const !== undefined) return schema.const === key;
+  if (schema.type !== undefined && schema.type !== "string") return false;
+  const length = [...key].length;
+  if (typeof schema.minLength === "number" && length < schema.minLength) return false;
+  if (typeof schema.maxLength === "number" && length > schema.maxLength) return false;
+  if (typeof schema.pattern === "string") {
+    // The pattern as JSON Schema reads it: ECMAScript with the u flag, unanchored.
+    try {
+      return new RegExp(schema.pattern, "u").test(key);
+    } catch {
+      return false;
+    }
+  }
+  return true;
 }
 
 function unionDecl(
@@ -1237,7 +1336,7 @@ function unionDecl(
   source?: Source,
 ): Decl {
   const base = { name, doc, path: where(loc), schema: ctx.file, source };
-  const leaves = branches.flatMap((b) => leavesOf(ctx, b));
+  const leaves = branches.flatMap((b) => leavesOf(ctx, b, new Set([where(loc)])));
   const tag = tagOf(ctx, leaves, loc);
   if (tag !== undefined) {
     const variants: TaggedVariant[] = leaves.map((leaf, i) => {
@@ -1299,12 +1398,21 @@ function deref(ctx: Ctx, schema: Json, loc: Loc): { schema: JsonObject; loc: Loc
 }
 
 /** Branches of a union, with nested unions spread, for finding a shared tag. */
-function leavesOf(ctx: Ctx, branch: Branch): Branch[] {
+function leavesOf(ctx: Ctx, branch: Branch, path: ReadonlySet<string>): Branch[] {
   const target = deref(ctx, branch.schema, branch.loc);
   const { oneOf } = target.schema;
   if (oneOf === undefined || target.schema.type !== undefined) return [branch];
+  const place = where(target.loc);
+  if (path.has(place))
+    fail(
+      branch.loc,
+      "ref-cycle",
+      "a union can't be one of its own branches",
+      "remove the branch, or wrap it in an object so a struct holds it",
+    );
+  const inner = new Set([...path, place]);
   return arrayAt(oneOf, at(target.loc, "oneOf")).flatMap((b, i) =>
-    leavesOf(ctx, { schema: b, loc: at(target.loc, "oneOf", i) }),
+    leavesOf(ctx, { schema: b, loc: at(target.loc, "oneOf", i) }, inner),
   );
 }
 
