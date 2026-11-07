@@ -59,7 +59,7 @@ Pick BAML when you want the whole LLM workflow in one tool, and when getting a u
 
 ## Where strictgen differs
 
-- **Proven agreement.** The [conformance suite](../conformance) runs every case through Rust, Go and TypeScript, in both read modes, through the public entry points and the LLM decoders, and fails on any difference in the result, the error, the unknown keys or the bytes written again. A differential fuzzer runs random payloads and near misses through the same decoders on every pull request, and a longer run every night
+- **Proven agreement.** The [conformance suite](../conformance) runs every case through Rust, Go and TypeScript, in both read modes, through the public entry points and the LLM decoders, and fails on any difference in the result, the error, the unknown keys or the canonical (RFC 8785) bytes written again. A differential fuzzer runs random payloads and near misses through the same decoders on every pull request, and a longer run every night
 - **No silent drops.** An unknown key fails the decode, or is reported in `report` mode. A keyword strictgen can't check the same way in every language fails generation instead of being ignored
 - **Breaking checks.** [`strictgen breaking`](breaking-changes.md) compares two versions of the schemas and says who each change breaks: strict consumers, all consumers or producers
 - **LLM profiles.** The same schema becomes the subset each provider accepts ([llm.md](llm.md)), and the decoders check what the provider couldn't
