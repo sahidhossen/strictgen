@@ -107,6 +107,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 - Rust reads a number that isn't an integer with Rust's own float parser, which rounds correctly, instead of serde_json's default one, which can be a step off for long numbers, so Rust compares the same value as Go and TypeScript. The example crate turns on serde_json's `float_roundtrip` feature, so its fixture run compares exact values too
 - Generated output changes for a schema with constraints, which were ignored before: types with constraints get a check, and the helpers the checks call
 - Errors while reading schemas or the config, or while writing the output, like a folder where a generated file should go or an `out` path through a symlink that points nowhere, are reported as one line naming the path, never a stack trace
+- The playground's schema, payload and output panes are CodeMirror editors with syntax colours for JSON, Rust, Go and TypeScript, line numbers, bracket matching, folding, search, and light and dark themes that follow the system. A rejected payload's error is underlined at its path, report mode's unknown keys are marked, and a generation error is underlined in the schema at its pointer
 
 ### Removed
 

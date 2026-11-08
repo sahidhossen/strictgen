@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
+      content="default-src 'none'; script-src 'self'; worker-src 'self'; style-src 'self' 'nonce-L_shkAhPkBB2hh1kxtdhtA'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'"
     />
     <meta name="referrer" content="no-referrer" />
     <title>strictgen playground</title>
@@ -41,7 +41,11 @@
           <button type="button" id="remove-file">Remove file</button>
           <span id="file-error" class="error-text" role="status"></span>
         </div>
-        <textarea id="schema" wrap="off" spellcheck="false" autocomplete="off" aria-label="Schema text"></textarea>
+        <div id="schema" class="editor"></div>
+        <p id="editor-keys" class="note">
+          In an editor, Tab indents. Press Escape, then Tab, to move on to the next control. Ctrl-F (Cmd-F on macOS)
+          searches.
+        </p>
 
         <fieldset class="settings">
           <legend>Settings</legend>
@@ -82,7 +86,7 @@
           </label>
           <span id="entry" class="entry"></span>
         </div>
-        <textarea id="payload" wrap="off" spellcheck="false" autocomplete="off" aria-label="Payload"></textarea>
+        <div id="payload" class="editor"></div>
         <div id="result" class="result" aria-live="polite"></div>
         <p class="note">
           The decoders are the generated TypeScript, compiled in this page. The conformance suite holds the Rust and Go
@@ -98,19 +102,19 @@
         <div class="panels">
           <article class="panel" id="panel-typescript">
             <div class="head"><h2>TypeScript</h2><select aria-label="TypeScript file"></select></div>
-            <pre><code></code></pre>
+            <div class="code"></div>
           </article>
           <article class="panel" id="panel-rust">
             <div class="head"><h2>Rust</h2><select aria-label="Rust file"></select></div>
-            <pre><code></code></pre>
+            <div class="code"></div>
           </article>
           <article class="panel" id="panel-go">
             <div class="head"><h2>Go</h2><select aria-label="Go file"></select></div>
-            <pre><code></code></pre>
+            <div class="code"></div>
           </article>
           <article class="panel" id="panel-llm">
             <div class="head"><h2>LLM schemas</h2><select aria-label="LLM schema file"></select></div>
-            <pre><code></code></pre>
+            <div class="code"></div>
           </article>
         </div>
       </section>

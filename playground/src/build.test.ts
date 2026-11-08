@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { builtinProfileFile } from "../../src/profile-files.js";
 import { transpiler } from "./decode.js";
+import { STYLE_NONCE } from "./editor.js";
 import { SAMPLE } from "./sample.js";
 import type { Request, Response } from "./session.js";
 import { respond, Session } from "./session.js";
@@ -19,6 +20,11 @@ const ROOT = join(import.meta.dirname, "..", "..");
 const SCRIPT = join(ROOT, "scripts", "playground-build.mjs");
 /** Bundling the TypeScript compiler takes a few seconds. */
 const TIMEOUT = 120_000;
+/**
+ * The most app.js may weigh, minified: the page and CodeMirror with its JSON, Rust, Go and
+ * TypeScript modes, about 580 KiB. A jump past this means a dependency pulled in more than it should.
+ */
+const APP_BUDGET = 700 * 1024;
 
 let out = "";
 
@@ -64,7 +70,8 @@ describe("the playground build", () => {
       "default-src 'none'",
       "script-src 'self'",
       "worker-src 'self'",
-      "style-src 'self'",
+      // CodeMirror adds one style element at run time, carrying this nonce (editor.ts).
+      `style-src 'self' 'nonce-${STYLE_NONCE}'`,
       "img-src 'self'",
       "connect-src 'none'",
       "base-uri 'none'",
@@ -84,9 +91,19 @@ describe("the playground build", () => {
     }
   });
 
-  it("sets user text with textContent, never as markup", () => {
-    const source = readFileSync(join(import.meta.dirname, "app.ts"), "utf8");
-    expect(source).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|setAttribute\("style"/);
+  it("sets user text with textContent or as an editor's text, never as markup, in its own code and in the bundle", () => {
+    for (const file of ["app.ts", "editor.ts", "locate.ts"]) {
+      const source = readFileSync(join(import.meta.dirname, file), "utf8");
+      expect(source, file).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|setAttribute\("style"/);
+    }
+    // Nor does any bundled package, CodeMirror included.
+    expect(readFileSync(join(out, "app.js"), "utf8")).not.toMatch(/innerHTML|outerHTML|insertAdjacentHTML|document\.write|createContextualFragment/);
+  });
+
+  it("keeps app.js within its size budget", () => {
+    const size = statSync(join(out, "app.js")).size;
+    expect(size).toBeLessThan(APP_BUDGET);
+    expect(size).toBeGreaterThan(100 * 1024);
   });
 
   it(

@@ -1,12 +1,15 @@
 /**
  * The playground page. It keeps the state, sends it to the worker, and shows what comes back.
- * Every piece of text from the user or the generator is set with `textContent` or as an input's
- * value, never as markup.
+ * Every piece of text from the user or the generator is set with `textContent`, as an input's
+ * value or as a CodeMirror document, never as markup.
  */
 import { entryNames } from "./decode.js";
 import type { OutputFile } from "../../src/generate.js";
+import type { Mark } from "./editor.js";
+import { CodeView, languageOf } from "./editor.js";
+import { errorSpan, locate, schemaSpan } from "./locate.js";
 import { SAMPLE } from "./sample.js";
-import type { Decoded, Output, Request, Response } from "./session.js";
+import type { Decoded, Output, Request, Response, SchemaAt } from "./session.js";
 import type { SchemaText, State } from "./state.js";
 import { decodeState, encodeState, PROFILES, SCHEMA_NAME, StateError } from "./state.js";
 
@@ -38,7 +41,7 @@ const ui = {
   fileName: byId<HTMLInputElement>("file-name"),
   removeFile: byId<HTMLButtonElement>("remove-file"),
   fileError: byId<HTMLSpanElement>("file-error"),
-  schema: byId<HTMLTextAreaElement>("schema"),
+  schema: byId<HTMLDivElement>("schema"),
   read: byId<HTMLSelectElement>("read"),
   cleanup: byId<HTMLInputElement>("cleanup"),
   serdeBridge: byId<HTMLInputElement>("serde-bridge"),
@@ -48,7 +51,7 @@ const ui = {
   type: byId<HTMLSelectElement>("type"),
   decoder: byId<HTMLSelectElement>("decoder"),
   entry: byId<HTMLSpanElement>("entry"),
-  payload: byId<HTMLTextAreaElement>("payload"),
+  payload: byId<HTMLDivElement>("payload"),
   result: byId<HTMLDivElement>("result"),
   profiles: Object.fromEntries(PROFILES.map((p) => [p, byId<HTMLInputElement>(`profile-${p}`)])) as Record<
     string,
@@ -59,18 +62,46 @@ const ui = {
 let state: State = SAMPLE;
 let selected = 0;
 
+const schemaView = new CodeView(ui.schema, {
+  label: "Schema text",
+  language: "json",
+  editable: true,
+  describedBy: "editor-keys",
+  onChange: (text) => {
+    const file = state.schemas[selected];
+    if (file !== undefined) update(withFile(selected, { name: file.name, text }));
+  },
+});
+
+const payloadView = new CodeView(ui.payload, {
+  label: "Payload",
+  language: "json",
+  editable: true,
+  describedBy: "editor-keys",
+  onChange: (text) => update({ ...state, payload: text }),
+});
+
+/** The read-only view of each output panel, made when the panel first shows a file. */
+const panelViews = new Map<Output, CodeView>();
+/** The view of the encoded value in the result, replaced with each result. */
+let resultView: CodeView | undefined;
+
+/** Where the last generation failed, with the schema texts it read, to mark it in the schema editor. */
+let schemaProblem: { readonly at: SchemaAt; readonly message: string; readonly schemas: Request["input"]["schemas"] } | null =
+  null;
+
 /** The worker, restarted when a request takes longer than {@link TIMEOUT_MS}. */
 class Runner {
   private worker: Worker | undefined;
   private ready = false;
-  private pending: { id: number; timer: ReturnType<typeof setTimeout> } | undefined;
+  private pending: { request: Request; timer: ReturnType<typeof setTimeout> } | undefined;
   private queued: Request | undefined;
   /** The last request sent, sent again by {@link retry}. */
   private last: Omit<Request, "id"> | undefined;
   private next = 1;
 
   constructor(
-    private readonly onResponse: (r: Response) => void,
+    private readonly onResponse: (r: Response, request: Request) => void,
     private readonly onProblem: (text: string, retry?: () => void) => void,
   ) {
     this.start();
@@ -118,11 +149,12 @@ class Runner {
       return;
     }
     const id = (data as { id?: unknown }).id;
-    if (this.pending === undefined || id !== this.pending.id) return;
-    clearTimeout(this.pending.timer);
+    const pending = this.pending;
+    if (pending === undefined || id !== pending.request.id) return;
+    clearTimeout(pending.timer);
     this.pending = undefined;
     if ("failure" in data) this.onProblem(`The playground failed: ${String((data as { failure: unknown }).failure)}`);
-    else this.onResponse(data as Response);
+    else this.onResponse(data as Response, pending.request);
     this.flush();
   }
 
@@ -137,7 +169,7 @@ class Runner {
     if (!this.ready || this.pending !== undefined || this.queued === undefined || this.worker === undefined) return;
     const request = this.queued;
     this.queued = undefined;
-    this.pending = { id: request.id, timer: setTimeout(() => this.timeout(), TIMEOUT_MS) };
+    this.pending = { request, timer: setTimeout(() => this.timeout(), TIMEOUT_MS) };
     this.worker.postMessage(request);
   }
 
@@ -170,9 +202,27 @@ function renderFiles(): void {
   );
   const file = state.schemas[selected];
   ui.fileName.value = file?.name ?? "";
-  if (ui.schema.value !== (file?.text ?? "")) ui.schema.value = file?.text ?? "";
+  schemaView.setText(file?.text ?? "");
   ui.removeFile.disabled = state.schemas.length < 2;
   ui.fileError.textContent = "";
+  markSchema();
+}
+
+/**
+ * Marks where generation failed in the schema editor, when the file shown is the one at fault
+ * and its text is the text that failed.
+ */
+function markSchema(): void {
+  const file = state.schemas[selected];
+  const problem = schemaProblem;
+  const text = schemaView.text;
+  const failed = problem?.schemas.find((f) => f.name === file?.name)?.text;
+  if (file === undefined || problem === null || problem.at.file !== file.name || failed !== text) {
+    schemaView.mark([]);
+    return;
+  }
+  const span = schemaSpan(text, problem.at.pointer);
+  schemaView.mark(span === null ? [] : [{ ...span, kind: "problem", title: problem.message }]);
 }
 
 function renderSettings(): void {
@@ -187,7 +237,7 @@ function renderSettings(): void {
   ui.idsFile.value = state.ids?.file ?? "";
   ui.idsSuffix.value = state.ids?.suffix ?? "";
   ui.decoder.value = state.decoder;
-  if (ui.payload.value !== state.payload) ui.payload.value = state.payload;
+  payloadView.setText(state.payload);
 }
 
 /** The outputs, in the order the page shows them, as `session.ts` lists them. */
@@ -207,8 +257,15 @@ function firstShown(output: Output, names: readonly string[]): string {
 function renderPanel(output: Output, files: readonly OutputFile[], stale: boolean): void {
   const panel = byId<HTMLElement>(`panel-${output}`);
   const select = panel.querySelector("select");
-  const code = panel.querySelector("code");
+  const code = panel.querySelector<HTMLElement>(".code");
   if (select === null || code === null) return;
+  let view = panelViews.get(output);
+  if (view === undefined) {
+    const heading = panel.querySelector("h2")?.textContent ?? output;
+    view = new CodeView(code, { label: `${heading} code, read only`, language: "text", editable: false });
+    panelViews.set(output, view);
+  }
+  const shown = view;
   panel.classList.toggle("stale", stale);
   if (stale) return;
   const names = files.map((f) => f.path);
@@ -216,11 +273,16 @@ function renderPanel(output: Output, files: readonly OutputFile[], stale: boolea
   select.replaceChildren(...names.map((n) => el("option", n)));
   select.value = names.includes(before) ? before : firstShown(output, names);
   const show = (): void => {
-    code.textContent = files.find((f) => f.path === select.value)?.contents ?? "";
+    const path = select.value;
+    shown.setLanguage(languageOf(path));
+    shown.setText(files.find((f) => f.path === path)?.contents ?? "");
   };
   select.onchange = show;
   show();
-  if (files.length === 0) code.textContent = output === "llm" ? "Pick an LLM profile to get the LLM schemas." : "";
+  if (files.length === 0) {
+    shown.setLanguage("text");
+    shown.setText(output === "llm" ? "Pick an LLM profile to get the LLM schemas." : "");
+  }
 }
 
 function renderGenerated(response: Response): void {
@@ -231,6 +293,7 @@ function renderGenerated(response: Response): void {
     ? `Generated ${String(g.count)} files.`
     : `${g.error}\nThe code below is from the last schemas that generated.`;
   for (const output of OUTPUTS) renderPanel(output, g.ok ? g.outputs[output] : [], stale);
+  markSchema();
   if (!g.ok) return;
   const types = state.decoder === "llm" ? g.llmTypes : g.types;
   ui.type.replaceChildren(...types.map((t) => el("option", t)));
@@ -250,9 +313,39 @@ function row(table: HTMLTableElement, name: string, value: string | null): void 
   table.append(tr);
 }
 
+/**
+ * Marks the payload editor: the place of a rejected payload's error, and in report mode the
+ * unknown keys dropped. Only when the editor still holds the payload that was decoded, since
+ * the places are in that text.
+ */
+function markPayload(decoded: Decoded | null, request: Request): void {
+  const text = payloadView.text;
+  if (decoded === null || text !== request.payload) {
+    payloadView.mark([]);
+    return;
+  }
+  const list: Mark[] = [];
+  if (decoded.kind === "rejected") {
+    // The LLM decoder may clean the text up before reading it, so only a path the text has is marked.
+    const span = errorSpan(text, decoded.error, request.decoder === "normal");
+    if (span !== null) list.push({ ...span, kind: "problem", title: decoded.error.message });
+  } else if (decoded.kind === "accepted" && decoded.unknown.length > 0) {
+    const located = locate(text);
+    for (const path of decoded.unknown) {
+      const key = located.ok ? located.places.get(path)?.key : undefined;
+      if (key !== undefined && key !== null) {
+        list.push({ ...key, kind: "unknown-key", title: `${path}: an unknown key, reported and dropped` });
+      }
+    }
+  }
+  payloadView.mark(list);
+}
+
 function renderDecoded(decoded: Decoded | null, type: string): void {
   const names = entryNames(type, state.read, state.decoder);
   ui.entry.textContent = type === "" ? "" : `${names.decode}(text)`;
+  resultView?.destroy();
+  resultView = undefined;
   if (decoded === null) {
     ui.result.replaceChildren(el("p", "Paste a payload to decode it.", "verdict"));
     return;
@@ -271,8 +364,21 @@ function renderDecoded(decoded: Decoded | null, type: string): void {
         );
       }
       parts.push(el("p", `Encoded again with ${names.encode}:`));
-      parts.push(el("pre", decoded.encoded ?? `The encoder refused it: ${decoded.encodeError ?? ""}`));
+      if (decoded.encoded === null) {
+        parts.push(el("pre", `The encoder refused it: ${decoded.encodeError ?? ""}`));
+        ui.result.replaceChildren(...parts);
+        return;
+      }
+      const holder = el("div", undefined, "encoded");
+      parts.push(holder);
       ui.result.replaceChildren(...parts);
+      resultView = new CodeView(holder, {
+        label: `The value encoded again with ${names.encode}, read only`,
+        language: "json",
+        editable: false,
+        wrap: true,
+        text: decoded.encoded,
+      });
       return;
     }
     case "rejected": {
@@ -315,9 +421,15 @@ function problem(text: string, retry?: () => void): void {
 }
 
 const runner = new Runner(
-  (r) => {
+  (r, request) => {
+    schemaProblem =
+      !r.generated.ok && r.generated.at !== null
+        ? { at: r.generated.at, message: r.generated.error, schemas: request.input.schemas }
+        : null;
     renderGenerated(r);
-    renderDecoded(r.generated.ok ? r.decoded : { kind: "unavailable", reason: "the schemas don't generate" }, r.type);
+    const decoded: Decoded | null = r.generated.ok ? r.decoded : { kind: "unavailable", reason: "the schemas don't generate" };
+    renderDecoded(decoded, r.type);
+    markPayload(decoded, request);
   },
   problem,
 );
@@ -365,11 +477,6 @@ function update(next: State, rerun = true): void {
 function withFile(i: number, file: SchemaText): State {
   return { ...state, schemas: state.schemas.map((f, j) => (j === i ? file : f)) };
 }
-
-ui.schema.addEventListener("input", () => {
-  const file = state.schemas[selected];
-  if (file !== undefined) update(withFile(selected, { name: file.name, text: ui.schema.value }));
-});
 
 ui.fileName.addEventListener("change", () => {
   const name = ui.fileName.value.trim();
@@ -447,7 +554,6 @@ ui.idsSuffix.addEventListener("change", readIds);
 
 ui.type.addEventListener("change", () => update({ ...state, type: ui.type.value }));
 ui.decoder.addEventListener("change", () => update({ ...state, decoder: ui.decoder.value === "llm" ? "llm" : "normal" }));
-ui.payload.addEventListener("input", () => update({ ...state, payload: ui.payload.value }));
 
 ui.share.addEventListener("click", () => {
   void (async () => {
