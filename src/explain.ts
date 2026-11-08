@@ -128,7 +128,7 @@ function noType(set: SchemaSet, name: string, pointer: string, location: string)
     const defs = defNames(file.root);
     throw new ExplainError(
       `${location} has no root type, only $defs` +
-        (defs[0] === undefined ? "" : `. Explain one of them, like ${name}.json#/$defs/${defs[0]}`),
+        (defs[0] === undefined ? "" : `. Explain one of them, like ${name}.json#/$defs/${defs[0].replaceAll("~", "~0").replaceAll("/", "~1")}`),
     );
   }
   throw new ExplainError(

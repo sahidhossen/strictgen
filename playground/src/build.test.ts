@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,6 +132,25 @@ describe("the playground build", () => {
       const first = want[0];
       expect(first?.decoded).toMatchObject({ kind: "rejected", error: { path: "/lines/1/quantity", code: "too_small" } });
       expect(first?.generated.ok === true ? first.generated.outputs.llm.length : 0).toBeGreaterThan(0);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    "exits quietly when the reader of the build's output goes away",
+    async () => {
+      const dir = mkdtempSync(join(tmpdir(), "strictgen-playground-pipe-"));
+      try {
+        const child = spawn(process.execPath, [SCRIPT, "--out", dir], { stdio: ["ignore", "pipe", "pipe"] });
+        child.stdout.destroy();
+        let stderr = "";
+        child.stderr.on("data", (chunk: Buffer) => (stderr += chunk.toString()));
+        const code = await new Promise<number | null>((done) => child.on("close", done));
+        expect(stderr).toBe("");
+        expect(code).toBe(0);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
     },
     TIMEOUT,
   );

@@ -20,7 +20,7 @@ import {
 } from "@codemirror/language";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
 import type { Extension, Range } from "@codemirror/state";
-import { Annotation, Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
+import { Compartment, EditorState, StateEffect, StateField } from "@codemirror/state";
 import type { DecorationSet } from "@codemirror/view";
 import {
   Decoration,
@@ -155,9 +155,6 @@ const marks = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-/** Marks a change the page makes itself, which isn't reported as an edit. */
-const fromPage = Annotation.define<boolean>();
-
 export interface EditorOptions {
   /** The accessible name of the text area. */
   readonly label: string;
@@ -176,8 +173,20 @@ export interface EditorOptions {
 export class CodeView {
   readonly view: EditorView;
   private readonly language = new Compartment();
+  private current: Language;
 
-  constructor(parent: HTMLElement, options: EditorOptions) {
+  constructor(
+    parent: HTMLElement,
+    private readonly options: EditorOptions,
+  ) {
+    this.current = options.language;
+    this.view = new EditorView({ parent, state: this.fresh(options.text ?? "") });
+    views.add(this.view);
+  }
+
+  /** A new editor state holding `text`, with no undo history and no marks. */
+  private fresh(text: string): EditorState {
+    const options = this.options;
     const onChange = options.onChange;
     const extensions: Extension[] = [
       EditorView.cspNonce.of(STYLE_NONCE),
@@ -193,7 +202,7 @@ export class CodeView {
       EditorState.tabSize.of(2),
       look,
       darkMode.of(EditorView.darkTheme.of(darkQuery?.matches === true)),
-      this.language.of(languageSupport(options.language)),
+      this.language.of(languageSupport(this.current)),
       marks,
       EditorView.contentAttributes.of({
         "aria-label": options.label,
@@ -222,33 +231,31 @@ export class CodeView {
     if (onChange !== undefined) {
       extensions.push(
         EditorView.updateListener.of((update) => {
-          if (update.docChanged && !update.transactions.some((tr) => tr.annotation(fromPage) === true)) {
-            onChange(update.state.doc.toString());
-          }
+          if (update.docChanged) onChange(update.state.doc.toString());
         }),
       );
     }
-    this.view = new EditorView({ parent, state: EditorState.create({ doc: options.text ?? "", extensions }) });
-    views.add(this.view);
+    return EditorState.create({ doc: text, extensions });
   }
 
   get text(): string {
     return this.view.state.doc.toString();
   }
 
-  /** Replaces the text, unless it is the same, without reporting it as an edit. Clears the marks. */
-  setText(text: string, top = false): void {
-    if (text === this.text) return;
-    this.view.dispatch({
-      changes: { from: 0, to: this.view.state.doc.length, insert: text },
-      selection: { anchor: 0 },
-      effects: setMarks.of([]),
-      annotations: fromPage.of(true),
-      ...(top ? { scrollIntoView: true } : {}),
-    });
+  /**
+   * Replaces the text, unless it is the same, with a new editor state: the undo history starts
+   * again, so undo never brings back the text of another file or link, and the marks go. It isn't
+   * reported as an edit. `reset` starts again even when the text is the same, as for another file
+   * with the same text.
+   */
+  setText(text: string, reset = false): void {
+    if (text === this.text && !reset) return;
+    this.view.setState(this.fresh(text));
   }
 
   setLanguage(language: Language): void {
+    if (language === this.current) return;
+    this.current = language;
     this.view.dispatch({ effects: this.language.reconfigure(languageSupport(language)) });
   }
 

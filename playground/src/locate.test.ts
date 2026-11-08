@@ -5,7 +5,7 @@ import { MAX_DEPTH } from "../../src/errors.js";
 import { defaultSettings, generateInMemory, MEMORY_DIRS } from "../../src/memory.js";
 import { evaluate, transpiler } from "./decode.js";
 import type { Located, Span } from "./locate.js";
-import { errorSpan, locate, schemaSpan, spanAt } from "./locate.js";
+import { errorSpan, locate, PARSE_MAX_DEPTH, schemaSpan, spanAt } from "./locate.js";
 import { SAMPLE } from "./sample.js";
 
 /** Odd characters are made here, never typed into the file. */
@@ -189,11 +189,36 @@ describe("locate, with JSON.parse's grammar for schemas", () => {
   });
 
   it("keeps the later of two equal keys, as JSON.parse does", () => {
-    const text = '{"a": {"old": 1}, "b": 2, "a": {"new": 3}}';
+    const text = '{"a": {"old": 1, "x": [2]}, "b": 2, "a": {"new": 3}, "c": 1, "c": [4], "c": 5}';
     const found = places(locate(text, "parse"));
     expect(slice(text, found.get("/a")?.value ?? null)).toBe('{"new": 3}');
-    expect(found.has("/a/old")).toBe(false);
+    expect(["/a/old", "/a/x", "/a/x/0", "/c/0"].filter((p) => found.has(p))).toEqual([]);
     expect(slice(text, found.get("/a/new")?.value ?? null)).toBe("3");
+    expect(slice(text, found.get("/c")?.value ?? null)).toBe("5");
+    expect([...found.keys()].sort()).toEqual(["", "/a", "/a/new", "/b", "/c"]);
+  });
+
+  it("stops without overflowing the stack past its depth limit, and marks nothing then", () => {
+    for (const depth of [PARSE_MAX_DEPTH + 1, 5000, 100_000]) {
+      const text = `{"a": ${deep(depth)}}`;
+      expect(() => JSON.parse(text), String(depth)).not.toThrow();
+      const located = locate(text, "parse");
+      expect(located, String(depth)).toEqual({ ok: false, at: 6 + PARSE_MAX_DEPTH - 1, limit: true });
+      expect(schemaSpan(text, null)).toBeNull();
+      expect(schemaSpan(text, "/a")).toBeNull();
+    }
+    expect(locate(deep(PARSE_MAX_DEPTH), "parse").ok).toBe(true);
+  });
+});
+
+describe("locate on deep text with the strict grammar", () => {
+  it("stops at the reader's depth limit however deep the text goes, without overflowing the stack", () => {
+    for (const depth of [MAX_DEPTH, 5000, 100_000]) {
+      const text = deep(depth);
+      expect(locate(text), String(depth)).toEqual({ ok: false, at: MAX_DEPTH - 1, limit: false });
+      expect(strictRead(text)).toMatchObject({ ok: false, code: "too_deep", offset: MAX_DEPTH - 1 });
+      expect(errorSpan(text, { path: "/0", code: "too_deep" })).toEqual({ from: MAX_DEPTH - 1, to: MAX_DEPTH });
+    }
   });
 });
 
@@ -261,6 +286,12 @@ describe("schemaSpan", () => {
     expect(slice(schema, schemaSpan(schema, "/$defs/line/if"))).toBe('"if"');
     expect(slice(schema, schemaSpan(schema, "/$defs/line"))).toBe('"line"');
     expect(slice(schema, schemaSpan(schema, ""))).toBe("{");
+  });
+
+  it("finds a def whose name has ~ or /, by its escaped pointer", () => {
+    const text = '{"$defs": {"a": {}, "a~/b": {"type": "object"}}}';
+    expect(slice(text, schemaSpan(text, "/$defs/a~0~1b"))).toBe('"a~/b"');
+    expect(slice(text, schemaSpan(text, "/$defs/a~0~1b/type"))).toBe('"type"');
   });
 
   it("marks where JSON.parse stops when the file isn't JSON", () => {

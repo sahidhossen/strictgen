@@ -20,6 +20,14 @@ const TYPES = {
   "worker.js": "text/javascript; charset=utf-8",
 };
 
+// A closed stdout or stderr, like `| head`, doesn't stop the server or print a stack trace: the
+// line it prints is only a note.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (error) => {
+    if (error.code !== "EPIPE") process.exit(1);
+  });
+}
+
 function usage(message) {
   process.stderr.write(`${message}\nusage: node scripts/playground-serve.mjs [--dir <dir>] [--port <port>]\n`);
   process.exit(2);

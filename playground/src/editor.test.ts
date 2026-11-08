@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { undo } from "@codemirror/commands";
 import { describe, expect, it } from "vitest";
 
 import { CodeView, languageOf, STYLE_NONCE } from "./editor.js";
@@ -25,6 +26,29 @@ describe("the code views", () => {
     expect(edits).toEqual([]);
     view.view.dispatch({ changes: { from: 8, insert: " " }, userEvent: "input" });
     expect(edits).toEqual(['{"a": 1} ']);
+    view.destroy();
+  });
+
+  it("start a new undo history when the page sets the text, so undo never brings back another file's text", () => {
+    const edits: string[] = [];
+    const { view } = mount({ label: "Schema text", language: "json", editable: true, text: "A", onChange: (t) => edits.push(t) });
+    // An edit in the first file, then the page shows another file.
+    view.view.dispatch({ changes: { from: 1, insert: "1" }, userEvent: "input" });
+    expect(edits).toEqual(["A1"]);
+    view.setText("B");
+    expect(undo(view.view)).toBe(false);
+    expect(view.text).toBe("B");
+    expect(edits).toEqual(["A1"]);
+    // The same text again, for another file with the same text, starts again too when asked.
+    view.view.dispatch({ changes: { from: 1, insert: "2" }, userEvent: "input" });
+    view.setText("B2", true);
+    expect(undo(view.view)).toBe(false);
+    expect(view.text).toBe("B2");
+    // An edit in the new file still undoes, and reports the text it went back to.
+    view.view.dispatch({ changes: { from: 2, insert: "3" }, userEvent: "input" });
+    expect(undo(view.view)).toBe(true);
+    expect(view.text).toBe("B2");
+    expect(edits).toEqual(["A1", "B2", "B23", "B2"]);
     view.destroy();
   });
 

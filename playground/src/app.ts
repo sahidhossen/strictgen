@@ -61,6 +61,8 @@ const ui = {
 
 let state: State = SAMPLE;
 let selected = 0;
+/** The name of the schema file the editor shows, undefined after a link is read. */
+let shownFile: string | undefined;
 
 const schemaView = new CodeView(ui.schema, {
   label: "Schema text",
@@ -202,7 +204,9 @@ function renderFiles(): void {
   );
   const file = state.schemas[selected];
   ui.fileName.value = file?.name ?? "";
-  schemaView.setText(file?.text ?? "");
+  // Another file, or the same file from a new link, starts with its own undo history.
+  schemaView.setText(file?.text ?? "", file?.name !== shownFile);
+  shownFile = file?.name;
   ui.removeFile.disabled = state.schemas.length < 2;
   ui.fileError.textContent = "";
   markSchema();
@@ -213,16 +217,29 @@ function renderFiles(): void {
  * and its text is the text that failed.
  */
 function markSchema(): void {
-  const file = state.schemas[selected];
-  const problem = schemaProblem;
-  const text = schemaView.text;
-  const failed = problem?.schemas.find((f) => f.name === file?.name)?.text;
-  if (file === undefined || problem === null || problem.at.file !== file.name || failed !== text) {
-    schemaView.mark([]);
-    return;
+  markSafely(schemaView, () => {
+    const file = state.schemas[selected];
+    const problem = schemaProblem;
+    const text = schemaView.text;
+    const failed = problem?.schemas.find((f) => f.name === file?.name)?.text;
+    if (file === undefined || problem === null || problem.at.file !== file.name || failed !== text) return [];
+    const span = schemaSpan(text, problem.at.pointer);
+    return span === null ? [] : [{ ...span, kind: "problem", title: problem.message }];
+  });
+}
+
+/**
+ * Shows the marks `find` gives. A mark is a hint: if finding it fails in a way nobody expected,
+ * the view shows none rather than the failure stopping the rest of the page from rendering.
+ */
+function markSafely(view: CodeView, find: () => readonly Mark[]): void {
+  let list: readonly Mark[] = [];
+  try {
+    list = find();
+  } catch {
+    list = [];
   }
-  const span = schemaSpan(text, problem.at.pointer);
-  schemaView.mark(span === null ? [] : [{ ...span, kind: "problem", title: problem.message }]);
+  view.mark(list);
 }
 
 function renderSettings(): void {
@@ -319,26 +336,25 @@ function row(table: HTMLTableElement, name: string, value: string | null): void 
  * the places are in that text.
  */
 function markPayload(decoded: Decoded | null, request: Request): void {
-  const text = payloadView.text;
-  if (decoded === null || text !== request.payload) {
-    payloadView.mark([]);
-    return;
-  }
-  const list: Mark[] = [];
-  if (decoded.kind === "rejected") {
-    // The LLM decoder may clean the text up before reading it, so only a path the text has is marked.
-    const span = errorSpan(text, decoded.error, request.decoder === "normal");
-    if (span !== null) list.push({ ...span, kind: "problem", title: decoded.error.message });
-  } else if (decoded.kind === "accepted" && decoded.unknown.length > 0) {
-    const located = locate(text);
-    for (const path of decoded.unknown) {
-      const key = located.ok ? located.places.get(path)?.key : undefined;
-      if (key !== undefined && key !== null) {
-        list.push({ ...key, kind: "unknown-key", title: `${path}: an unknown key, reported and dropped` });
+  markSafely(payloadView, () => {
+    const text = payloadView.text;
+    if (decoded === null || text !== request.payload) return [];
+    const list: Mark[] = [];
+    if (decoded.kind === "rejected") {
+      // The LLM decoder may clean the text up before reading it, so only a path the text has is marked.
+      const span = errorSpan(text, decoded.error, request.decoder === "normal");
+      if (span !== null) list.push({ ...span, kind: "problem", title: decoded.error.message });
+    } else if (decoded.kind === "accepted" && decoded.unknown.length > 0) {
+      const located = locate(text);
+      for (const path of decoded.unknown) {
+        const key = located.ok ? located.places.get(path)?.key : undefined;
+        if (key !== undefined && key !== null) {
+          list.push({ ...key, kind: "unknown-key", title: `${path}: an unknown key, reported and dropped` });
+        }
       }
     }
-  }
-  payloadView.mark(list);
+    return list;
+  });
 }
 
 function renderDecoded(decoded: Decoded | null, type: string): void {
@@ -585,6 +601,8 @@ async function load(): Promise<void> {
     state = SAMPLE;
   }
   selected = 0;
+  shownFile = undefined;
+  payloadView.setText(state.payload, true);
   renderFiles();
   renderSettings();
   runNow();

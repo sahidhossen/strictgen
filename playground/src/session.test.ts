@@ -212,6 +212,16 @@ describe("respond", () => {
     expect(broken.generated.ok ? null : broken.generated.at).toEqual({ file: "order.json", pointer: null });
   });
 
+  it("gives the escaped pointer of a def whose name has ~ or /", () => {
+    const schema = JSON.stringify({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      $id: "https://example.com/schemas/order.json",
+      $defs: { "a~/b": { type: "object", properties: { x: { type: "string" } } } },
+    });
+    const r = respond(session(), { id: 1, input: { ...INPUT, schemas: [{ name: "order.json", text: schema }] }, type: "", decoder: "normal", payload: "" });
+    expect(r.generated.ok ? null : r.generated.at).toEqual({ file: "order.json", pointer: "/$defs/a~0~1b" });
+  });
+
   it("reads the place of a generation error from its path", () => {
     expect(schemaAt("order.json#/$defs/line/properties/sku")).toEqual({ file: "order.json", pointer: "/$defs/line/properties/sku" });
     expect(schemaAt("order.json#")).toEqual({ file: "order.json", pointer: "" });

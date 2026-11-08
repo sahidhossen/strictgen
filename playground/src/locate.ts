@@ -29,7 +29,17 @@ export type Grammar = "strict" | "parse";
 /** The text read: every value by JSON Pointer, or the position where reading stopped. */
 export type Located =
   | { readonly ok: true; readonly places: ReadonlyMap<string, Place> }
-  | { readonly ok: false; readonly at: number };
+  /**
+   * `limit` is true when reading stopped at {@link PARSE_MAX_DEPTH}, the page's own limit for
+   * schemas, rather than at an error in the text: nothing is marked then.
+   */
+  | { readonly ok: false; readonly at: number; readonly limit: boolean };
+
+/**
+ * The deepest nesting read with the `JSON.parse` grammar. The reader recurses, so text nested
+ * deeper (which `JSON.parse` may still read) gets no marks instead of overflowing the stack.
+ */
+export const PARSE_MAX_DEPTH = 512;
 
 /** The values of the escapes other than \u. */
 const ESCAPES = new Map([
@@ -62,7 +72,10 @@ function child(path: string, segment: string | number): string {
 
 /** Thrown inside the reader with the position it stopped at. */
 class Stop {
-  constructor(readonly at: number) {}
+  constructor(
+    readonly at: number,
+    readonly limit = false,
+  ) {}
 }
 
 class Reader {
@@ -109,6 +122,7 @@ class Reader {
       case "{":
       case "[":
         if (this.strict && depth + 1 >= MAX_DEPTH) throw new Stop(this.pos);
+        if (!this.strict && depth + 1 > PARSE_MAX_DEPTH) throw new Stop(this.pos, true);
         if (c === "{") this.object(depth + 1, path);
         else this.array(depth + 1, path);
         break;
@@ -150,8 +164,12 @@ class Reader {
       const at = child(path, key);
       if (seen.has(key)) {
         if (this.strict) throw new Stop(keyAt);
-        // JSON.parse keeps the later value: forget the earlier one and everything in it.
-        for (const p of [...this.places.keys()]) if (p === at || p.startsWith(`${at}/`)) this.places.delete(p);
+        // JSON.parse keeps the later value: the later one replaces the earlier one's place, and
+        // when the earlier one held values, their places go too (only then is the map scanned).
+        const first = this.text[this.places.get(at)?.value.from ?? -1];
+        if (first === "{" || first === "[") {
+          for (const p of [...this.places.keys()]) if (p.startsWith(`${at}/`)) this.places.delete(p);
+        }
       }
       seen.add(key);
       const keySpan = { from: keyAt, to: this.pos };
@@ -259,7 +277,7 @@ export function locate(text: string, grammar: Grammar = "strict"): Located {
   try {
     reader.document();
   } catch (error) {
-    if (error instanceof Stop) return { ok: false, at: error.at };
+    if (error instanceof Stop) return { ok: false, at: error.at, limit: error.limit };
     throw error;
   }
   return { ok: true, places: reader.places };
@@ -350,6 +368,6 @@ function keyEnd(text: string, at: number): number {
  */
 export function schemaSpan(text: string, pointer: string | null): Span | null {
   const located = locate(text, "parse");
-  if (pointer === null) return located.ok ? null : visible({ from: located.at, to: located.at }, text.length);
+  if (pointer === null) return located.ok || located.limit ? null : visible({ from: located.at, to: located.at }, text.length);
   return spanAt(located, text.length, pointer, "key");
 }

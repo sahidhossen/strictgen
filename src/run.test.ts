@@ -622,6 +622,15 @@ describe("explain", () => {
     ]);
   });
 
+  it("escapes a def name with ~ or / in the JSON Pointer of an error, in generate and explain", () => {
+    const root = users({ "a~/b": { type: "object", properties: { city: { type: "string" } } } });
+    const generated = cli(root, []);
+    expect(generated.code).toBe(EXIT_FAILED);
+    expect(generated.err[0]).toMatch(/^error: user\.json#\/\$defs\/a~0~1b: open-object: /);
+    const explained = cli(root, ["explain", "user.json#/$defs/a~0~1b"]);
+    expect(explained.out[2]).toBe("Generation fails at user.json#/$defs/a~0~1b:");
+  });
+
   it("says when generation fails elsewhere first", () => {
     const root = users({ bad: { type: "string", format: "email" } });
     const result = cli(root, ["explain", "user.json#/$defs/role"]);
@@ -691,6 +700,11 @@ describe("explain", () => {
         "error: common.json# has no root type, only $defs. Explain one of them, like common.json#/$defs/orderId",
       ],
     });
+    // A def name the hint names is escaped as a JSON Pointer segment.
+    writeFileSync(join(root, "schemas", "common.json"), JSON.stringify({ ...common, $defs: { "order/id~": { type: "string" } } }));
+    expect(cli(root, ["explain", "common.json"]).err).toEqual([
+      "error: common.json# has no root type, only $defs. Explain one of them, like common.json#/$defs/order~1id~0",
+    ]);
   });
 });
 
