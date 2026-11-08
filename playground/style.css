@@ -9,6 +9,21 @@
   --ok: #1d7a3a;
   --bad: #b3261e;
   --warn: #8a5a00;
+  --active-line: #eceef1;
+  --selection: #c8daf5;
+  --search-match: #f6e7a8;
+  --bracket: #d7e3f6;
+  --problem-bg: #fbe4e2;
+  --tok-keyword: #a3248f;
+  --tok-string: #0b7a33;
+  --tok-number: #1750a8;
+  --tok-literal: #1750a8;
+  --tok-comment: #5f6871;
+  --tok-type: #8a4f00;
+  --tok-property: #1c5f8f;
+  --tok-function: #6b3fb3;
+  --tok-meta: #9a3412;
+  --tok-escape: #b3261e;
   color-scheme: light dark;
 }
 
@@ -24,6 +39,21 @@
     --ok: #6fcf8a;
     --bad: #f28b82;
     --warn: #f0c060;
+    --active-line: #1b1e21;
+    --selection: #2c4a75;
+    --search-match: #4d4220;
+    --bracket: #2a3a52;
+    --problem-bg: #3c1f1d;
+    --tok-keyword: #f290d8;
+    --tok-string: #8fd99f;
+    --tok-number: #8cb8ff;
+    --tok-literal: #8cb8ff;
+    --tok-comment: #949ba3;
+    --tok-type: #f0c27a;
+    --tok-property: #7fd0f0;
+    --tok-function: #c6a6ff;
+    --tok-meta: #ffab70;
+    --tok-escape: #ff9b92;
   }
 }
 
@@ -40,7 +70,6 @@ body {
 
 code,
 pre,
-textarea,
 input,
 select {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -125,20 +154,25 @@ section {
   margin: 8px 0;
 }
 
-textarea {
-  width: 100%;
-  min-height: 260px;
+/* The editors. CodeMirror scrolls inside its own box; the box can be made taller by its corner. */
+.editor .cm-editor {
+  height: 360px;
+  min-height: 120px;
   resize: vertical;
-  padding: 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--panel);
-  color: var(--fg);
-  tab-size: 2;
+  overflow: hidden;
 }
 
-#payload {
-  min-height: 160px;
+#payload .cm-editor {
+  height: 260px;
+}
+
+.code .cm-editor {
+  height: 70vh;
+  min-height: 200px;
+}
+
+.encoded .cm-editor {
+  max-height: 40vh;
 }
 
 input,
@@ -159,6 +193,10 @@ button {
 
 button:hover {
   border-color: var(--accent);
+}
+
+select {
+  max-width: 100%;
 }
 
 input[type="checkbox"] {
@@ -251,6 +289,7 @@ input[type="checkbox"] {
   color: var(--muted);
   font-weight: normal;
   vertical-align: top;
+  white-space: nowrap;
 }
 
 .result td {
@@ -283,7 +322,7 @@ input[type="checkbox"] {
   max-width: 60%;
 }
 
-.panel.stale pre {
+.panel.stale .cm-editor {
   opacity: 0.45;
 }
 

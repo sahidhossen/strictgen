@@ -166,7 +166,8 @@ export function keyString(key: DefKey): string {
 
 /** Location of a def key's schema. */
 export function keyLoc(key: DefKey): Loc {
-  return { file: key.file, pointer: key.def === undefined ? "" : `/$defs/${key.def}` };
+  const root = { file: key.file, pointer: "" };
+  return key.def === undefined ? root : at(root, "$defs", key.def);
 }
 
 /**

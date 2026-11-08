@@ -146,6 +146,11 @@ function usage(message) {
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  // A closed stdout or stderr, like `| head`, ends the build quietly with its exit code so far,
+  // as the command line does, instead of a stack trace.
+  for (const stream of [process.stdout, process.stderr]) {
+    stream.on("error", (error) => process.exit(error.code === "EPIPE" ? (process.exitCode ?? 0) : 1));
+  }
   const args = process.argv.slice(2);
   let out = join(PLAYGROUND, "dist");
   if (args.length === 2 && args[0] === "--out" && args[1] !== "") out = resolve(args[1]);

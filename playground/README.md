@@ -19,11 +19,20 @@ Browsers don't start workers from a `file://` page, so open it through the serve
 
 The decoders are `decodeXFromJson` in strict mode, `reportXFromJson` in report mode, and `decodeXFromLlm` for LLM output. An accepted value is encoded again with `encodeXToJson`. A rejected one shows the shared error, `path`, `code`, `expected`, `found` and the message, and its compact form. The conformance suite holds the Rust and Go decoders to the same results.
 
+## Editors
+
+The schema and payload editors and the four output panes are [CodeMirror 6](https://codemirror.net/) views, bundled into `app.js` (about 580 KiB minified; nothing is loaded from elsewhere). They colour JSON, Rust, Go and TypeScript, and have line numbers, bracket matching, folding and search (Ctrl-F, or Cmd-F on macOS). The output panes and the encoded value are read only, but can be focused, selected and searched. The colours follow the system's light or dark setting.
+
+- **Keyboard.** In the schema and payload editors, Tab indents. Press Escape, then Tab, to move on to the next control, or Ctrl-M (Shift-Alt-M on macOS) to make Tab move focus until pressed again. The read-only panes don't take Tab at all.
+- **Marks.** When a payload is rejected, the place its error's `path` names is underlined in the payload: the value, or the key for an unknown or duplicate key, or for a missing key the object it is missing from. A JSON syntax error marks the character where reading stopped. In report mode the unknown keys that were dropped are marked too. The place is found by `playground/src/locate.ts`, which reads the text with the grammar of the generated strict reader, so places stay right after escapes and astral characters (positions are in UTF-16 units, as the editor counts them). A test holds it to the generated reader on a set of valid and broken texts: it accepts the same ones, finds the same value at each place, and stops at the same offset. Through the LLM decoder, whose cleanup step can change the text first, only an error at a path the text has is marked. A generation error is underlined in the schema at its pointer, by the key that names the schema or keyword at fault, with the grammar `JSON.parse` reads schemas with. A schema nested more than 512 arrays and objects deep gets no mark. A mark's title holds the error message. Marks are only a hint: if finding one fails, the page shows none and renders the rest as usual.
+- **Undo.** Each schema file has its own undo history: switching files, or opening a link, starts it again, so undo never brings back another file's text.
+
 ## Safety
 
 - Generation and decoding run in a Web Worker. A request that takes more than 5 seconds, like a pattern that backtracks a lot on a payload, stops the worker, and a new one starts.
-- The page sets every piece of text with `textContent` or as an input's value, never as markup.
-- The page loads only its own four files. Its content security policy (a `meta` tag) allows scripts, styles and the worker from the same origin only, and no network requests. A worker gets the policy its own response carries, not the page's, so the worker can run the code it compiles; GitHub Pages sends no policy. So each generated module also runs with `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`, `self` and `globalThis` undefined in its scope.
+- The page sets every piece of text with `textContent`, as an input's value or as a CodeMirror document, never as markup. A CodeMirror document is text: the editors build their lines from text nodes, and the marks set their title as an attribute. The build test bans a fixed list of markup calls, by name: `app.js` as bundled, CodeMirror included, may not contain `innerHTML`, `outerHTML`, `insertAdjacentHTML`, `document.write` or `createContextualFragment`, and the page's own sources may not contain the first four or `setAttribute("style"`. That is a list of known names, not a proof that nothing else can make markup.
+- The page loads only its own four files. Its content security policy (a `meta` tag) allows scripts, styles and the worker from the same origin only, and no network requests.
+- **Styles and the nonce.** CodeMirror adds one `<style>` element at run time with its base styles, which `style-src 'self'` alone would block. The policy allows it by a nonce, `style-src 'self' 'nonce-...'`, which `editor.ts` passes to CodeMirror (`EditorView.cspNonce`) and the build test checks against the page. Every other inline `<style>` element and `style` attribute stays blocked. The page is static, so the nonce is the same for everyone and anyone can read it: it doesn't stop someone who can already add markup to the page, so it is defence in depth only, not a secret. The page has no way to add markup from user text in the first place. Scripts, the worker and network requests are as strict as before. A worker gets the policy its own response carries, not the page's, so the worker can run the code it compiles; GitHub Pages sends no policy. So each generated module also runs with `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `importScripts`, `self` and `globalThis` undefined in its scope.
 - When the worker script doesn't load, the page says so and offers a Retry button.
 
 ## Sharing
@@ -32,7 +41,7 @@ The page keeps its state in the URL fragment, after the `#`, which browsers don'
 
 ## Build output
 
-`playground/dist` isn't committed: git ignores it like every `dist/` folder. CI builds and tests the page on every pull request, and the deploy workflow builds it again from the commit it deploys. The worker is about 4 MB, most of it the TypeScript compiler.
+`playground/dist` isn't committed: git ignores it like every `dist/` folder. CI builds and tests the page on every pull request, and the deploy workflow builds it again from the commit it deploys. The worker is about 4 MB, most of it the TypeScript compiler. `app.js` is about 580 KiB, most of it CodeMirror, and the build test fails when it passes 700 KiB.
 
 ## Deploying
 

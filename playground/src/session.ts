@@ -34,7 +34,24 @@ export type Generated =
       readonly types: readonly string[];
       readonly llmTypes: readonly string[];
     }
-  | { readonly ok: false; readonly error: string };
+  | { readonly ok: false; readonly error: string; readonly at: SchemaAt | null };
+
+/**
+ * Where in the schemas a generation error is: the file, and the JSON Pointer of the schema at
+ * fault, or null when the file as a whole is (it isn't valid JSON, say).
+ */
+export interface SchemaAt {
+  readonly file: string;
+  readonly pointer: string | null;
+}
+
+/** The place a {@link CodegenError}'s path names, like `order.json#/$defs/line`, or null for one that names none. */
+export function schemaAt(path: string): SchemaAt | null {
+  const hash = path.indexOf("#");
+  const file = hash < 0 ? path : path.slice(0, hash);
+  if (!file.endsWith(".json") || file.includes("/")) return null;
+  return { file, pointer: hash < 0 ? null : path.slice(hash + 1) };
+}
 
 /** What decoding gave, or why there is nothing to decode with. */
 export type Decoded = Outcome | { readonly kind: "unavailable"; readonly reason: string };
@@ -102,14 +119,19 @@ export class Session {
         ...(input.ids === null ? {} : { ids: input.ids }),
       }).files;
     } catch (error) {
-      if (error instanceof CodegenError || error instanceof ConfigError) return { ok: false, error: error.message };
-      return { ok: false, error: `internal error: ${error instanceof Error ? error.message : String(error)}` };
+      if (error instanceof CodegenError) return { ok: false, error: error.message, at: schemaAt(error.path) };
+      if (error instanceof ConfigError) return { ok: false, error: error.message, at: null };
+      return { ok: false, error: `internal error: ${error instanceof Error ? error.message : String(error)}`, at: null };
     }
     let pkg: Package;
     try {
       pkg = loadPackage(files, MEMORY_DIRS.typescript, this.transpile, this.run);
     } catch (error) {
-      return { ok: false, error: `the generated TypeScript didn't load: ${error instanceof Error ? error.message : String(error)}` };
+      return {
+        ok: false,
+        error: `the generated TypeScript didn't load: ${error instanceof Error ? error.message : String(error)}`,
+        at: null,
+      };
     }
     this.pkg = pkg;
     return {
