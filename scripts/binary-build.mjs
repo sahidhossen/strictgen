@@ -15,7 +15,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
@@ -37,8 +37,8 @@ function fail(message) {
   process.exit(1);
 }
 
-function run(command, args) {
-  const result = spawnSync(command, args, { stdio: "inherit" });
+function run(command, args, cwd = undefined) {
+  const result = spawnSync(command, args, { stdio: "inherit", cwd });
   if (result.error !== undefined) fail(`${command}: ${result.error.message}`);
   if (result.status !== 0) fail(`${command} ${args.join(" ")} exited with ${String(result.status)}`);
 }
@@ -87,14 +87,23 @@ async function main() {
     legalComments: "none",
   });
 
+  // Node keeps the path of `main` in the blob, so every path in the config is relative to the
+  // output folder, where Node runs: an absolute path would put the build machine's folders into
+  // the binary. Asset keys are the paths from the package root either way.
   const blob = join(out, "strictgen.blob");
   const config = join(out, "sea-config.json");
-  const assets = Object.fromEntries(files.map((f) => [f, join(ROOT, f)]));
+  const portable = (path) => {
+    const from = relative(out, path);
+    // On Windows, an output folder on another drive than the checkout has no relative path.
+    if (isAbsolute(from)) fail(`${path} has no path relative to the output folder ${out}; build into a folder on the same drive`);
+    return from.split("\\").join("/");
+  };
+  const assets = Object.fromEntries(files.map((f) => [f, portable(join(ROOT, f))]));
   writeFileSync(
     config,
-    `${JSON.stringify({ main: bundle, output: blob, disableExperimentalSEAWarning: true, useSnapshot: false, useCodeCache: false, assets }, null, 2)}\n`,
+    `${JSON.stringify({ main: portable(bundle), output: portable(blob), disableExperimentalSEAWarning: true, useSnapshot: false, useCodeCache: false, assets }, null, 2)}\n`,
   );
-  run(process.execPath, ["--experimental-sea-config", config]);
+  run(process.execPath, ["--experimental-sea-config", "sea-config.json"], out);
 
   const binary = join(out, name);
   copyFileSync(process.execPath, binary);

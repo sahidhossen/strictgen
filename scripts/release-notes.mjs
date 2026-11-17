@@ -6,15 +6,18 @@
  *
  * The section is the one headed `## [<version>] - YYYY-MM-DD`, up to the next `## ` heading. It
  * fails (exit 1, one line) when there is no such heading, when there are two, or when the section
- * is empty, so a release can't go out without its notes. `--dry-run` falls back to the
- * `## [Unreleased]` section, with a notice on stderr, so the release workflow's dry run works
- * before a version has been written into the changelog.
+ * is empty, so a release can't go out without its notes. Link reference lines and blank lines at
+ * the end of the section, like the compare links at the bottom of the file, are left out.
+ * `--dry-run` falls back to the `## [Unreleased]` section, with a notice on stderr, so the release
+ * workflow's dry run works before a version has been written into the changelog.
  */
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+/** A Markdown link reference definition on its own line, like `[Unreleased]: https://...`. */
+const LINK_REFERENCE = /^\[[^\]]+\]: \S+$/;
 
 /** The body of the section headed `## [<name>]`, `## [<name>] - <date>` for a version. */
 export function section(changelog, name) {
@@ -25,7 +28,11 @@ export function section(changelog, name) {
   if (starts.length > 1) throw new Error(`CHANGELOG.md has ${String(starts.length)} "## [${name}]" headings`);
   const start = starts[0] + 1;
   const next = lines.findIndex((l, i) => i >= start && /^## /.test(l));
-  const body = lines.slice(start, next < 0 ? undefined : next).join("\n").trim();
+  const part = lines.slice(start, next < 0 ? undefined : next);
+  // The last section runs to the end of the file, so it ends with the link references of the
+  // version headings, like `[0.1.0]: https://...`. They show nothing in the notes; drop them.
+  while (part.length > 0 && (part.at(-1).trim() === "" || LINK_REFERENCE.test(part.at(-1).trim()))) part.pop();
+  const body = part.join("\n").trim();
   if (body === "") throw new Error(`the CHANGELOG.md section of ${name} is empty`);
   return `${body}\n`;
 }
