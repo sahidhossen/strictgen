@@ -65,7 +65,7 @@ jobs:
           version: 10
       # The binary embeds the Node that runs the build: the exact version in this file, which the
       # release notes name too.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .github/binary-node-version
           cache: pnpm
