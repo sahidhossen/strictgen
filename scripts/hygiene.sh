@@ -36,6 +36,10 @@ report() {
 }
 
 attribution='co-authored-by|generated with|claude'
+# GitHub adds this trailer to a squash merge when the pull request's commits carry the maintainer's
+# noreply address and the merge is made under another of the maintainer's addresses. It names the
+# maintainer, nobody else, so commit messages may hold it, and only this exact line.
+owner_trailer='^co-authored-by: sahid hossen <12063077\+sahidhossen@users\.noreply\.github\.com>[[:space:]]*$'
 
 denylist="$(mktemp)"
 trap 'rm -f "$denylist"' EXIT
@@ -141,7 +145,7 @@ else
   messages=""
 fi
 if [[ -n "$messages" ]]; then
-  if grep -iqE "$attribution" <<<"$messages"; then
+  if grep -viE "$owner_trailer" <<<"$messages" | grep -iqE "$attribution"; then
     report "attribution or assistant name in commit messages"
   fi
   if [[ -s "$denylist" ]] && grep -iqFf "$denylist" <<<"$messages"; then
