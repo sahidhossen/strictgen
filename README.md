@@ -48,20 +48,21 @@ Nothing crashed. Each language read the same JSON a little differently. That is 
 
 ## Quick start
 
-Install, after the first release (nothing is published yet):
+Install:
 
 ```bash
 npm install --save-dev strictgen    # Node 22 or later; or: npx strictgen generate
 ```
 
-Rust and Go projects can use a single binary instead, which needs no Node. Each GitHub release will have one for macOS (arm64, x64), Linux (x64, arm64, glibc) and Windows (x64), and a `SHA256SUMS` file to check the download against:
+Rust and Go projects can use a single binary instead, which needs no Node. Each [GitHub release](https://github.com/sahidhossen/strictgen/releases) has one archive per platform: `strictgen-macos-arm64.tar.gz`, `strictgen-macos-x64.tar.gz`, `strictgen-linux-x64.tar.gz`, `strictgen-linux-arm64.tar.gz` (glibc) and `strictgen-windows-x64.zip`, and a `SHA256SUMS` file to check them against. Download the archive and `SHA256SUMS` into one folder, then:
 
 ```bash
 sha256sum --check --ignore-missing SHA256SUMS    # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
-chmod +x strictgen-linux-x64 && ./strictgen-linux-x64 --version
+tar -xzf strictgen-linux-x64.tar.gz              # Windows: Expand-Archive strictgen-windows-x64.zip .
+./strictgen --version                            # Windows: .\strictgen.exe --version
 ```
 
-The binaries aren't signed by Apple or Microsoft yet, so macOS and Windows may warn on first run. On macOS, `xattr -d com.apple.quarantine strictgen-macos-arm64` clears the warning for a file you have checked. `rustfmt` and `gofmt` stay separate installs.
+The archive holds one file, `strictgen` (`strictgen.exe` on Windows), already executable; move it to a folder on your `PATH`. The binaries aren't signed by Apple or Microsoft, so macOS and Windows may warn on first run. On macOS, once you have checked the download, `xattr -d com.apple.quarantine strictgen` on the extracted file clears the warning. `rustfmt` and `gofmt` stay separate installs.
 
 A schema, from [`examples/quickstart`](examples/quickstart):
 

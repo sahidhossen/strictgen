@@ -1,4 +1,4 @@
-> **Draft, not published.** The launch post for the first release, for Sahid to edit and approve. It is not linked from the README yet. Every output block below is real: `pnpm docs` makes it from the programs in [`examples/quickstart`](../examples/quickstart), and `pnpm docs:check` fails in CI when it changes.
+> **Draft, not published.** The launch post for the first release, for the maintainer to edit and approve. It is not linked from the README yet. Every output block below is real: `pnpm docs` makes it from the programs in [`examples/quickstart`](../examples/quickstart), and `pnpm docs:check` fails in CI when it changes.
 
 # The hash only Go got wrong
 

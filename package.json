@@ -1,6 +1,6 @@
 {
   "name": "strictgen",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "One JSON Schema. Strict Rust, Go and TypeScript types and decoders that accept and reject exactly the same JSON.",
   "keywords": [
     "json-schema",

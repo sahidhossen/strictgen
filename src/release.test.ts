@@ -211,6 +211,60 @@ describe("release workflow", () => {
     expect(job("ci")).toContain("uses: ./.github/workflows/ci.yml");
   });
 
+  describe("archives", () => {
+    const unix = ["macos-arm64", "macos-x64", "linux-x64", "linux-arm64"];
+    const archives = [...unix.map((t) => `strictgen-${t}.tar.gz`), "strictgen-windows-x64.zip"];
+
+    it("packs every binary CI builds, and nothing else, into an archive named after its platform", () => {
+      const built = [...read(".github/workflows/binaries.yml").matchAll(/"file":"(strictgen-[a-z0-9-]+)(\.exe)?"/g)].map((m) => m[1]);
+      expect(built).toEqual(archives.map((a) => a.replace(/\.(tar\.gz|zip)$/, "")));
+      const assemble = job("assemble");
+      expect(assemble).toContain("path: binaries\n");
+      expect(assemble).toContain('test "$(ls binaries | wc -l)" -eq 5');
+      expect(assemble).toContain(`for target in ${unix.join(" ")}; do`);
+      expect(assemble).toContain('cp "binaries/strictgen-$target" "$stage/strictgen"');
+      expect(assemble).toContain('cp binaries/strictgen-windows-x64.exe "$stage/strictgen.exe"');
+    });
+
+    it("builds them reproducibly with relative member names", () => {
+      const assemble = job("assemble");
+      for (const flag of ["--sort=name", '--mtime="@$epoch"', "--owner=0 --group=0 --numeric-owner", "--format=ustar", '--directory="$stage"', "gzip -n", "zip -X", "TZ: UTC", 'touch --date="@$epoch"', "chmod 0755"]) {
+        expect(assemble, flag).toContain(flag);
+      }
+      // The archive member is the bare name, never a path of the runner.
+      expect(assemble).toContain("--numeric-owner strictgen | gzip");
+      expect(assemble).toContain('zip -X -9 -q "$GITHUB_WORKSPACE/release/strictgen-windows-x64.zip" strictgen.exe)');
+    });
+
+    it("checks each archive's contents and runs the linux-x64 binary from its archive", () => {
+      const assemble = job("assemble");
+      expect(assemble).toContain('test "$(tar --list --gzip --file="$archive")" = "strictgen"');
+      expect(assemble).toContain('cmp "$out/strictgen" "binaries/strictgen-$target"');
+      expect(assemble).toContain('test "$(unzip -Z1 release/strictgen-windows-x64.zip)" = "strictgen.exe"');
+      expect(assemble).toContain('cmp "$out/strictgen.exe" binaries/strictgen-windows-x64.exe');
+      expect(assemble).toContain("--file=release/strictgen-linux-x64.tar.gz");
+      expect(assemble).toContain('printed="$("$out/strictgen" --version)"');
+      expect(assemble).toContain('"$printed" != "$VERSION"');
+      expect(assemble.indexOf("name: Check the archives")).toBeLessThan(assemble.indexOf("SHA256SUMS"));
+    });
+
+    it("sums the archives, keeps the Node version line in the notes and attaches only the archives", () => {
+      const assemble = job("assemble");
+      expect(assemble).toContain("sha256sum strictgen-*.tar.gz strictgen-*.zip > SHA256SUMS");
+      expect(assemble).toContain('test "$(wc -l < release/SHA256SUMS)" -eq 5');
+      expect(assemble).toContain("The binaries are Node single executable applications built with Node %s.");
+      const attached = [...job("github-release").matchAll(/release\/(strictgen-[^\s\\]+|SHA256SUMS)/g)].map((m) => m[1]);
+      expect(attached).toEqual([...archives, "SHA256SUMS"]);
+    });
+
+    it("are the downloads the README names", () => {
+      const readme = read("README.md");
+      for (const archive of archives) expect(readme, archive).toContain(`\`${archive}\``);
+      expect(readme).not.toMatch(/strictgen-(macos|linux)-(arm64|x64)(?!\.tar\.gz)\b/);
+      expect(readme).not.toContain("strictgen-windows-x64.exe");
+    });
+  });
+
   it("keeps the npm token in the release environment, seen only by the npm job, which checks it", () => {
     const npm = job("npm");
     expect(npm).toContain("environment: release");

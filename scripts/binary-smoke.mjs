@@ -10,6 +10,9 @@
  * - `check` passes on examples/basic and examples/quickstart (rustfmt and gofmt on the PATH)
  * - `generate` on a copy of every example writes the same files, byte for byte, as the Node CLI
  *   on another copy, and prints the same output
+ * - the binary doesn't hold the absolute path of this checkout or of the binary's folder, so no
+ *   build machine's folders ship in it (Node's own build paths, from the official Node binary,
+ *   are expected and not checked)
  *
  * The binary is copied into an empty temporary folder first, so it can't read anything from the
  * checkout by accident. Exit 0 when everything matches, 1 with one line per difference otherwise.
@@ -82,6 +85,13 @@ function examplesCopy(scratch, name) {
   return root;
 }
 
+/** The absolute build folders found in the binary's bytes, with either path separator. */
+function buildPaths(binary, folders) {
+  const bytes = readFileSync(binary);
+  const forms = folders.flatMap((f) => [f, f.split("\\").join("/"), f.split("/").join("\\")]);
+  return [...new Set(forms)].filter((f) => f.length > 1 && bytes.includes(Buffer.from(f, "utf8")));
+}
+
 function main() {
   if (process.argv.length !== 3) {
     process.stderr.write("usage: node scripts/binary-smoke.mjs <binary>\n");
@@ -93,6 +103,10 @@ function main() {
     const binary = join(scratch, "bin", basename(process.argv[2]));
     copyFileSync(resolve(process.argv[2]), binary);
     const bin = (args, cwd) => call(binary, args, cwd);
+
+    for (const path of buildPaths(binary, [ROOT, dirname(resolve(process.argv[2]))])) {
+      failures.push(`the binary holds the build path ${shown(path)}`);
+    }
     const node = (args, cwd) => call(process.execPath, [CLI, ...args], cwd);
 
     const { version } = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8"));
