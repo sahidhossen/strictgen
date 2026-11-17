@@ -2,24 +2,66 @@
 
 **One JSON Schema. Rust, Go and TypeScript that accept and reject exactly the same JSON, and never drop data silently.**
 
-> **Status:** early development. Nothing is released yet, and the interface may change.
+[Docs](#docs) · [Playground](playground/README.md) · [Comparison](docs/comparison.md)
+
+<!-- Badges (release, CI) come with the first release. -->
+
+> **Status:** early development. Nothing is released yet.
+
+A valid order, an order with a quantity of 0, and an order where `note` is misspelled `notes`, read by the generated Rust, Go and TypeScript:
+
+<!-- snippet: decode json message payloads/valid.json payloads/zero-quantity.json payloads/misspelled-key.json -->
+```text
+payloads/valid.json
+  Rust        ok {"id":"ord_7d2k","quantity":2,"status":"paid","note":"Leave at the door"}
+  Go          ok {"id":"ord_7d2k","quantity":2,"status":"paid","note":"Leave at the door"}
+  TypeScript  ok {"id":"ord_7d2k","quantity":2,"status":"paid","note":"Leave at the door"}
+
+payloads/zero-quantity.json
+  Rust        /quantity: too small, expected >= 1, found 0
+  Go          /quantity: too small, expected >= 1, found 0
+  TypeScript  /quantity: too small, expected >= 1, found 0
+
+payloads/misspelled-key.json
+  Rust        /notes: unknown key
+  Go          /notes: unknown key
+  TypeScript  /notes: unknown key
+```
+<!-- /snippet -->
+
+These lines come from running the generated code in [`examples/quickstart`](examples/quickstart), and CI fails when they change. A decoder that skips unknown keys would have dropped the note without a word.
 
 ## Why
 
-In August 2026, a pull request to the dstack SDKs described a bug in the [compose hash](https://github.com/Dstack-TEE/dstack/pull/1024), the hash that identifies an app. For the same document, the Go SDK computed a different hash than the JavaScript and Python SDKs. Go's `encoding/json` escaped `<`, `>` and `&`, which JavaScript and Python write as they are, and it marshalled a fixed struct, so keys the struct didn't declare were gone before hashing. In the words of the pull request, "the SDK registers one hash, the guest measures another, attestation fails with nothing pointing at the cause". A [follow-up fix](https://github.com/Dstack-TEE/dstack/pull/1479) for U+2028 and U+2029, which Go escapes even with HTML escaping off, was merged in October.
+In August 2026, a [pull request to the dstack SDKs](https://github.com/Dstack-TEE/dstack/pull/1024) described a bug: the Go SDK computed a different compose hash, the hash that identifies an app, than the JavaScript and Python SDKs for the same document. Go's `encoding/json` escaped `<`, `>` and `&`, which the others write as they are, and a fixed struct dropped every key it didn't declare before hashing. Attestation then fails "with nothing pointing at the cause". A related [fix to the Go SDK](https://github.com/Dstack-TEE/dstack/pull/1479) for U+2028 and U+2029 was merged in October.
 
-Nothing crashed. Each language read the same JSON a little differently, and data changed quietly. That is the bug strictgen is built to rule out.
+Nothing crashed. Each language read the same JSON a little differently. That is the bug strictgen rules out.
 
-## What it does
+## What you get
 
-- **One schema, three languages.** A strict subset of JSON Schema 2020-12 becomes types and decoders in Rust, Go and TypeScript. Use two of them or all three
-- **Never silent.** An unknown key fails the decode, or in `report` mode is reported with its path. No mode drops it
-- **Same answer everywhere.** The same accept or reject, the same JSON Pointer, error code and message, and the same bytes when a value is written again, through the generated `Encode` in Go. Only a number with a fraction or an exponent, and the key order inside a value of any JSON type, may be spelled differently, with the same canonical (RFC 8785) bytes
-- **Proven, not promised.** A conformance suite of hundreds of cases and a differential fuzzer run every language on every pull request and fail on any difference
-- **Change safety.** `strictgen breaking` lists who a schema change breaks before it merges
-- **LLM-ready.** The same schema becomes the subset each LLM provider accepts, with decoders that check what the provider couldn't
+- **One schema, three languages.** A strict subset of JSON Schema 2020-12 becomes types and decoders in Rust, Go and TypeScript
+- **Never silent.** An unknown key fails the decode, or in [`report` mode](docs/read-modes.md) is reported with its path
+- **Same answer everywhere.** The same accept or reject, error and bytes written again ([where spelling may differ](conformance/README.md#known-differences))
+- **Proven, not promised.** Hundreds of conformance cases and a differential fuzzer run every language and fail on any difference
+- **Change safety.** [`strictgen breaking`](docs/breaking-changes.md) lists who a schema change breaks before it merges
+- **LLM-ready.** Each type also becomes the schema each [LLM provider](docs/llm.md) accepts, with decoders that check what the provider can't
 
-## 30 seconds
+## Quick start
+
+Install, after the first release (nothing is published yet):
+
+```bash
+npm install --save-dev strictgen    # Node 22 or later; or: npx strictgen generate
+```
+
+Rust and Go projects can use a single binary instead, which needs no Node. Each GitHub release will have one for macOS (arm64, x64), Linux (x64, arm64, glibc) and Windows (x64), and a `SHA256SUMS` file to check the download against:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS    # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
+chmod +x strictgen-linux-x64 && ./strictgen-linux-x64 --version
+```
+
+The binaries aren't signed by Apple or Microsoft yet, so macOS and Windows may warn on first run. On macOS, `xattr -d com.apple.quarantine strictgen-macos-arm64` clears the warning for a file you have checked. `rustfmt` and `gofmt` stay separate installs.
 
 A schema, from [`examples/quickstart`](examples/quickstart):
 
@@ -46,7 +88,10 @@ A schema, from [`examples/quickstart`](examples/quickstart):
 ```
 <!-- /snippet -->
 
-A `strictgen.json` next to it names the targets:
+A `strictgen.json` next to it names the targets. Its `llm` key is optional; here it also asks for the OpenAI schema of each type.
+
+<details>
+<summary>The <code>strictgen.json</code> next to it</summary>
 
 <!-- snippet: file examples/quickstart/strictgen.json -->
 ```json
@@ -63,13 +108,16 @@ A `strictgen.json` next to it names the targets:
 ```
 <!-- /snippet -->
 
-Then one command writes the types and their decoders, formatted with `rustfmt` and `gofmt`:
+</details>
+
+One command writes the types and their decoders, formatted with `rustfmt` and `gofmt`:
 
 ```bash
 strictgen generate   # writes rust/src/generated, go/types, ts/generated and llm/openai
 ```
 
-In Rust, Go and TypeScript:
+<details>
+<summary>The generated <code>Order</code> in Rust, Go and TypeScript</summary>
 
 <!-- snippet: decl examples/quickstart/rust/src/generated/order.rs Order -->
 ```rust
@@ -125,7 +173,10 @@ export interface Order {
 ```
 <!-- /snippet -->
 
-Each language decodes with its usual call:
+</details>
+
+<details>
+<summary>Decoding with each language's usual call</summary>
 
 <!-- snippet: region examples/quickstart/rust/src/main.rs decode -->
 ```rust
@@ -153,47 +204,33 @@ const order = decoder === "llm" ? decodeOrderFromLlm(text) : decodeOrderFromJson
 ```
 <!-- /snippet -->
 
-Here is what each language prints for a valid order, an order with a quantity of 0, and an order where `note` is misspelled `notes`:
-
-<!-- snippet: decode json message payloads/valid.json payloads/zero-quantity.json payloads/misspelled-key.json -->
-```text
-payloads/valid.json
-  Rust        ok {"id":"ord_7d2k","quantity":2,"status":"paid","note":"Leave at the door"}
-  Go          ok {"id":"ord_7d2k","quantity":2,"status":"paid","note":"Leave at the door"}
-  TypeScript  ok {"id":"ord_7d2k","quantity":2,"status":"paid","note":"Leave at the door"}
-
-payloads/zero-quantity.json
-  Rust        /quantity: too small, expected >= 1, found 0
-  Go          /quantity: too small, expected >= 1, found 0
-  TypeScript  /quantity: too small, expected >= 1, found 0
-
-payloads/misspelled-key.json
-  Rust        /notes: unknown key
-  Go          /notes: unknown key
-  TypeScript  /notes: unknown key
-```
-<!-- /snippet -->
-
-These lines are not typed by hand. `pnpm docs:check` runs the three programs in [`examples/quickstart`](examples/quickstart) in CI and fails when the output changes. The misspelled key is the bug from the story: a decoder that skips unknown keys would have dropped the note without a word. To accept such keys and log them instead, set `"read": "report"` ([read modes](docs/read-modes.md)).
-
-## Install
-
-After the first release (nothing is published yet):
-
-```bash
-npm install --save-dev strictgen    # Node 22 or later; or: npx strictgen generate
-```
-
-Rust and Go projects can use a single binary instead, which needs no Node. Each GitHub release has one for macOS (arm64, x64), Linux (x64, arm64, glibc) and Windows (x64), and a `SHA256SUMS` file to check the download against:
-
-```bash
-sha256sum --check --ignore-missing SHA256SUMS    # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
-chmod +x strictgen-linux-x64 && ./strictgen-linux-x64 --version
-```
-
-The binaries aren't signed by Apple or Microsoft yet, so macOS and Windows may warn on first run. On macOS, `xattr -d com.apple.quarantine strictgen-macos-arm64` clears the warning for a file you have checked. `rustfmt` and `gofmt` stay separate installs, as with npm.
+</details>
 
 Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
+
+## Commands
+
+| Command | What it does |
+| ------- | ------------ |
+| `generate` | Writes every target, formatted (the default command) |
+| `check` | Exits 1 if the generated files on disk are out of date, for CI |
+| `breaking --base <ref>` | Compares the schemas with an older version and says who each change breaks |
+| `fix [--write]` | Rewrites the schemas into the supported subset, as a diff or in place |
+| `examples <type>` | Prints valid or near-miss sample payloads for one type |
+| `docs` | Writes a documentation page per type, or one HTML page |
+| `llm --profile <name> <type>` | Prints the provider-ready schema of one type |
+| `explain <file#/pointer>` | Shows how one schema type maps in each configured language |
+| `dirs` | Prints the folders the targets write to |
+
+Options, config and exit codes are in [docs/cli.md](docs/cli.md).
+
+## When to use it, and when not
+
+strictgen is for Rust, Go and TypeScript services that share JSON and must agree on it exactly. It reads only a strict subset of JSON Schema and writes three languages.
+
+If you need many languages, or types inferred from sample payloads, [quicktype](https://github.com/glideapps/quicktype) is the better pick.
+
+[docs/comparison.md](docs/comparison.md) compares strictgen with other tools and says when each one fits best.
 
 ## Docs
 
