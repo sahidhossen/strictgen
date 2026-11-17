@@ -201,7 +201,7 @@ describe("release workflow", () => {
   });
 
   it("publishes only from jobs gated on the guard, a tag push and a public repository", () => {
-    for (const [name, step] of [["npm", "npm publish \"release/strictgen-$VERSION.tgz\" --provenance"], ["github-release", "gh release create"]] as const) {
+    for (const [name, step] of [["npm", "npm publish \"./release/strictgen-$VERSION.tgz\" --provenance"], ["github-release", "gh release create"]] as const) {
       const text = job(name);
       expect(text).toContain(gate);
       expect(text).toContain(step);
@@ -274,6 +274,13 @@ describe("release workflow", () => {
       expect(readme).not.toMatch(/strictgen-(macos|linux)-(arm64|x64)(?!\.tar\.gz)\b/);
       expect(readme).not.toContain("strictgen-windows-x64.exe");
     });
+  });
+
+  it("gives npm publish a path npm reads as a local file, not as a GitHub owner/repo", () => {
+    // npm treats an argument like "release/x.tgz" as GitHub shorthand and tries git ls-remote on it.
+    const args = [...workflow.matchAll(/^\s*npm publish\s+("[^"]*"|\S+)/gm)].map((m) => m[1]!.replace(/^"|"$/g, ""));
+    expect(args.length).toBeGreaterThan(0);
+    for (const arg of args) expect(arg, arg).toMatch(/^(\.\/|\/)/);
   });
 
   it("keeps the npm token in the release environment, seen only by the npm job, which checks it", () => {
