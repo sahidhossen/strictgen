@@ -203,11 +203,22 @@ describe("release workflow", () => {
     }
   });
 
-  it("checks the visibility, the token, the tag, main and the changelog before CI", () => {
+  it("checks the visibility, the tag, main and the changelog before CI", () => {
     const guard = job("guard");
-    for (const check of ['"$VISIBILITY" != "public"', 'gh api "repos/$GITHUB_REPOSITORY" --jq .visibility', '"$TOKEN_SET" != "true"', '"refs/tags/v$version"', "merge-base --is-ancestor", 'release-notes.mjs "$version"']) {
+    for (const check of ['"$VISIBILITY" != "public"', 'gh api "repos/$GITHUB_REPOSITORY" --jq .visibility', '"refs/tags/v$version"', "merge-base --is-ancestor", 'release-notes.mjs "$version"']) {
       expect(guard, check).toContain(check);
     }
     expect(job("ci")).toContain("uses: ./.github/workflows/ci.yml");
+  });
+
+  it("keeps the npm token in the release environment, seen only by the npm job, which checks it", () => {
+    const npm = job("npm");
+    expect(npm).toContain("environment: release");
+    expect(npm).toContain('"$TOKEN_SET" != "true"');
+    expect(npm.indexOf('"$TOKEN_SET" != "true"')).toBeLessThan(npm.indexOf("npm publish"));
+    for (const name of ["guard", "ci", "assemble", "github-release"]) {
+      expect(job(name), name).not.toContain("environment:");
+      expect(job(name), name).not.toContain("NPM_TOKEN");
+    }
   });
 });
