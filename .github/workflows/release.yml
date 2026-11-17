@@ -5,7 +5,7 @@ name: Release
 #
 # A release happens only when a maintainer pushes a tag v<version> that matches package.json.
 # Before anything is published:
-#   - the repository must be public and the NPM_TOKEN secret set, or the guard job fails;
+#   - the repository must be public, or the guard job fails;
 #   - the tag must equal "v" + package.json's version, point at a commit on main, and
 #     CHANGELOG.md must have a "## [<version>] - YYYY-MM-DD" section;
 #   - all of CI must pass on the tagged commit: typecheck, tests, the conformance suite, the
@@ -14,10 +14,16 @@ name: Release
 # npm publish runs scripts/publish-guard.mjs first (prepublishOnly), which checks the tag and that
 # this workflow is the one running.
 #
+# The npm job runs in the "release" environment, which holds the NPM_TOKEN secret and requires a
+# maintainer to approve the run before the job starts. Only that job sees the token, and it fails
+# when the secret isn't set. Set the environment up in Settings, Environments: required reviewers,
+# deployment tags v*, and the NPM_TOKEN secret.
+#
 # Dry run: run this workflow by hand (Actions, Release, Run workflow) with dry_run checked. It runs
 # every check and all of CI, builds the binaries, the sums, the notes and the npm tarball, and
-# keeps them as the "release" artifact, then stops: the publish jobs are skipped. It works in a
-# private repository and without NPM_TOKEN. Run by hand with dry_run unchecked, it fails.
+# keeps them as the "release" artifact, then stops: the publish jobs are skipped, so it needs no
+# approval. It works in a private repository and without NPM_TOKEN. Run by hand with dry_run
+# unchecked, it fails.
 on:
   push:
     tags: ["v*"]
@@ -48,7 +54,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Check the tag, the version, the changelog, the repository and the token
+      - name: Check the tag, the version, the changelog and the repository
         id: check
         run: |
           version="$(node -p 'require("./package.json").version')"
@@ -59,7 +65,7 @@ jobs:
               exit 1
             fi
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            echo "Dry run of $version: repository $VISIBILITY, NPM_TOKEN set: $TOKEN_SET. Nothing will be published."
+            echo "Dry run of $version: repository $VISIBILITY. Nothing will be published."
             node scripts/release-notes.mjs "$version" --dry-run > /dev/null
             exit 0
           fi
@@ -76,10 +82,6 @@ jobs:
             echo "::error::The API says the repository is $api_visibility. Releases are published from a public repository only."
             exit 1
           fi
-          if [[ "$TOKEN_SET" != "true" ]]; then
-            echo "::error::The NPM_TOKEN secret isn't set."
-            exit 1
-          fi
           git fetch --quiet origin main
           if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
             echo "::error::The tag points at $GITHUB_SHA, which isn't on main."
@@ -91,7 +93,6 @@ jobs:
           EVENT: ${{ github.event_name }}
           DRY_RUN: ${{ inputs.dry_run }}
           VISIBILITY: ${{ github.event.repository.visibility }}
-          TOKEN_SET: ${{ secrets.NPM_TOKEN != '' }}
           GH_TOKEN: ${{ github.token }}
 
   ci:
@@ -153,11 +154,21 @@ jobs:
     needs: [guard, assemble]
     if: needs.guard.outputs.publish == 'true' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && github.event.repository.visibility == 'public'
     runs-on: ubuntu-latest
+    # Holds NPM_TOKEN and waits for a maintainer's approval before the job starts.
+    environment: release
     permissions:
       contents: read
       # The OIDC token npm signs the provenance statement with.
       id-token: write
     steps:
+      - name: Check that the NPM_TOKEN secret is set
+        run: |
+          if [[ "$TOKEN_SET" != "true" ]]; then
+            echo "::error::The NPM_TOKEN secret isn't set in the release environment."
+            exit 1
+          fi
+        env:
+          TOKEN_SET: ${{ secrets.NPM_TOKEN != '' }}
       # The API's answer counts too: both must say public, or nothing is published.
       - name: Check that the repository is public
         run: |
