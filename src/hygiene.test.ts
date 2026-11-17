@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -95,3 +95,52 @@ describe("hygiene --text", { timeout: SPAWNS }, () => {
     expect(sh(command, "", { PR_TITLE: "fix: a title", PR_BODY: `A ${BLOCKED}.` }).status).toBe(1);
   });
 });
+
+/** A fresh repository holding only the script, with one commit per message, checked from its first commit. */
+function commitMessages(name: string, messages: readonly string[]): Run {
+  const repo = join(scratch, name);
+  mkdirSync(join(repo, "scripts"), { recursive: true });
+  copyFileSync(SCRIPT, join(repo, "scripts", "hygiene.sh"));
+  const git = (...args: string[]) =>
+    spawnSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", ...args], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+  git("init", "--quiet");
+  git("add", "-A");
+  git("commit", "--quiet", "-m", "chore: start");
+  for (const message of messages) git("commit", "--quiet", "--allow-empty", "-m", message);
+  const r = spawnSync("bash", [join(repo, "scripts", "hygiene.sh")], {
+    cwd: repo,
+    encoding: "utf8",
+    env: { PATH: process.env.PATH ?? "", HYGIENE_DENYLIST: BLOCKED, HYGIENE_BASE: "" },
+  });
+  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+describe("hygiene commit messages", { timeout: SPAWNS }, () => {
+  // Built from parts, so this file never holds a whole trailer line itself.
+  const trailer = (who: string) => `${"Co-authored"}-by: ${who}`;
+  const owner = trailer("Sahid Hossen <12063077+sahidhossen@users.noreply.github.com>");
+
+  it("accept the trailer GitHub adds to a squash merge for the maintainer's own noreply address", () => {
+    const r = commitMessages("owner", [`chore: release (#1)\n\n* chore: release\n\n---------\n\n${owner}`]);
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it("still fail on any other co-author, on the owner line with more after it, and on other attribution", () => {
+    for (const [name, message] of [
+      ["someone", `fix: x\n\n${trailer("Someone <someone@example.com>")}`],
+      ["owner-other-email", `fix: x\n\n${trailer("Sahid Hossen <other@example.com>")}`],
+      ["owner-suffix", `fix: x\n\n${owner} and more`],
+      ["owner-plus-other", `fix: x\n\n${owner}\n${trailer("Someone <someone@example.com>")}`],
+      ["generated", `fix: x\n\n${"Generated"} with a tool`],
+    ] as const) {
+      const r = commitMessages(name, [message]);
+      expect(r.status, name).toBe(1);
+      expect(r.stderr, name).toContain("attribution or assistant name in commit messages");
+    }
+  });
+});
+
