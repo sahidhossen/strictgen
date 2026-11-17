@@ -6,7 +6,7 @@
 
 <!-- Badges (release, CI) come with the first release. -->
 
-> **Status:** early development. Nothing is released yet.
+> **Status:** 0.1.0, the first release. Before 1.0, a minor version may break; see [CHANGELOG.md](CHANGELOG.md) and the [versioning policy](CONTRIBUTING.md#versioning).
 
 A valid order, an order with a quantity of 0, and an order where `note` is misspelled `notes`, read by the generated Rust, Go and TypeScript:
 

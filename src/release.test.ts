@@ -153,7 +153,18 @@ describe("release notes", () => {
   it("prints the section of the version, without its heading", () => {
     const r = script("release-notes.mjs", ["1.2.0", "--changelog", released]);
     expect(r).toEqual({ status: 0, stdout: "### Added\n\n- a\n", stderr: "" });
-    expect(script("release-notes.mjs", ["1.1.0", "--changelog", released]).stdout).toBe("- b\n\n[1.2.0]: https://example.com\n");
+    expect(script("release-notes.mjs", ["1.1.0", "--changelog", released]).stdout).toBe("- b\n");
+  }, SPAWNS);
+
+  it("leaves out the link references and blank lines at the end of a section, and only there", () => {
+    const linked = changelog(
+      "## [Unreleased]\n\n## [0.1.0] - 2026-11-17\n\n- see [the docs][docs]\n\n[docs]: https://example.com/docs\n\n- last\n\n" +
+        "[Unreleased]: https://example.com/compare/v0.1.0...HEAD\n  \n[0.1.0]: https://example.com/releases/tag/v0.1.0\n\n\n",
+    );
+    const r = script("release-notes.mjs", ["0.1.0", "--changelog", linked]);
+    expect(r).toEqual({ status: 0, stdout: "- see [the docs][docs]\n\n[docs]: https://example.com/docs\n\n- last\n", stderr: "" });
+    const onlyLinks = changelog("## [0.1.0] - 2026-11-17\n\n[0.1.0]: https://example.com/releases/tag/v0.1.0\n");
+    expect(script("release-notes.mjs", ["0.1.0", "--changelog", onlyLinks]).status).toBe(1);
   }, SPAWNS);
 
   it("fails for a version without a dated section, a section given twice and an empty one", () => {

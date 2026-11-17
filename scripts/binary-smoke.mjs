@@ -85,11 +85,19 @@ function examplesCopy(scratch, name) {
   return root;
 }
 
-/** The absolute build folders found in the binary's bytes, with either path separator. */
+/**
+ * The absolute build folders found in the binary's bytes: with either path separator, lower case
+ * too on Windows, whose paths ignore case, each in UTF-8 and in UTF-16LE.
+ */
 function buildPaths(binary, folders) {
   const bytes = readFileSync(binary);
-  const forms = folders.flatMap((f) => [f, f.split("\\").join("/"), f.split("/").join("\\")]);
-  return [...new Set(forms)].filter((f) => f.length > 1 && bytes.includes(Buffer.from(f, "utf8")));
+  const forms = folders.flatMap((f) => {
+    const spelled = [f, f.split("\\").join("/"), f.split("/").join("\\")];
+    return process.platform === "win32" ? [...spelled, ...spelled.map((p) => p.toLowerCase())] : spelled;
+  });
+  return [...new Set(forms)].filter(
+    (f) => f.length > 1 && (bytes.includes(Buffer.from(f, "utf8")) || bytes.includes(Buffer.from(f, "utf16le"))),
+  );
 }
 
 function main() {

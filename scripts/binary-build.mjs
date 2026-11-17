@@ -15,7 +15,7 @@
 import { spawnSync } from "node:child_process";
 import { chmodSync, copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { dirname, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { build } from "esbuild";
@@ -92,7 +92,12 @@ async function main() {
   // the binary. Asset keys are the paths from the package root either way.
   const blob = join(out, "strictgen.blob");
   const config = join(out, "sea-config.json");
-  const portable = (path) => relative(out, path).split("\\").join("/");
+  const portable = (path) => {
+    const from = relative(out, path);
+    // On Windows, an output folder on another drive than the checkout has no relative path.
+    if (isAbsolute(from)) fail(`${path} has no path relative to the output folder ${out}; build into a folder on the same drive`);
+    return from.split("\\").join("/");
+  };
   const assets = Object.fromEntries(files.map((f) => [f, portable(join(ROOT, f))]));
   writeFileSync(
     config,
