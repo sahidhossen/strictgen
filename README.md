@@ -8,8 +8,6 @@
 
 > **Status:** early development. Nothing is released yet.
 
-**One schema. Three languages. One answer.**
-
 A valid order, an order with a quantity of 0, and an order where `note` is misspelled `notes`, read by the generated Rust, Go and TypeScript:
 
 <!-- snippet: decode json message payloads/valid.json payloads/zero-quantity.json payloads/misspelled-key.json -->
@@ -35,7 +33,7 @@ These lines come from running the generated code in [`examples/quickstart`](exam
 
 ## Why
 
-In August 2026, a [pull request to the dstack SDKs](https://github.com/Dstack-TEE/dstack/pull/1024) described a bug: the Go SDK computed a different compose hash, the hash that identifies an app, than the JavaScript and Python SDKs for the same document. Go's `encoding/json` escaped `<`, `>` and `&`, which the others write as they are, and a fixed struct dropped every key it didn't declare before hashing. Attestation then fails "with nothing pointing at the cause". A [follow-up fix](https://github.com/Dstack-TEE/dstack/pull/1479) for U+2028 and U+2029 was merged in October.
+In August 2026, a [pull request to the dstack SDKs](https://github.com/Dstack-TEE/dstack/pull/1024) described a bug: the Go SDK computed a different compose hash, the hash that identifies an app, than the JavaScript and Python SDKs for the same document. Go's `encoding/json` escaped `<`, `>` and `&`, which the others write as they are, and a fixed struct dropped every key it didn't declare before hashing. Attestation then fails "with nothing pointing at the cause". A related [fix to the Go SDK](https://github.com/Dstack-TEE/dstack/pull/1479) for U+2028 and U+2029 was merged in October.
 
 Nothing crashed. Each language read the same JSON a little differently. That is the bug strictgen rules out.
 
@@ -55,6 +53,15 @@ Install, after the first release (nothing is published yet):
 ```bash
 npm install --save-dev strictgen    # Node 22 or later; or: npx strictgen generate
 ```
+
+Rust and Go projects can use a single binary instead, which needs no Node. Each GitHub release will have one for macOS (arm64, x64), Linux (x64, arm64, glibc) and Windows (x64), and a `SHA256SUMS` file to check the download against:
+
+```bash
+sha256sum --check --ignore-missing SHA256SUMS    # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
+chmod +x strictgen-linux-x64 && ./strictgen-linux-x64 --version
+```
+
+The binaries aren't signed by Apple or Microsoft yet, so macOS and Windows may warn on first run. On macOS, `xattr -d com.apple.quarantine strictgen-macos-arm64` clears the warning for a file you have checked. `rustfmt` and `gofmt` stay separate installs.
 
 A schema, from [`examples/quickstart`](examples/quickstart):
 
@@ -81,7 +88,10 @@ A schema, from [`examples/quickstart`](examples/quickstart):
 ```
 <!-- /snippet -->
 
-A `strictgen.json` next to it names the targets:
+A `strictgen.json` next to it names the targets. Its `llm` key is optional; here it also asks for the OpenAI schema of each type.
+
+<details>
+<summary>The <code>strictgen.json</code> next to it</summary>
 
 <!-- snippet: file examples/quickstart/strictgen.json -->
 ```json
@@ -97,6 +107,8 @@ A `strictgen.json` next to it names the targets:
 }
 ```
 <!-- /snippet -->
+
+</details>
 
 One command writes the types and their decoders, formatted with `rustfmt` and `gofmt`:
 
@@ -194,6 +206,8 @@ const order = decoder === "llm" ? decodeOrderFromLlm(text) : decodeOrderFromJson
 
 </details>
 
+Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
+
 ## Commands
 
 | Command | What it does |
@@ -212,20 +226,11 @@ Options, config and exit codes are in [docs/cli.md](docs/cli.md).
 
 ## When to use it, and when not
 
-strictgen is for Rust, Go and TypeScript services that share JSON and must agree on it exactly. It reads only a strict subset of JSON Schema and writes three languages. If you need many languages, or types inferred from sample payloads, [quicktype](https://github.com/glideapps/quicktype) is the better pick. [docs/comparison.md](docs/comparison.md) compares strictgen with other tools and says when each is the better pick.
+strictgen is for Rust, Go and TypeScript services that share JSON and must agree on it exactly. It reads only a strict subset of JSON Schema and writes three languages.
 
-## Install
+If you need many languages, or types inferred from sample payloads, [quicktype](https://github.com/glideapps/quicktype) is the better pick.
 
-Besides npm, Rust and Go projects can use a single binary instead, which needs no Node. Each GitHub release has one for macOS (arm64, x64), Linux (x64, arm64, glibc) and Windows (x64), and a `SHA256SUMS` file to check the download against:
-
-```bash
-sha256sum --check --ignore-missing SHA256SUMS    # macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
-chmod +x strictgen-linux-x64 && ./strictgen-linux-x64 --version
-```
-
-The binaries aren't signed by Apple or Microsoft yet, so macOS and Windows may warn on first run. On macOS, `xattr -d com.apple.quarantine strictgen-macos-arm64` clears the warning for a file you have checked. `rustfmt` and `gofmt` stay separate installs.
-
-Generated code needs no strictgen package at run time: Rust uses `serde` and `serde_json` (and `regex` when a schema has a `pattern`), Go the standard library, and TypeScript nothing.
+[docs/comparison.md](docs/comparison.md) compares strictgen with other tools and says when each one fits best.
 
 ## Docs
 
