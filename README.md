@@ -2,9 +2,9 @@
 
 **One JSON Schema. Rust, Go and TypeScript that accept and reject exactly the same JSON, and never drop data silently.**
 
-[Docs](#docs) · [Playground](playground/README.md) · [Comparison](docs/comparison.md)
+[![npm](https://img.shields.io/npm/v/strictgen)](https://www.npmjs.com/package/strictgen) [![CI](https://github.com/sahidhossen/strictgen/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sahidhossen/strictgen/actions/workflows/ci.yml) [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
-<!-- Badges (release, CI) come with the first release. -->
+[Docs](#docs) · [Playground](https://sahidhossen.github.io/strictgen/) · [Comparison](docs/comparison.md) · [Releases](https://github.com/sahidhossen/strictgen/releases)
 
 > **Status:** 0.1.0, the first release. Before 1.0, a minor version may break; see [CHANGELOG.md](CHANGELOG.md) and the [versioning policy](CONTRIBUTING.md#versioning).
 
@@ -247,7 +247,7 @@ If you need many languages, or types inferred from sample payloads, [quicktype](
 | [Breaking changes](docs/breaking-changes.md) | `strictgen breaking` and who each change breaks |
 | [Comparison](docs/comparison.md) | quicktype, typify, json-schema-to-typescript, go-jsonschema, typeshare, JSON Type Definition and BAML, and when to pick each |
 | [Rust serde bridge](docs/serde-bridge.md) | The optional `Deserialize` impl, so generated Rust types fit inside your own serde types, still strict |
-| [Playground](playground/README.md) | A static page that runs the generator and the TypeScript decoders in the browser. `pnpm playground:build && pnpm playground:serve` runs it locally |
+| [Playground](https://sahidhossen.github.io/strictgen/) | A static page that runs the generator and the TypeScript decoders in the browser, with no server. [How it works](playground/README.md), and `pnpm playground:build && pnpm playground:serve` runs it locally |
 | [Conformance suite](conformance/README.md) | The cross-language proof and the fuzzer |
 | [Contributing](CONTRIBUTING.md) | Setup, ground rules, and how to run the proof suite |
 
