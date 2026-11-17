@@ -248,7 +248,7 @@ jobs:
         run: |
           node scripts/publish-guard.mjs
           if [[ "$VERSION" == *-* ]]; then tag=next; else tag=latest; fi
-          npm publish "release/strictgen-$VERSION.tgz" --provenance --access public --tag "$tag"
+          npm publish "./release/strictgen-$VERSION.tgz" --provenance --access public --tag "$tag"
         env:
           VERSION: ${{ needs.guard.outputs.version }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
