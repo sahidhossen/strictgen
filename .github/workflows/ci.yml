@@ -119,7 +119,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: false
@@ -187,7 +187,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       # The module and build caches, by the example's go.mod (the examples need no go.sum).
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: true
@@ -226,7 +226,7 @@ jobs:
           key: conformance-rust-${{ runner.os }}-1.97.0-${{ hashFiles('conformance/driver/rust/Cargo.lock') }}
           restore-keys: conformance-rust-${{ runner.os }}-1.97.0-
       # The Go build cache, by the driver's go.mod (it has no dependencies, so no go.sum).
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: true
@@ -289,7 +289,7 @@ jobs:
             examples/quickstart/rust/target
           key: docs-rust-${{ runner.os }}-1.97.0-${{ hashFiles('conformance/driver/rust/Cargo.lock', 'examples/quickstart/rust/Cargo.lock') }}
           restore-keys: docs-rust-${{ runner.os }}-1.97.0-
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache: true
