@@ -40,6 +40,9 @@ attribution='co-authored-by|generated with|claude'
 # noreply address and the merge is made under another of the maintainer's addresses. It names the
 # maintainer, nobody else, so commit messages may hold it, and only this exact line.
 owner_trailer='^co-authored-by: sahid hossen <12063077\+sahidhossen@users\.noreply\.github\.com>[[:space:]]*$'
+# GitHub adds this one to a squash merge of a Dependabot pull request, whatever the merge message.
+# It names the bot that wrote the commit, so it is allowed too, again only as this exact line.
+bot_trailer='^co-authored-by: dependabot\[bot\] <49699333\+dependabot\[bot\]@users\.noreply\.github\.com>[[:space:]]*$'
 
 denylist="$(mktemp)"
 trap 'rm -f "$denylist"' EXIT
@@ -145,7 +148,7 @@ else
   messages=""
 fi
 if [[ -n "$messages" ]]; then
-  if grep -viE "$owner_trailer" <<<"$messages" | grep -iqE "$attribution"; then
+  if grep -viE "$owner_trailer|$bot_trailer" <<<"$messages" | grep -iqE "$attribution"; then
     report "attribution or assistant name in commit messages"
   fi
   if [[ -s "$denylist" ]] && grep -iqFf "$denylist" <<<"$messages"; then
