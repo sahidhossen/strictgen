@@ -7,6 +7,14 @@ updates:
     groups:
       dev-dependencies:
         dependency-type: development
+    ignore:
+      # TypeScript 7 drops the transpileModule API the conformance driver and the docs snippets use,
+      # so a major update needs its own change, not a bot bump.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # The types follow the lowest supported Node (engines: >=22), so code can't use newer APIs.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     labels: ["ci"]
     commit-message:
       prefix: chore
