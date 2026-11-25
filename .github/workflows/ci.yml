@@ -321,8 +321,11 @@ jobs:
         env:
           HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
           HYGIENE_BASE: ${{ steps.range.outputs.base }}
+      # Dependabot's text is upstream release notes, which can hold any word, and it never reaches
+      # main: squash merges keep only the title, which the push to main checks as a commit message.
+      # The pull request's own commits are still checked above.
       - name: Check the PR title and body
-        if: github.event_name == 'pull_request'
+        if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'dependabot[bot]'
         run: printf '%s\n%s\n' "$PR_TITLE" "$PR_BODY" | scripts/hygiene.sh --text
         env:
           HYGIENE_DENYLIST: ${{ secrets.HYGIENE_DENYLIST }}
