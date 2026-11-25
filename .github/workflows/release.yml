@@ -124,7 +124,7 @@ jobs:
       - run: pnpm build
       # The binaries CI built and smoke tested on each platform. They go into the release only
       # inside the archives below.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: binary-*
           path: binaries
@@ -237,7 +237,7 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release
           path: release
@@ -271,7 +271,7 @@ jobs:
           fi
         env:
           GH_TOKEN: ${{ github.token }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: release
           path: release
