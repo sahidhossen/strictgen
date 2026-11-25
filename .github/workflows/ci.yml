@@ -216,7 +216,7 @@ jobs:
           components: rustfmt, clippy
       # The driver's dependencies and its target folder, which the suite and the fuzzer build in,
       # so a run only compiles the generated code again.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
@@ -279,7 +279,7 @@ jobs:
           components: rustfmt
       # The conformance driver's build, which the error code examples decode with, and the
       # quickstart crate's.
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.cargo/registry/index
