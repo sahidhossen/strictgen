@@ -122,9 +122,16 @@ describe("hygiene commit messages", { timeout: SPAWNS }, () => {
   // Built from parts, so this file never holds a whole trailer line itself.
   const trailer = (who: string) => `${"Co-authored"}-by: ${who}`;
   const owner = trailer("Sahid Hossen <12063077+sahidhossen@users.noreply.github.com>");
+  const bot = trailer("dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>");
 
   it("accept the trailer GitHub adds to a squash merge for the maintainer's own noreply address", () => {
     const r = commitMessages("owner", [`chore: release (#1)\n\n* chore: release\n\n---------\n\n${owner}`]);
+    expect(r.stderr).toBe("");
+    expect(r.status).toBe(0);
+  });
+
+  it("accept the trailer GitHub adds to a squash merge of a Dependabot pull request", () => {
+    const r = commitMessages("dependabot", [`ci: bump x from 4 to 6 (#2)\n\n${bot}`]);
     expect(r.stderr).toBe("");
     expect(r.status).toBe(0);
   });
@@ -135,6 +142,9 @@ describe("hygiene commit messages", { timeout: SPAWNS }, () => {
       ["owner-other-email", `fix: x\n\n${trailer("Sahid Hossen <other@example.com>")}`],
       ["owner-suffix", `fix: x\n\n${owner} and more`],
       ["owner-plus-other", `fix: x\n\n${owner}\n${trailer("Someone <someone@example.com>")}`],
+      ["bot-other-email", `fix: x\n\n${trailer("dependabot[bot] <someone@example.com>")}`],
+      ["bot-suffix", `fix: x\n\n${bot} and more`],
+      ["bot-plus-other", `fix: x\n\n${bot}\n${trailer("Someone <someone@example.com>")}`],
       ["generated", `fix: x\n\n${"Generated"} with a tool`],
     ] as const) {
       const r = commitMessages(name, [message]);
